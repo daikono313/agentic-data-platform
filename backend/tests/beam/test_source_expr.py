@@ -38,6 +38,10 @@ def test_row_expressions_are_allowed(expr: str) -> None:
         # Jinja の文字列のエスケープ（dim_key の引数の中で引用符を作る。#61 の再レビュー）
         r"concat(customer_id, '\x27 || (select string_agg(email, \x27,\x27) from raw.customers)"
         r" || \x27')",
+        # コメントで行の残りを消す、位置で他のテーブルの列を指す
+        "customer_id --",
+        "customer_id /* x */ + 1",
+        "customer_id + #1",
         # 閉じていない文字列・コメント（sqlglot の別の例外も ValueError にする）
         "'abc",
         "a /*",

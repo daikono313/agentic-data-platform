@@ -40,8 +40,10 @@ _MF_SWITCHES = {"--quiet", "--show-all", "metrics", "dimensions", "entities"}
 _META = re.compile(r"[;&|`$<>\n\\]")
 _GLOB_CHARS = re.compile(r"[*?\[{]")
 # 環境変数（秘密情報）を読める Jinja の関数・属性
-_SECRET_ACCESS = re.compile(r"\b(env_var|environ|getenv|run_query)\b")
-"""秘密情報の読み出し（env_var など）と、dbt の実行中に任意の SQL を流す run_query。"""
+_SECRET_ACCESS = re.compile(
+    r"\b(env_var|environ|getenv|run_query)\b|\bcall\s+statement\b|adapter\s*\.\s*execute"
+)
+"""秘密情報の読み出し（env_var など）と、dbt の実行中に任意の SQL を流すもの（run_query など）。"""
 
 
 def allowed_patterns() -> list[str]:

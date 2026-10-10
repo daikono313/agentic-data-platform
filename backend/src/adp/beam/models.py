@@ -131,6 +131,9 @@ def _check_row_expr(expr: str) -> None:
     # \ は Jinja の文字列（dim_key の引数）の中でエスケープとして解釈され、引用符などを作れる
     if any(c in expr for c in "{}\\"):
         raise ValueError("expr に { } \\ は使えません（Jinja やエスケープは書けません）")
+    # コメントは行の残り（as <列名> など）を消せる。#n は他のテーブルの列も指せる
+    if "--" in expr or "/*" in expr or "#" in expr:
+        raise ValueError("expr に -- /* # は使えません（コメントや位置での列の参照は書けません）")
     try:
         trees = sqlglot.parse(expr, read="duckdb")
     except sqlglot.errors.SqlglotError as e:
