@@ -25,6 +25,8 @@ PROTECTED_FILES = {
     "packages.yml",
     "package-lock.yml",
     "selectors.yml",
+    # dbt Charts の接続設定。独自の duckdb ソースで外部アクセスを戻せるため（ADR 0002）
+    "dbt_charts.yml",
 }
 _DBT = {"parse", "build", "compile", "test", "ls", "list"}
 _MF = {"validate-configs", "query", "list"}

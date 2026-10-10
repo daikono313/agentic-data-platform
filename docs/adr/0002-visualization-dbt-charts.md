@@ -21,7 +21,11 @@ v2 では、作った指標をその場でチャートで見られるように�
 
 - **接続**: `warehouse/dbt_charts.yml` に `type: dbt_profile`（profile: adp）のソースを置くと、dbt の `profiles.yml` 経由で DuckDB に接続できる。DuckDB のパスは profiles.yml（`ADP_DUCKDB_PATH`）に従うので、生成パイプラインのコピーした DB でもそのまま使える（O9 を解決）。
 - **描画**: 生成済みの `fct_order_lines` に対するボードを、`dct render` で text / SVG に出力できた（`backend/tests/test_dbt_charts.py`）。
-- **安全**: `enable_external_access: false`（profiles.yml）は dbt Charts からの接続にも効く。`read_text` で外部ファイルを読めないことをテストで確認した。`dct serve` は既定で localhost だけで待ち受ける。
+- **安全（DuckDB の SQL）**: `type: dbt_profile` のソースでは、profiles.yml の `enable_external_access: false` が dbt Charts からの接続にも効く（`read_text` が「disabled by configuration」で拒否されることをテストで確認）。dbt Charts の SQL ガードは SELECT 系しか通さず、`SET` / `ATTACH` / `COPY` / `INSTALL` を拒否する。ボードの Jinja はサンドボックスで、`env_var` は使えない。
+- **安全（DuckDB の外の経路）**: 次の 2 つは DuckDB の設定では防げないので、別に塞ぐ。
+  - `dbt_charts.yml` に独自の `type: duckdb` ソース（`attach:` など）を書くと、外部アクセスを有効に戻せる → 生成エージェントのガードで `dbt_charts.yml` を書き換え不可にした。ソースは `warehouse`（dbt_profile）の 1 つだけにする。
+  - ボードの `type: http` のクエリや、地図の `geo_source` / `geo` の URL は、描画時に HTTP で取得される → 生成するボードに URL と `type: http` を入れない検査を、ボードの生成（#41 / #42）に入れる。
+- **`dct serve`**: 既定で localhost だけで待ち受けるが、Host ヘッダーを検証しない（DNS リバインディングで読める）。ブラウザから直接使わない（O5）。
 - **依存**: このリポジトリの固定バージョンのまま追加できた（backend の依存に `dbt-charts>=0.9.1,<0.10`）。
 
 ## 検討した代替案

@@ -74,8 +74,19 @@ def test_external_access_is_blocked_through_dct(warehouse: Path, tmp_path: Path)
     secret = tmp_path / "outside.txt"
     secret.write_text("secret-outside")
     result = _dct(warehouse, "query", "warehouse", f"select * from read_text('{secret}')")
-    assert result.returncode != 0 or "secret-outside" not in result.stdout
-    assert "secret-outside" not in result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    # 外部アクセス禁止で拒否されたこと（プロファイルが見つからない等の別の失敗ではないこと）
+    assert "disabled by configuration" in " ".join(output.split())
+    assert "secret-outside" not in output
+
+
+def test_dbt_charts_config_is_protected_from_agent(tmp_path: Path) -> None:
+    from adp.generation.guard import WorkspaceGuard
+
+    guard = WorkspaceGuard(tmp_path)
+    assert guard("Edit", {"file_path": "dbt_charts.yml", "old_string": "a", "new_string": "b"})
+    assert guard("Write", {"file_path": "dbt_charts.yml", "content": "sources: {}"})
 
 
 def test_dct_is_installed() -> None:
