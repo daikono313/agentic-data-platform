@@ -1,0 +1,33 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# app runtime data (DB / worktrees / logs)
+.adp/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# node
+node_modules/
+dist/
+
+# dbt / duckdb
+warehouse/target/
+warehouse/dbt_packages/
+warehouse/logs/
+warehouse/data/
+*.duckdb
+*.duckdb.wal
+
+# claude
+.claude/settings.local.json
+
+# os
+.DS_Store
