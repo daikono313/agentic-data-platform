@@ -29,6 +29,12 @@ def _warehouse_copy(tmp: Path) -> Path:
         dst,
         ignore=shutil.ignore_patterns("target", "data", "logs", ".user.yml"),
     )
+    # アプリが生成してマージされたモデル（ヘッダで判別）を除き、生成前の warehouse から始める
+    for path in [*dst.joinpath("models").rglob("*"), *dst.joinpath("tests").rglob("*")]:
+        if path.is_file() and path.suffix in {".sql", ".yml"}:
+            head = path.read_text(encoding="utf-8").lstrip()[:40]
+            if head.startswith(("-- adp により生成", "# adp により生成")):
+                path.unlink()
     spec = importlib.util.spec_from_file_location(
         "gen_sample", dst / "scripts/generate_sample_data.py"
     )
