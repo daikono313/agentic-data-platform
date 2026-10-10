@@ -52,32 +52,51 @@ const isText = (c: ColumnInfo) => !c.data_type || /VARCHAR|TEXT|STRING/i.test(c.
 
 /**
  * 元データの列から「作れそうな指標」の要求の例を作る。
- * 金額・数量の列と、区分の列（〜ID・日時以外）を組み合わせる。
+ * 金額・数量の列と、同じテーブルの区分の列（ID・日時・名前以外の文字列）を組み合わせる。
+ * 1 つのテーブルに偏らないよう、テーブルを順に回して 1 件ずつ選ぶ。
  */
 export function exampleRequests(sources: SourceInfo[], limit = 4): string[] {
-  const measures: { table: SourceInfo; col: ColumnInfo }[] = []
-  const categories: ColumnInfo[] = []
-  for (const s of sources) {
-    for (const c of s.columns) {
-      // 金額・数量（数値の列）と、区分（文字列の列）。ID・日時は使わない
-      if (/(amount|price|quantity|qty)$/.test(c.name) && (isNumeric(c) || !c.data_type)) measures.push({ table: s, col: c })
-      else if (
+  const perTable: string[][] = sources.map((s) => {
+    const measures = s.columns.filter(
+      (c) => /(amount|price|quantity|qty)$/.test(c.name) && (isNumeric(c) || !c.data_type),
+    )
+    const categories = s.columns.filter(
+      (c) =>
         isText(c) &&
         !/(_id|_at|_on|_date|_name)$/.test(c.name) &&
-        /(category|channel|region|rank|method|type|reason|status)$/.test(c.name)
-      )
-        categories.push(c)
-    }
-  }
+        /(category|channel|region|rank|method|type|reason|status)$/.test(c.name),
+    )
+    const table = (s.description || s.name).split(/[（(。]/)[0].trim()
+    return measures.flatMap((m) => categories.map((c) => `${label(c)}別の${table}の${label(m)}を見たい`))
+  })
   const out: string[] = []
-  for (const m of measures) {
-    for (const c of categories) {
-      const text = `${label(c)}別の${label(m.col)}を見たい`
-      if (!out.includes(text)) out.push(text)
-      if (out.length >= limit) return out
+  for (let round = 0; out.length < limit && perTable.some((t) => t.length > round); round++) {
+    for (const t of perTable) {
+      if (t[round] && !out.includes(t[round])) out.push(t[round])
+      if (out.length >= limit) break
     }
   }
   return out
+}
+
+const PRIORITY = /(channel|category|region|store_name|rank|type|status|month|year|reason|method)$/
+
+/** 切り口の表示順: 時間 → よく使う区分（チャネル・カテゴリ・地域・店舗名など）→ その他 */
+export function rankDimensions<T extends { name: string; kind: string }>(dims: T[]): T[] {
+  const score = (d: T) => (d.kind === 'time' ? 0 : PRIORITY.test(d.name) ? 1 : 2)
+  return [...dims].sort((a, b) => score(a) - score(b))
+}
+
+/** API のエラー（FastAPI の {"detail": ...}）を読みやすい文にする */
+export function errorText(e: unknown): string {
+  const text = e instanceof Error ? e.message : String(e)
+  try {
+    const detail = (JSON.parse(text) as { detail?: unknown }).detail
+    if (typeof detail === 'string') return detail
+  } catch {
+    // JSON でなければそのまま
+  }
+  return text
 }
 
 export function matches(query: string, ...texts: string[]): boolean {

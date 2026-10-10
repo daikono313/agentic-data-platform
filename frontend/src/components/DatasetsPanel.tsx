@@ -1,7 +1,7 @@
 import { BarChart3, Database, Table2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
-import { exampleRequests, matches, type Datasets } from '@/api/datasets'
+import { exampleRequests, matches, rankDimensions, type Datasets } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 
@@ -38,7 +38,7 @@ export function DatasetsPanel({ datasets, error, onPickExample, compact }: Props
   const examples = onPickExample ? exampleRequests(datasets.sources) : []
 
   return (
-    <div className="space-y-4" aria-label="使えるデータ">
+    <section className="space-y-4" aria-label="使えるデータ">
       <Input aria-label="使えるデータを検索" placeholder="検索（例: 売上、店舗、返品）" value={query} onChange={(e) => setQuery(e.target.value)} />
       {datasets.errors.length > 0 && (
         <ul className="text-xs text-muted-foreground">
@@ -56,8 +56,7 @@ export function DatasetsPanel({ datasets, error, onPickExample, compact }: Props
               <p className="text-sm font-medium">{m.label}</p>
               {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
               <div className="mt-1 flex flex-wrap gap-1">
-                {[...m.dimensions]
-                  .sort((a, b) => Number(b.kind === 'time') - Number(a.kind === 'time'))
+                {rankDimensions(m.dimensions)
                   .slice(0, compact ? 6 : 12)
                   .map((d) => (
                     <Badge
@@ -115,13 +114,12 @@ export function DatasetsPanel({ datasets, error, onPickExample, compact }: Props
           ))}
         </ul>
       </Section>
-    </div>
+    </section>
   )
 }
 
 function SourceItem({ source }: { source: Datasets['sources'][number] }) {
   const [open, setOpen] = useState(false)
-  useEffect(() => setOpen(false), [source.name])
   return (
     <li className="text-xs">
       <button type="button" className="text-left hover:underline" onClick={() => setOpen((o) => !o)} aria-expanded={open}>

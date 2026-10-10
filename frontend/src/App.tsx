@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useReducer, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import type { Datasets } from '@/api/datasets'
+import { errorText, type Datasets } from '@/api/datasets'
 import { BeamCanvas } from '@/components/BeamCanvas'
 import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
@@ -187,9 +187,18 @@ export default function App() {
       })
   }, [isDemo, followJob])
 
-  const sideDatasets = useDatasets(!!session && !isDemo)
+  // 開始画面とインタビュー中の参照で 1 回だけ読み込んで共有する
+  const sharedDatasets = useDatasets(!isDemo)
 
-  if (!session) return <StartScreen onStart={start} error={state.error} />
+  if (!session)
+    return (
+      <StartScreen
+        onStart={start}
+        error={state.error}
+        datasets={sharedDatasets.datasets}
+        datasetsError={sharedDatasets.error}
+      />
+    )
 
   const event = session.beam.events?.[0]
   const finalized = session.phase === 'finalized'
@@ -224,7 +233,7 @@ export default function App() {
             <details className="rounded-lg border p-3">
               <summary className="cursor-pointer text-sm font-semibold">使えるデータ（参照用）</summary>
               <div className="mt-3">
-                <DatasetsPanel datasets={sideDatasets.datasets} error={sideDatasets.error} compact />
+                <DatasetsPanel datasets={sharedDatasets.datasets} error={sharedDatasets.error} compact />
               </div>
             </details>
           )}
@@ -283,14 +292,30 @@ function useDatasets(enabled: boolean) {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     if (!enabled) return
-    api.datasets().then(setDatasets).catch((e) => setError(String(e)))
+    api
+      .datasets()
+      .then((d) => {
+        setDatasets(d)
+        setError(null)
+      })
+      .catch((e) => setError(errorText(e)))
   }, [enabled])
   return { datasets, error }
 }
 
-function StartScreen({ onStart, error }: { onStart: (r: string) => void; error: string | null }) {
+function StartScreen({
+  onStart,
+  error,
+  datasets,
+  datasetsError,
+}: {
+  onStart: (r: string) => void
+  error: string | null
+  datasets: Datasets | null
+  datasetsError: string | null
+}) {
   const [request, setRequest] = useState('')
-  const { datasets, error: datasetsError } = useDatasets(true)
+  const input = useRef<HTMLInputElement>(null)
   return (
     <main className="mx-auto grid min-h-screen max-w-5xl gap-8 px-4 py-10 lg:grid-cols-[1fr_1.2fr]">
       <div className="flex flex-col justify-center gap-4">
@@ -309,6 +334,7 @@ function StartScreen({ onStart, error }: { onStart: (r: string) => void; error: 
             name="request"
             aria-label="見たい指標"
             placeholder="xxx の売上指標を取りたい"
+            ref={input}
             value={request}
             onChange={(e) => setRequest(e.target.value)}
           />
@@ -324,7 +350,14 @@ function StartScreen({ onStart, error }: { onStart: (r: string) => void; error: 
           <CardTitle className="text-base">使えるデータ</CardTitle>
         </CardHeader>
         <CardContent className="px-4">
-          <DatasetsPanel datasets={datasets} error={datasetsError} onPickExample={setRequest} />
+          <DatasetsPanel
+            datasets={datasets}
+            error={datasetsError}
+            onPickExample={(text) => {
+              setRequest(text)
+              input.current?.focus()
+            }}
+          />
         </CardContent>
       </Card>
     </main>
