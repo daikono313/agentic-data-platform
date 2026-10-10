@@ -1,0 +1,228 @@
+"""API の裏側。セッション（インタビュー）と生成ジョブを管理する。"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from adp.api.store import Store
+from adp.beam import BeamModel, build_event_matrix
+from adp.interview import (
+    BeamUpdated,
+    ChoicesPresented,
+    Interviewer,
+    InterviewState,
+    PhaseChanged,
+    TurnDone,
+    new_state,
+)
+from adp.llm import TextDelta, ToolCall
+from adp.pipeline import STEPS, PipelineResult, StepUpdate
+
+SSEEvent = dict[str, str]
+"""sse-starlette に渡す {"event": ..., "data": <JSON 文字列>}。"""
+
+PipelineRunner = Callable[[BeamModel, Callable[[StepUpdate], None]], Awaitable[PipelineResult]]
+
+
+def _sse(event: str, data: Any) -> SSEEvent:
+    return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
+
+
+class NotFound(Exception):
+    pass
+
+
+class Conflict(Exception):
+    pass
+
+
+@dataclass
+class Job:
+    id: str
+    session_id: str
+    status: str = "running"
+    steps: list[dict[str, Any]] = field(
+        default_factory=lambda: [
+            {"step": s, "label": label, "status": "pending", "detail": ""} for s, label in STEPS
+        ]
+    )
+    pr_url: str | None = None
+    error: str | None = None
+    subscribers: list[asyncio.Queue[SSEEvent | None]] = field(default_factory=list)
+
+    def view(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "status": self.status,
+            "steps": self.steps,
+            "pr_url": self.pr_url,
+            "error": self.error,
+        }
+
+
+class SessionService:
+    def __init__(self, store: Store, interviewer: Interviewer, pipeline: PipelineRunner) -> None:
+        self.store = store
+        self.interviewer = interviewer
+        self.pipeline = pipeline
+        self._states: dict[str, InterviewState] = {}
+        self._jobs: dict[str, Job] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    # --- セッション ------------------------------------------------------------------------
+
+    def _state(self, session_id: str) -> InterviewState:
+        if session_id not in self._states:
+            state = self.store.load_session(session_id)
+            if state is None:
+                raise NotFound(f"セッション {session_id} がありません")
+            self._states[session_id] = state
+        return self._states[session_id]
+
+    def create(self, request: str) -> str:
+        session_id = uuid.uuid4().hex[:12]
+        state = new_state(request.strip())
+        self._states[session_id] = state
+        self.store.save_session(session_id, state)
+        return session_id
+
+    def view(self, session_id: str) -> dict[str, Any]:
+        state = self._state(session_id)
+        job = self._job_view(session_id)
+        return {
+            "id": session_id,
+            "phase": state.phase.value,
+            "beam": state.beam.model_dump(mode="json"),
+            "matrix": build_event_matrix(state.beam).model_dump(mode="json"),
+            "issues": state.beam.finalize_issues(),
+            "choices": state.choices,
+            "question": state.question,
+            "messages": [m.model_dump(mode="json") for m in state.messages],
+            "job": job,
+            "versions": [v.version for v in self.store.versions(session_id)],
+        }
+
+    async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
+        state = self._state(session_id)
+        try:
+            async for event in self.interviewer.send(state, text):
+                if isinstance(event, TextDelta):
+                    yield _sse("text", {"text": event.text})
+                elif isinstance(event, ToolCall):
+                    yield _sse("tool", {"name": event.name})
+                elif isinstance(event, BeamUpdated):
+                    self.store.save_session(session_id, state)
+                    yield _sse(
+                        "beam",
+                        {
+                            "beam": event.beam.model_dump(mode="json"),
+                            "matrix": event.matrix.model_dump(mode="json"),
+                            "issues": event.issues,
+                        },
+                    )
+                elif isinstance(event, PhaseChanged):
+                    yield _sse("phase", {"phase": event.phase.value})
+                elif isinstance(event, ChoicesPresented):
+                    yield _sse("choices", {"question": event.question, "options": event.options})
+                elif isinstance(event, TurnDone):
+                    self.store.save_session(session_id, state)
+                    yield _sse(
+                        "done",
+                        {
+                            "message": event.message.model_dump(mode="json"),
+                            "error": event.result.error if event.result.is_error else None,
+                        },
+                    )
+        except (ValueError, RuntimeError) as e:  # 確定済み・処理中など
+            raise Conflict(str(e)) from e
+
+    # --- 確定と生成ジョブ --------------------------------------------------------------------
+
+    def finalize(self, session_id: str) -> dict[str, Any]:
+        state = self._state(session_id)
+        if state.phase.value == "finalized":
+            raise Conflict("確定済みのセッションです")
+        running = self._job_view(session_id)
+        if running and running["status"] == "running":
+            raise Conflict("生成ジョブを実行中です")
+        try:
+            beam = self.interviewer.finalize(state)
+        except ValueError as e:
+            raise Conflict(str(e)) from e
+        self.store.save_session(session_id, state)
+        self.store.add_version(session_id, beam)
+        job = Job(id=uuid.uuid4().hex[:12], session_id=session_id)
+        self._jobs[job.id] = job
+        self.store.save_job(job.id, session_id, job.status, job.steps)
+        task = asyncio.get_running_loop().create_task(self._run_job(job, beam))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return self.view(session_id)
+
+    async def _run_job(self, job: Job, beam: BeamModel) -> None:
+        def on_step(update: StepUpdate) -> None:
+            data = {
+                "step": update.step,
+                "label": update.label,
+                "status": update.status.value,
+                "detail": update.detail,
+            }
+            job.steps = [data if s["step"] == update.step else s for s in job.steps]
+            self.store.save_job(job.id, job.session_id, job.status, job.steps)
+            self._publish(job, _sse("step", data))
+
+        try:
+            result = await self.pipeline(beam, on_step)
+            job.status = "succeeded" if result.ok else "failed"
+            job.pr_url, job.error = result.pr_url, result.error
+        except Exception as e:
+            job.status, job.error = "failed", str(e)
+        self.store.save_job(job.id, job.session_id, job.status, job.steps, job.pr_url, job.error)
+        self._publish(job, _sse("done", job.view()))
+        for q in job.subscribers:
+            q.put_nowait(None)
+
+    def _publish(self, job: Job, event: SSEEvent) -> None:
+        for q in job.subscribers:
+            q.put_nowait(event)
+
+    def _job_view(self, session_id: str) -> dict[str, Any] | None:
+        live = [j for j in self._jobs.values() if j.session_id == session_id]
+        if live:
+            return live[-1].view()
+        row = self.store.latest_job(session_id)
+        if row is None:
+            return None
+        return {
+            "id": row.id,
+            "status": row.status,
+            "steps": json.loads(row.steps_json),
+            "pr_url": row.pr_url,
+            "error": row.error,
+        }
+
+    async def job_events(self, job_id: str) -> AsyncIterator[SSEEvent]:
+        job = self._jobs.get(job_id)
+        if job is None:
+            row = self.store.job(job_id)
+            if row is None:
+                raise NotFound(f"ジョブ {job_id} がありません")
+            yield _sse("done", self._job_view(row.session_id))
+            return
+        for step in job.steps:
+            yield _sse("step", step)
+        if job.status != "running":
+            yield _sse("done", job.view())
+            return
+        queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue()
+        job.subscribers.append(queue)
+        try:
+            while (event := await queue.get()) is not None:
+                yield event
+        finally:
+            job.subscribers.remove(queue)

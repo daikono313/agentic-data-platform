@@ -1,0 +1,980 @@
+{
+  "$defs": {
+    "Additivity": {
+      "description": "足し上げてよいか。単価は non_additive、残高は時間方向に semi_additive。",
+      "enum": [
+        "additive",
+        "semi_additive",
+        "non_additive"
+      ],
+      "title": "Additivity",
+      "type": "string"
+    },
+    "Aggregation": {
+      "enum": [
+        "sum",
+        "count",
+        "count_distinct",
+        "average",
+        "min",
+        "max"
+      ],
+      "title": "Aggregation",
+      "type": "string"
+    },
+    "Attribute": {
+      "additionalProperties": false,
+      "description": "ディメンションの属性。dim のカラムになる。",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "examples": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability",
+          "default": "unknown"
+        },
+        "history_required": {
+          "default": false,
+          "description": "値の変更履歴が必要か（SCD Type2 の要否。MVP では記録のみ）",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "label"
+      ],
+      "title": "Attribute",
+      "type": "object"
+    },
+    "Availability": {
+      "description": "ソースデータで作れるか。",
+      "enum": [
+        "unknown",
+        "available",
+        "unavailable"
+      ],
+      "title": "Availability",
+      "type": "string"
+    },
+    "BeamModel": {
+      "additionalProperties": false,
+      "description": "BEAM 成果物のルート。beam/<name>.yml に保存される。",
+      "properties": {
+        "schema_version": {
+          "default": 1,
+          "type": "integer"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "request": {
+          "description": "ユーザーの最初の要求文",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/BusinessEvent"
+          },
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricRequest"
+          },
+          "type": "array"
+        },
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "type": "array"
+        },
+        "finalized_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "request"
+      ],
+      "title": "BeamModel",
+      "type": "object"
+    },
+    "BusinessEvent": {
+      "additionalProperties": false,
+      "description": "「誰が・何をする」のビジネスイベント。fct 1 つに対応する。",
+      "properties": {
+        "name": {
+          "description": "例: customer_orders_product",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "table_name": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "fct テーブル名の名詞部分。粒度を表す複数形（例: order_lines）"
+        },
+        "label": {
+          "description": "例: 顧客が商品を注文する",
+          "type": "string"
+        },
+        "subject": {
+          "description": "Who（主語）",
+          "type": "string"
+        },
+        "verb": {
+          "description": "動詞",
+          "type": "string"
+        },
+        "object": {
+          "description": "What（目的語）",
+          "type": "string"
+        },
+        "story_type": {
+          "$ref": "#/$defs/StoryType",
+          "default": "discrete"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "1 行が何を表すか（日本語）"
+        },
+        "grain_keys": {
+          "description": "粒度を一意にするキー。縮退ディメンション名または dimension ref",
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "measures": {
+          "items": {
+            "$ref": "#/$defs/Measure"
+          },
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/Dimension"
+          },
+          "type": "array"
+        },
+        "degenerate_dimensions": {
+          "items": {
+            "$ref": "#/$defs/DegenerateDimension"
+          },
+          "type": "array"
+        },
+        "agg_time_dimension": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "指標を時間で集計するときの When の ref。When が複数あるときは必須"
+        },
+        "examples": {
+          "items": {
+            "$ref": "#/$defs/EventExample"
+          },
+          "type": "array"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "impact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_tables": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "subject",
+        "verb",
+        "object"
+      ],
+      "title": "BusinessEvent",
+      "type": "object"
+    },
+    "DegenerateDimension": {
+      "additionalProperties": false,
+      "description": "dim テーブルを持たない、fct に直接置く識別子（例: 注文番号）。",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "source"
+      ],
+      "title": "DegenerateDimension",
+      "type": "object"
+    },
+    "Dimension": {
+      "additionalProperties": false,
+      "description": "6W のいずれかに対応するディメンション。",
+      "properties": {
+        "w": {
+          "$ref": "#/$defs/W"
+        },
+        "name": {
+          "description": "ディメンション名（例: customer）。dim_<name> になる",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "同じディメンションを複数の役割で使う場合の役割名（例: ship_to）"
+        },
+        "attributes": {
+          "items": {
+            "$ref": "#/$defs/Attribute"
+          },
+          "type": "array"
+        },
+        "hierarchy": {
+          "description": "粗い→細かいの順の属性名（例: region, prefecture）",
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "time_grain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeGrain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When の最小粒度"
+        },
+        "business_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）"
+        },
+        "fact_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "イベント側のソースで、このディメンションを指すカラム（例: raw.orders.customer_id、When なら raw.orders.ordered_at）。役割ごとに異なる"
+        }
+      },
+      "required": [
+        "w",
+        "name",
+        "label"
+      ],
+      "title": "Dimension",
+      "type": "object"
+    },
+    "EventExample": {
+      "additionalProperties": false,
+      "description": "インタビューで集めた具体例（event story）。unit test の期待値になる。",
+      "properties": {
+        "values": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、または When の dimension ref（値は日付・日時の文字列）",
+          "type": "object"
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "title": "EventExample",
+      "type": "object"
+    },
+    "EventMatrix": {
+      "properties": {
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/MatrixColumn"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/MatrixRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "rows"
+      ],
+      "title": "EventMatrix",
+      "type": "object"
+    },
+    "FactType": {
+      "enum": [
+        "transaction",
+        "periodic_snapshot",
+        "accumulating_snapshot"
+      ],
+      "title": "FactType",
+      "type": "string"
+    },
+    "FilterOperator": {
+      "enum": [
+        "=",
+        "!=",
+        "in",
+        "not_in"
+      ],
+      "title": "FilterOperator",
+      "type": "string"
+    },
+    "Gap": {
+      "additionalProperties": false,
+      "description": "未解決事項。PR 本文に書かれ、data_unavailable は issue も起票される。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/GapKind"
+        },
+        "description": {
+          "type": "string"
+        },
+        "event": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "w": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/W"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "related": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "関係する measure / 属性の参照"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "Gap",
+      "type": "object"
+    },
+    "GapKind": {
+      "enum": [
+        "data_unavailable",
+        "unanswered",
+        "conflict",
+        "deferred"
+      ],
+      "title": "GapKind",
+      "type": "string"
+    },
+    "Level": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Level",
+      "type": "string"
+    },
+    "MatrixColumn": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "w": {
+          "$ref": "#/$defs/W"
+        },
+        "conformed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "w",
+        "conformed"
+      ],
+      "title": "MatrixColumn",
+      "type": "object"
+    },
+    "MatrixRow": {
+      "properties": {
+        "event": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "fact_type": {
+          "$ref": "#/$defs/FactType"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "impact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "measures": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "dimensions": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "event",
+        "label",
+        "fact_type",
+        "grain",
+        "priority",
+        "impact",
+        "effort",
+        "measures",
+        "dimensions"
+      ],
+      "title": "MatrixRow",
+      "type": "object"
+    },
+    "Measure": {
+      "additionalProperties": false,
+      "description": "How many。fct の数値カラムになる。",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "description": "表示名（日本語）",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "aggregation": {
+          "$ref": "#/$defs/Aggregation",
+          "default": "sum"
+        },
+        "additivity": {
+          "$ref": "#/$defs/Additivity",
+          "default": "additive"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "単位（円、個 など）"
+        },
+        "non_additive_dimension": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "semi_additive のとき、足し上げできない When の ref（例: 残高の date）"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability",
+          "default": "unknown"
+        }
+      },
+      "required": [
+        "name",
+        "label"
+      ],
+      "title": "Measure",
+      "type": "object"
+    },
+    "MetricFilter": {
+      "additionalProperties": false,
+      "description": "指標の絞り込み条件。Semantic Layer の filter に変換される。",
+      "properties": {
+        "ref": {
+          "description": "`<dimension ref>.<attribute>` または縮退ディメンション名",
+          "type": "string"
+        },
+        "operator": {
+          "$ref": "#/$defs/FilterOperator"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "ref",
+        "operator",
+        "values"
+      ],
+      "title": "MetricFilter",
+      "type": "object"
+    },
+    "MetricRequest": {
+      "additionalProperties": false,
+      "description": "「How many ○○ by △△」の形にした指標の要求。Semantic Layer の metric になる。",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "question": {
+          "description": "ユーザーの元の言葉",
+          "type": "string"
+        },
+        "framed_question": {
+          "description": "How many の形に言い換えた問い",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/MetricType",
+          "default": "simple"
+        },
+        "event": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "measure": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "simple / cumulative のとき"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ratio のとき（metric 名）"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ratio のとき（metric 名）"
+        },
+        "expr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "derived のとき。他の metric 名を使った四則演算のみ"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "cumulative のとき（例: '7 days'）。無ければ全期間の累計"
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "絞り込み条件の日本語の説明"
+        },
+        "filters": {
+          "description": "絞り込み条件（すべて AND）。生成に使う",
+          "items": {
+            "$ref": "#/$defs/MetricFilter"
+          },
+          "type": "array"
+        },
+        "group_by": {
+          "description": "`<dimension ref>.<attribute>`、縮退ディメンション名、または時間軸 `<When ref>.<day|week|month|quarter|year>` の一覧",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/MetricStatus",
+          "default": "draft"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "question",
+        "framed_question",
+        "event"
+      ],
+      "title": "MetricRequest",
+      "type": "object"
+    },
+    "MetricStatus": {
+      "enum": [
+        "draft",
+        "confirmed",
+        "blocked"
+      ],
+      "title": "MetricStatus",
+      "type": "string"
+    },
+    "MetricType": {
+      "enum": [
+        "simple",
+        "ratio",
+        "derived",
+        "cumulative"
+      ],
+      "title": "MetricType",
+      "type": "string"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "ソースのどこから作るか。column か expr のどちらかを指定する。",
+      "properties": {
+        "table": {
+          "description": "ソーステーブル（例: raw.orders）",
+          "type": "string"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "column で表せない場合の SQL 式"
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "StoryType": {
+      "description": "イベントの種類。fct の種類を決める。",
+      "enum": [
+        "discrete",
+        "recurring",
+        "evolving"
+      ],
+      "title": "StoryType",
+      "type": "string"
+    },
+    "TimeGrain": {
+      "enum": [
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year"
+      ],
+      "title": "TimeGrain",
+      "type": "string"
+    },
+    "W": {
+      "description": "How many 以外の 6W。How many は measure として別に持つ。",
+      "enum": [
+        "who",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how"
+      ],
+      "title": "W",
+      "type": "string"
+    }
+  },
+  "title": "BEAM"
+}
