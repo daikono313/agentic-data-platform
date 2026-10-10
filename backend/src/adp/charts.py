@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import re
 import subprocess
@@ -43,6 +44,7 @@ HEADER = (
 SOURCE = "warehouse"
 # 元ファイルは charts/ の外に置く（charts/ の下は dbt Charts がボードとして配信する）
 SPECS_DIR = "chart_specs"
+CHARTS_CONFIG = {"sources": {SOURCE: {"type": "dbt_profile", "profile": "adp", "target": "dev"}}}
 MF_TIMEOUT_S = 120
 _QUERY_KEYS = {"metrics", "group_by", "order", "limit", "filters", "start_time", "end_time"}
 # 元ファイルで使えるキー（許可リスト）。
@@ -99,8 +101,8 @@ class ChartError(Exception):
     pass
 
 
-_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
-_SAFE_VALUE = re.compile(r"[^{}%\\\x00-\x1f]{0,200}")
+_IDENT = re.compile(r"^[a-z_][a-z0-9_]*\Z")
+_SAFE_VALUE = re.compile(r"[^{}%\\\x00-\x1f\x7f-\x9f  ]{0,200}")
 _OPS = {
     "=": "=",
     "!=": "<>",
@@ -126,6 +128,8 @@ def _literal(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int | float):
+        if not math.isfinite(value):
+            raise ChartError(f"filter の値に使えない数値があります: {value!r}")
         return str(value)
     if isinstance(value, str):
         # MetricFlow は where を Jinja で展開するので、{ } % があるとエスケープの後で引用符や
@@ -180,7 +184,9 @@ class MetricQuery:
         ):
             raise ChartError(f"metric_queries.{name}.limit は正の整数で書いてください")
         for key in ("start_time", "end_time"):
-            if data.get(key) is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(data[key])):
+            if data.get(key) is not None and not re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}", str(data[key])
+            ):
                 raise ChartError(f"metric_queries.{name}.{key} は YYYY-MM-DD で書いてください")
         return cls(
             metrics=_idents(name, "metrics", data["metrics"]),
@@ -368,7 +374,7 @@ def _stray_files(root: Path, label: str) -> list[str]:
             and entry.name.endswith(".yml")
             and _IDENT.match(entry.name.removesuffix(".yml")) is not None
         )
-        if not ok and entry.name != ".gitkeep":
+        if not ok:
             problems.append(
                 f"{label}/{entry.name}: {label}/ の直下には <名前>.yml だけを置けます"
                 "（サブディレクトリ・シンボリックリンク・他の形式は不可）"
@@ -421,18 +427,24 @@ def check(warehouse: Path, mf: Path) -> list[str]:
 
 
 def _check_sources(warehouse: Path) -> list[str]:
-    """dbt Charts の接続は dbt プロファイル経由の warehouse だけにする。
+    """dbt Charts の設定は、dbt プロファイル経由の warehouse だけを使う内容と完全に一致させる。
 
-    独自の duckdb ソースは外部アクセスを有効に戻せるため（ADR 0002）。
+    独自の duckdb ソース・HTML・地図・キャッシュの場所などで外部への経路を戻せるため（ADR 0002）。
+    `charts/` が無いと dbt Charts は `faces/` を配信するので、それも確かめる。
     """
+    problems = []
+    charts_dir = warehouse / "charts"
+    if charts_dir.is_symlink() or not charts_dir.is_dir():
+        problems.append("charts/ はディレクトリで置いてください")
+    if (warehouse / "faces").exists() or (warehouse / "faces").is_symlink():
+        problems.append("faces/ は置けません（dbt Charts がボードとして配信する）")
     path = warehouse / "dbt_charts.yml"
     if not path.exists():
-        return ["dbt_charts.yml がありません"]
+        return [*problems, "dbt_charts.yml がありません"]
     config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    sources = config.get("sources") or {}
-    if set(sources) != {SOURCE} or (sources.get(SOURCE) or {}).get("type") != "dbt_profile":
-        return [f"dbt_charts.yml: ソースは {SOURCE}（type: dbt_profile）の 1 つだけにしてください"]
-    return [f"dbt_charts.yml: {p}" for p in _unsafe(config)]
+    if config != CHARTS_CONFIG:
+        problems.append(f"dbt_charts.yml: 内容は {CHARTS_CONFIG} だけにしてください")
+    return problems
 
 
 def main() -> None:

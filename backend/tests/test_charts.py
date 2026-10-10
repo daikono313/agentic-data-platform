@@ -190,9 +190,21 @@ def _query(**changes: object) -> dict[str, object]:
                 "{% raw %}{{ 7*7 }}{% endraw %}",
                 '{{ "{{" }} 7*7 {{ "}}" }}',
                 "a\\",
+                "a\u2028b",
+                "a\x85b",
             )
         ],
         (_with(metric_queries={"q q": {"metrics": ["revenue"]}}), "metric_queries の名前"),
+        (_with(metric_queries={"q\n": {"metrics": ["revenue"]}}), "metric_queries の名前"),
+        (
+            _with(
+                metric_queries=_query(
+                    filters=[{"dimension": "store__x", "op": "=", "value": float("nan")}]
+                )
+            ),
+            "数値",
+        ),
+        (_with(metric_queries=_query(start_time="２０２４-01-01")), "YYYY-MM-DD"),
         (_with(charts=_chart(sort={"by": "x; 1", "order": "desc"})), "sort"),
         (_with(charts=_chart(sort={"by": "revenue", "order": "sideways"})), "sort"),
         (_with(charts=_chart(style={"number_format": "{{ 7*7 }}"})), "number_format"),
@@ -258,6 +270,8 @@ def test_unsafe_boards_are_rejected(warehouse: Path) -> None:
         "charts/upper.YML",
         "charts/b.yaml",
         "charts/sub/a.yml",
+        "charts/.gitkeep/evil.yml",
+        "charts/.gitkeep",
         "chart_specs/evil3.yaml",
         "chart_specs/sub/evil4.yml",
     ],
@@ -276,6 +290,21 @@ def test_check_rejects_files_dbt_charts_would_serve(warehouse: Path, rel: str) -
         path.unlink()
         if created_dir:
             path.parent.rmdir()
+
+
+def test_check_rejects_faces_and_extra_config(warehouse: Path) -> None:
+    faces = warehouse / "faces"
+    faces.mkdir()
+    config = warehouse / "dbt_charts.yml"
+    original = config.read_text(encoding="utf-8")
+    config.write_text(original + "html_policy_ceiling: trusted-raw\n", encoding="utf-8")
+    try:
+        problems = check(warehouse, MF)
+        assert any(p.startswith("faces/") for p in problems), problems
+        assert any(p.startswith("dbt_charts.yml") for p in problems), problems
+    finally:
+        faces.rmdir()
+        config.write_text(original, encoding="utf-8")
 
 
 def test_check_rejects_symlinks(warehouse: Path, tmp_path: Path) -> None:
@@ -299,7 +328,7 @@ def test_extra_chart_sources_are_rejected(warehouse: Path) -> None:
     original = config.read_text(encoding="utf-8")
     config.write_text(original + "  evil:\n    type: duckdb\n    path: data/dev.duckdb\n")
     try:
-        assert any("ソースは warehouse" in p for p in check(warehouse, MF))
+        assert any(p.startswith("dbt_charts.yml") for p in check(warehouse, MF))
     finally:
         config.write_text(original, encoding="utf-8")
 
