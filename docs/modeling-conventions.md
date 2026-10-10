@@ -87,20 +87,38 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 [ADR 0001](adr/0001-metricflow-on-duckdb.md) を参照。リファレンスは `models/marts/_marts.yml`。
 
+### semantic model
+
 - dim / fct の model YAML に `semantic_model: {enabled: true}` を書く。
-- entity: dim の主キーは `entity: {type: primary, name: <dimension name>}`。fct の外部キーは `entity: {type: foreign, name: <dimension name>}`。fct の主キー（grain_keys が1つの場合）は `entity: {type: primary, name: <fct の単数形>}`。
-- dimension: dim の属性は `dimension: {type: categorical}`。fct の縮退ディメンションや fct に置いた How / Why も categorical。
-- 時間: fct の日付列に `granularity: day` と `dimension: {type: time}` を書き、model に `agg_time_dimension` を置く。
-- `dim_date` は time spine を兼ねる（`time_spine.standard_granularity_column: date_day`）。
-- metric
-  - simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。
-  - ratio / derived / cumulative は、`_marts.yml` のトップレベル `metrics:` に書く。
-  - cumulative は `grain_to_date` か全期間累計のみ（`window` は使わない）。
-  - 業務上の除外条件（キャンセルを除くなど）は `filter` に書き、description にも日本語で書く。ratio の分子と分母で条件をそろえる。
-- 参照名は `<entity>__<dimension>`（例: `store__channel`）、時間は `metric_time__<grain>`。BEAM の group_by との対応:
-  - `<ref>.<attr>`（通常のディメンション）→ `<dimension name>__<attr>`
-  - マスタなしのディメンション・縮退ディメンション → `<fct の主 entity>__<列名>`（例: `order_line__payment_method`）
-  - agg_time_dimension の When `date.<grain>` → `metric_time__<grain>`
-- **MVP の制約**
-  - When 以外の role 付きディメンション（例: 配送先顧客）は、MetricFlow では entity 名で結合されるため dim と結合できない。fct の `<role>_key` は作るが Semantic Layer の entity にはせず、BEAM の gap（deferred）として PR に書く。
-  - `dim_date` の属性（曜日・土日など）での集計は、fct に date entity が無いため使えない。月・週などの粒度は `metric_time__<grain>` で代替する。
+- dim の主キーは `entity: {type: primary, name: <dimension name>}`、属性は `dimension: {type: categorical}`。
+- fct
+  - 外部キー `<name>_key` は `entity: {type: foreign, name: <dimension name>}`。
+  - grain_keys が縮退ディメンション1つなら、その列を `entity: {type: primary, name: <fct の単数形>}` にする（例: `order_line`）。grain_keys が複数なら、model に `primary_entity: <fct の単数形>` を書く。
+  - 縮退ディメンション、マスタなしのディメンション、区分値の列は `dimension: {type: categorical}`。
+  - When の日付列に `granularity: day` と `dimension: {type: time}` を書き、model に `agg_time_dimension: <列名>` を置く。
+- role 付きディメンション（例: 配送先顧客 `ship_to`）は `derived_semantics` で役割ごとの entity を作る。
+  - dim 側: `derived_semantics: {entities: [{type: unique, name: <role>, expr: <name>_key}]}`
+  - fct 側: `derived_semantics: {entities: [{type: foreign, name: <role>, expr: <role>_key}]}`
+- When と `dim_date`
+  - `dim_date` は time spine を兼ね、`date_day` を `entity: {type: primary, name: date}` にする（属性は categorical）。
+  - fct の各 When について `derived_semantics: {entities: [{type: foreign, name: <When ref>, expr: <日付列>}]}` を書く。When ref が `date` 以外の場合は、dim_date 側にも `{type: unique, name: <When ref>, expr: date_day}` を足す。
+- dim の列名に `day` / `week` / `month` / `quarter` / `year` を使わない（時間粒度の名前と衝突して検証に失敗する）。
+
+### metric
+
+- simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。ratio / derived / cumulative は `_marts.yml` のトップレベル `metrics:` に書く。
+- cumulative は `window`（例: `7 days`）か `grain_to_date` を使い、必ず `period_agg: last` を付ける。
+- 業務上の除外条件（キャンセルを除くなど）は `filter` に書き、description にも日本語で書く。ratio の分子と分母で条件をそろえる。
+
+### BEAM の group_by → MetricFlow の参照名
+
+| BEAM | MetricFlow |
+|---|---|
+| `<ref>.<attr>`（通常のディメンション） | `<ref>__<attr>` |
+| `<ref>.<attr>`（マスタなしのディメンション。属性名は無視する） | `<fct の主 entity>__<ref の列名>`（例: `order_line__payment_method`） |
+| 縮退ディメンション名 | `<fct の主 entity>__<名前>` |
+| `<agg_time_dimension の ref>` / `<ref>.<grain>` | `metric_time__<grain>`（grain 省略時は When の time_grain） |
+| それ以外の When の `<ref>.<grain>` | `<fct の主 entity>__<日付列>__<grain>` |
+| When の属性（曜日など）`<When ref>.<attr>` | `<When ref>__<attr>` |
+
+- cumulative の metric は、`metric_time__<grain>` を group_by に含めないとクエリできない。生成時の確認クエリでは必ず含める。

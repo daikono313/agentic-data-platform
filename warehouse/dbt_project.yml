@@ -10,6 +10,11 @@ test-paths: ["tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+flags:
+  # latest spec の cumulative の window を使うため（dbt-core 1.12 のパーサーが legacy の
+  # type_params.window にも値を入れてしまい、既定 true だと検証で弾かれる。ADR 0001）
+  require_nested_cumulative_type_params: false
+
 vars:
   # dim_date の範囲（end は含まない）。When のソース日付がすべて収まるようにする
   adp_date_start: "2010-01-01"

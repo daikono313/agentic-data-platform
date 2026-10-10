@@ -3,6 +3,8 @@ version: 2
 models:
   - name: dim_date
     description: 日付ディメンション（When）。範囲は dbt_project.yml の vars（adp_date_start / adp_date_end）。MetricFlow の time spine を兼ねる
+    semantic_model:
+      enabled: true
     time_spine:
       standard_granularity_column: date_day
     columns:
@@ -10,14 +12,15 @@ models:
         description: 日付
         granularity: day
         data_tests: [unique, not_null]
-      - {name: year, description: 年}
-      - {name: quarter, description: 四半期}
-      - {name: month, description: 月}
+        entity: {type: primary, name: date}
+      - {name: calendar_year, description: 年, dimension: {type: categorical}}
+      - {name: calendar_quarter, description: 四半期, dimension: {type: categorical}}
+      - {name: calendar_month, description: 月, dimension: {type: categorical}}
       - {name: month_start, description: 月初日}
       - {name: week_start, description: 週の開始日（月曜）}
-      - {name: day_of_week, description: 曜日番号（1=月曜〜7=日曜）}
-      - {name: day_of_week_name, description: 曜日名}
-      - {name: is_weekend, description: 土日かどうか}
+      - {name: day_of_week, description: 曜日番号（1=月曜〜7=日曜）, dimension: {type: categorical}}
+      - {name: day_of_week_name, description: 曜日名, dimension: {type: categorical}}
+      - {name: is_weekend, description: 土日かどうか, dimension: {type: categorical}}
 
   - name: dim_customer
     description: 顧客ディメンション（Who）。SCD Type1。customer_id が NULL の行は不明メンバー
@@ -97,6 +100,10 @@ models:
     semantic_model:
       enabled: true
     agg_time_dimension: ordered_on
+    derived_semantics:
+      entities:
+        # When（注文日）から dim_date の属性（曜日・土日など）を引けるようにする
+        - {type: foreign, name: date, expr: ordered_on}
     columns:
       - name: order_line_id
         description: 注文明細番号（縮退ディメンション）
@@ -211,3 +218,12 @@ metrics:
     type: cumulative
     input_metric: revenue
     grain_to_date: month
+    # 月や年の粒度で集計したとき、期間の最終日の累計値を返す（既定の first だと初日の値になる）
+    period_agg: last
+  - name: revenue_rolling_7d
+    label: 売上金額（直近7日）
+    description: 直近7日間の売上金額の合計
+    type: cumulative
+    input_metric: revenue
+    window: 7 days
+    period_agg: last

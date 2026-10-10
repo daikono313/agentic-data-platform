@@ -245,8 +245,8 @@ MVP の段階では手動で計測する。
 | R12 | Semantic Layer は dbt Semantic Layer（OSS MetricFlow、latest spec） | dbt と一体で管理でき、標準仕様に沿う |
 | R13 | Web は FastAPI + React | backend を dbt・MetricFlow・Agent SDK と同じ Python にそろえられる |
 | R14 | PR 作成は gh CLI（daikono313） | ローカル MVP では追加の設定が不要 |
-| R16 | MetricFlow は DuckDB + latest spec で動く。累計は `grain_to_date` と全期間累計のみ（`window` は未対応）。backend からは `mf` CLI で呼ぶ | [ADR 0001](adr/0001-metricflow-on-duckdb.md) |
 | R15 | 細かい選定（Vite / shadcn / SSE / SQLite / uv / pnpm / dbt_utils / ハッシュのサロゲートキー / `beam/*.yml` / ブランチ名 `beam/<event>-<yyyymmdd>` / 既存 dim は再利用し、カラム追加のみ許可） | 後から戻せる項目のため推奨案で確定 |
+| R16 | MetricFlow は DuckDB + latest spec で動く（cumulative の window はフラグで対応）。backend からは `mf` CLI で呼ぶ | [ADR 0001](adr/0001-metricflow-on-duckdb.md) |
 
 ## Alternatives considered
 
