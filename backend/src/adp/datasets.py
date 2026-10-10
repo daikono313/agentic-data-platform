@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from adp.catalog.catalog import Catalog, CatalogUnavailable
+from adp.catalog.catalog import Catalog, CatalogUnavailable, TableProfile
 from adp.charts import ChartError, MetricFlowCompiler
 
 
@@ -73,6 +73,11 @@ class BeamInfo(BaseModel):
     title: str
     request: str
     metrics: list[str]
+
+
+class SourceProfile(TableProfile):
+    used_by: list[str] = Field(default_factory=list)
+    """この源泉を（staging などを経由して）使っている整備済みのモデル（dim / fct）。"""
 
 
 class Datasets(BaseModel):
@@ -259,6 +264,41 @@ class DatasetIndex:
             except Exception:
                 errors.append(f"{path.name} を読めませんでした")
         return result
+
+    def profile(self, table: str) -> SourceProfile:
+        """源泉 1 つのデータプロファイル（#62）。
+
+        対象外のテーブルは ValueError、DB が使用中なら CatalogUnavailable。
+        """
+        if self.catalog is None:
+            raise CatalogUnavailable("元データのカタログが使えません")
+        profile = self.catalog.profile_table(table)
+        return SourceProfile(
+            **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
+        )
+
+    def _used_by(self, schema: str, name: str) -> list[str]:
+        try:
+            manifest = json.loads(
+                (self.warehouse / "target" / "manifest.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return []
+        children: dict[str, list[str]] = manifest.get("child_map", {})
+        starts = [
+            k
+            for k, v in manifest.get("sources", {}).items()
+            if v.get("schema") == schema and (v.get("identifier") or v.get("name")) == name
+        ]
+        seen: set[str] = set()
+        stack = list(starts)
+        while stack:
+            for child in children.get(stack.pop(), []):
+                if child.startswith("model.") and child not in seen:
+                    seen.add(child)
+                    stack.append(child)
+        models = {c.rsplit(".", 1)[-1] for c in seen}
+        return sorted(m for m in models if m.startswith(("dim_", "fct_")))
 
     def all(self) -> Datasets:
         errors: list[str] = []

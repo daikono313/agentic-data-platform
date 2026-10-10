@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import { errorText, type Datasets } from '@/api/datasets'
+import { errorText, exampleRequests, type Datasets } from '@/api/datasets'
 import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
 import { ChartScreen } from '@/components/ChartScreen'
@@ -12,6 +12,7 @@ import { EventMatrixView } from '@/components/EventMatrixView'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { PhaseProgress } from '@/components/PhaseProgress'
+import { SourceProfileScreen } from '@/components/SourceProfile'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -109,6 +110,8 @@ export default function App() {
   const params = new URLSearchParams(window.location.search)
   const chart = params.get('chart')
   if (chart) return <ChartScreen metric={chart} jobId={params.get('job')} />
+  const source = params.get('source')
+  if (source) return <SourceProfileScreen table={source} />
   return <InterviewApp />
 }
 
@@ -359,13 +362,11 @@ function StartScreen({
 }) {
   const [request, setRequest] = useState('')
   const input = useRef<HTMLInputElement>(null)
+  const examples = datasets ? exampleRequests(datasets.sources) : []
   return (
-    <main className="mx-auto grid min-h-screen max-w-5xl gap-8 px-4 py-10 lg:grid-cols-[1fr_1.2fr]">
-      <div className="flex flex-col justify-center gap-4">
+    <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
+      <section className="space-y-3" aria-label="要求の入力">
         <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
-        <p className="text-sm text-muted-foreground">
-          例:「店舗ごとの売上を見たい」。質問に答えていくと、データモデルと指標を実装した PR ができます。右側で、いま使えるデータを確認できます。
-        </p>
         <form
           className="flex gap-2"
           onSubmit={(e) => {
@@ -376,33 +377,43 @@ function StartScreen({
           <Input
             name="request"
             aria-label="見たい指標"
-            placeholder="xxx の売上指標を取りたい"
+            placeholder="例: 店舗ごとの売上を見たい"
+            className="h-11 text-base"
             ref={input}
             value={request}
             onChange={(e) => setRequest(e.target.value)}
           />
-          <Button type="submit">始める</Button>
+          <Button type="submit" className="h-11 px-6">
+            始める
+          </Button>
         </form>
+        {examples.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-xs text-muted-foreground">元データから作れそうな要求:</span>
+            {examples.map((e) => (
+              <button
+                key={e}
+                type="button"
+                className="rounded-full border px-2 py-0.5 text-xs hover:bg-muted"
+                onClick={() => {
+                  setRequest(e)
+                  input.current?.focus()
+                }}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground">
+          質問に答えていくと、データモデルと指標を実装した PR ができます。下で、いま使えるデータを確認できます。
+          <a href="?demo" className="ml-2 underline">
+            デモを見る
+          </a>
+        </p>
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <a href="?demo" className="text-xs text-muted-foreground underline">
-          デモを見る
-        </a>
-      </div>
-      <Card className="max-h-[80vh] gap-2 overflow-y-auto py-4">
-        <CardHeader className="px-4">
-          <CardTitle className="text-base">使えるデータ</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4">
-          <DatasetsPanel
-            datasets={datasets}
-            error={datasetsError}
-            onPickExample={(text) => {
-              setRequest(text)
-              input.current?.focus()
-            }}
-          />
-        </CardContent>
-      </Card>
+      </section>
+      <DatasetsPanel datasets={datasets} error={datasetsError} />
     </main>
   )
 }

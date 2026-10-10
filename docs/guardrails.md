@@ -28,6 +28,7 @@
 | ソースを書き換えない、外部のファイルに触れない | `read_only=True` かつ `enable_external_access=False` で接続 | `tests/catalog/test_catalog.py`（悪意のあるテーブル名でファイルが作られない） |
 | SQL インジェクション | 呼び出し側の名前は識別子のみ許可し、対象スキーマに限定。DB から読んだ名前も必ず `_q()` でクォートする | 同上 |
 | エラーメッセージからの情報漏れ | DuckDB の例外は定型文に置き換えて返す | 同上 |
+| 画面からの参照（源泉のプロファイル、#62） | `GET /sources/{table}/profile` もエージェントと同じ Catalog（同じ識別子・スキーマの制限、読み取り専用）を通す。DuckDB の例外は定型文の 503。NULL 以外の値がすべて違う列（ID・メールアドレスなど）は、画面で上位の値を出さない | `tests/test_datasets.py`、`SourceProfile.test.tsx` |
 
 ## 4. 生成エージェント（自己修復）
 

@@ -132,3 +132,54 @@ def test_broken_manifest_is_reported(tmp_path: Path) -> None:
     (tmp_path / "warehouse" / "target" / "manifest.json").write_text("{broken")
     data = DatasetIndex(tmp_path, Catalog(tmp_path / "x.duckdb")).all()
     assert data.metrics == [] and data.models == [] and data.errors
+
+
+def test_source_profile(repo: Path) -> None:
+    """源泉のプロファイル: 全列の統計・キーの候補・使っている整備済みモデル（#62）。"""
+    catalog = Catalog(repo / "warehouse/data/dev.duckdb", repo / "warehouse/target/manifest.json")
+    p = DatasetIndex(repo, catalog).profile("raw.order_items")
+    assert p.row_count > 0 and p.description
+    assert [c.column for c in p.profiles] == [c.name for c in p.columns]
+    assert p.primary_key_candidates == ["order_item_id"]
+    assert {f.column: f.references for f in p.foreign_key_candidates}["order_id"] == (
+        "raw.orders.order_id"
+    )
+    assert "fct_order_lines" in p.used_by and all(m.startswith(("dim_", "fct_")) for m in p.used_by)
+    product = next(c for c in p.profiles if c.column == "product_id")
+    assert 0 < len(product.top_values) <= 5 and not product.is_unique
+
+
+def test_source_profile_api(repo: Path) -> None:
+    async def noop(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    service = SessionService(
+        Store(repo / ".adp/app.db"), Interviewer(ScriptedRunner([]), LLMSettings()), noop
+    )
+    index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"))
+    client = TestClient(create_app(service, index))
+    body = client.get("/sources/raw.returns/profile").json()
+    assert body["name"] == "returns" and body["profiles"]
+    # 対象スキーマ外・識別子でない名前・存在しないテーブルは 404
+    for bad in ("main.fct_order_lines", "raw.x;drop", "raw.nope"):
+        assert client.get(f"/sources/{bad}/profile").status_code == 404, bad
+    assert TestClient(create_app(service)).get("/sources/raw.returns/profile").status_code == 503
+
+
+def test_source_profile_db_error_is_fixed_text(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """DuckDB の例外は 500 にせず、本文を出さない定型文の 503 にする（guardrails §3）。"""
+    import duckdb
+
+    async def noop(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    def broken(self, table, top=5):  # type: ignore[no-untyped-def]
+        raise duckdb.BinderException("secret detail")
+
+    monkeypatch.setattr(Catalog, "profile_table", broken)
+    service = SessionService(
+        Store(repo / ".adp/app.db"), Interviewer(ScriptedRunner([]), LLMSettings()), noop
+    )
+    index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"))
+    res = TestClient(create_app(service, index)).get("/sources/raw.returns/profile")
+    assert res.status_code == 503 and "secret" not in res.text

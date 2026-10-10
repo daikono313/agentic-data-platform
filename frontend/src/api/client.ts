@@ -1,5 +1,5 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
-import type { Datasets } from './datasets'
+import type { Datasets, SourceProfile } from './datasets'
 import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
 import type { InterviewEvent, JobEvent, SessionView } from './types'
 
@@ -42,6 +42,9 @@ export async function* readSSE<T extends { event: string; data: unknown }>(
 export const api = {
   async datasets(): Promise<Datasets> {
     return json(await fetch(`${BASE}/datasets`))
+  },
+  async sourceProfile(table: string): Promise<SourceProfile> {
+    return json(await fetch(`${BASE}/sources/${encodeURIComponent(table)}/profile`))
   },
   async createSession(request: string): Promise<SessionView> {
     return json(
