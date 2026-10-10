@@ -22,6 +22,7 @@
 ## Related documents
 
 - [docs/certificate.md](certificate.md) — 完了条件（certificate）と自己マージ可否（promotion policy）
+- [docs/modeling-conventions.md](modeling-conventions.md) — dbt モデリング規約（BEAM との対応、キー、テスト）
 - [docs/knowledge/beam.md](knowledge/beam.md) — BEAM✲ の手法リファレンス（インタビューエージェントの知識源）
 - [docs/adr/](adr/) — この設計書の確定後に生じた設計変更の記録
 - dbt Semantic Layer: https://docs.getdbt.com/docs/use-dbt-semantic-layer/dbt-sl?version=2 / latest spec: https://docs.getdbt.com/docs/build/latest-metrics-spec
