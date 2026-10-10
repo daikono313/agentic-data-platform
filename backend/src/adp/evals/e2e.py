@@ -89,6 +89,9 @@ async def _run(
                 choices = data["options"]
             elif event["event"] == "done":
                 reply, error = data["message"]["text"], data["error"]
+                # 画面と同じく、ユーザー役には本文の後ろに質問文が見える
+                if data["message"].get("question"):
+                    reply = f"{reply}\n\n{data['message']['question']}".strip()
         print(f"[{turn}] user: {message}\n    agent: {reply[:300]}")
         if error:
             print(f"エラー: {error}")

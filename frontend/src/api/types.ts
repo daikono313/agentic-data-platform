@@ -24,6 +24,9 @@ export const PHASES: { id: Phase; label: string }[] = [
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
+  /** 選択肢つきの質問文。本文とは別に持つ（#36） */
+  question?: string | null
+  choices?: string[]
   at?: string
 }
 

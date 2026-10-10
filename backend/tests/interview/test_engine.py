@@ -157,7 +157,24 @@ async def test_question_from_present_choices_is_shown() -> None:
     events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
     done = events[-1]
     assert isinstance(done, TurnDone)
-    assert done.message.text == "上のボタンから選んでください。\n\n売上は何を指しますか？"
+    # 本文と質問文は別に持つ（画面で質問文が二重に出ないように。#36）
+    assert done.message.text == "上のボタンから選んでください。"
+    assert done.message.question == "売上は何を指しますか？"
+    assert done.message.choices == ["a", "b"]
+
+
+def test_transcript_checks_detect_position_words_and_repeats() -> None:
+    from adp.evals.interview import _transcript_checks
+    from adp.interview import ChatMessage
+
+    bad = [
+        ChatMessage(role="assistant", text="上の選択肢から選んでください。", question="Q?"),
+        ChatMessage(role="assistant", text="前置き。Q2?", question="Q2?"),
+    ]
+    results = {r.name: r.passed for r in _transcript_checks(bad)}
+    assert results == {"no_choice_position_words": False, "question_not_repeated_in_text": False}
+    good = [ChatMessage(role="assistant", text="支払方法は4種類です。", question="見たいですか？")]
+    assert all(r.passed for r in _transcript_checks(good))
 
 
 async def test_runner_exception_is_recorded_as_error_turn() -> None:
@@ -179,3 +196,17 @@ async def test_remove_gap_rejects_bad_index() -> None:
     state = new_state("売上")
     await collect(Interviewer(runner, LLMSettings()), state, "売上")
     assert runner.tool_results[0].get("is_error")
+
+
+def test_transcript_checks_tolerate_punctuation_and_other_ui_words() -> None:
+    from adp.evals.interview import _transcript_checks
+    from adp.interview import ChatMessage
+
+    repeat = [
+        ChatMessage(role="assistant", text="前置き。見たいですか? ", question="見たいですか？")
+    ]
+    assert not {r.name: r.passed for r in _transcript_checks(repeat)}[
+        "question_not_repeated_in_text"
+    ]
+    ok = [ChatMessage(role="assistant", text="画面上のボタンの配置は自由です。", question="Q？")]
+    assert all(r.passed for r in _transcript_checks(ok))
