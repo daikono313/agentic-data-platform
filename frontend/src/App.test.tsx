@@ -1,9 +1,12 @@
 import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 
 describe('App', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ metrics: [], models: [], sources: [], beams: [], errors: [] })))))
+  })
   afterEach(() => window.history.replaceState(null, '', '/'))
 
   it('最初は要求の入力画面を表示する', () => {

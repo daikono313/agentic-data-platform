@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useReducer } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
+import type { Datasets } from '@/api/datasets'
 import { BeamCanvas } from '@/components/BeamCanvas'
+import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
 import { JobProgress } from '@/components/JobProgress'
@@ -185,6 +187,8 @@ export default function App() {
       })
   }, [isDemo, followJob])
 
+  const sideDatasets = useDatasets(!!session && !isDemo)
+
   if (!session) return <StartScreen onStart={start} error={state.error} />
 
   const event = session.beam.events?.[0]
@@ -216,6 +220,14 @@ export default function App() {
         </Card>
         <div className="min-w-0 space-y-4">
           {state.error && <p className="rounded border border-destructive p-2 text-sm text-destructive">{state.error}</p>}
+          {!isDemo && (
+            <details className="rounded-lg border p-3">
+              <summary className="cursor-pointer text-sm font-semibold">使えるデータ（参照用）</summary>
+              <div className="mt-3">
+                <DatasetsPanel datasets={sideDatasets.datasets} error={sideDatasets.error} compact />
+              </div>
+            </details>
+          )}
           <section aria-label="BEAM Canvas">
             <BeamCanvas event={event} />
           </section>
@@ -266,28 +278,55 @@ export default function App() {
   )
 }
 
+function useDatasets(enabled: boolean) {
+  const [datasets, setDatasets] = useState<Datasets | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    api.datasets().then(setDatasets).catch((e) => setError(String(e)))
+  }, [enabled])
+  return { datasets, error }
+}
+
 function StartScreen({ onStart, error }: { onStart: (r: string) => void; error: string | null }) {
+  const [request, setRequest] = useState('')
+  const { datasets, error: datasetsError } = useDatasets(true)
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-4 px-4">
-      <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
-      <p className="text-sm text-muted-foreground">
-        例:「店舗ごとの売上を見たい」。質問に答えていくと、データモデルと指標を実装した PR ができます。
-      </p>
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          const v = new FormData(e.currentTarget).get('request')?.toString().trim()
-          if (v) onStart(v)
-        }}
-      >
-        <Input name="request" aria-label="見たい指標" placeholder="xxx の売上指標を取りたい" />
-        <Button type="submit">始める</Button>
-      </form>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <a href="?demo" className="text-xs text-muted-foreground underline">
-        デモを見る
-      </a>
+    <main className="mx-auto grid min-h-screen max-w-5xl gap-8 px-4 py-10 lg:grid-cols-[1fr_1.2fr]">
+      <div className="flex flex-col justify-center gap-4">
+        <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
+        <p className="text-sm text-muted-foreground">
+          例:「店舗ごとの売上を見たい」。質問に答えていくと、データモデルと指標を実装した PR ができます。右側で、いま使えるデータを確認できます。
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (request.trim()) onStart(request.trim())
+          }}
+        >
+          <Input
+            name="request"
+            aria-label="見たい指標"
+            placeholder="xxx の売上指標を取りたい"
+            value={request}
+            onChange={(e) => setRequest(e.target.value)}
+          />
+          <Button type="submit">始める</Button>
+        </form>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <a href="?demo" className="text-xs text-muted-foreground underline">
+          デモを見る
+        </a>
+      </div>
+      <Card className="max-h-[80vh] gap-2 overflow-y-auto py-4">
+        <CardHeader className="px-4">
+          <CardTitle className="text-base">使えるデータ</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4">
+          <DatasetsPanel datasets={datasets} error={datasetsError} onPickExample={setRequest} />
+        </CardContent>
+      </Card>
     </main>
   )
 }
