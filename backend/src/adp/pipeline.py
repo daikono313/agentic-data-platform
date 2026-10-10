@@ -8,22 +8,39 @@ draft PR にして人に渡す。
 from __future__ import annotations
 
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 import duckdb
+import yaml
 
 from adp.beam import BeamModel, save
 from adp.catalog.catalog import Catalog
+from adp.charts import SPECS_DIR, ChartError, check, compile_board, render_png
 from adp.design import DesignBuilder, PhysicalDesign
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
+from adp.generation.chart_specs import chart_spec
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
+from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, LLMSettings
-from adp.vcs import GitHub, GitWorkspace, Verification, Worktree, branch_name, pr_body, pr_title
+from adp.vcs import (
+    ChartPreview,
+    GitHub,
+    GitWorkspace,
+    Verification,
+    Worktree,
+    branch_name,
+    pr_body,
+    pr_title,
+)
+
+ASSETS_DIR = "pr_assets"
+"""PR 本文に載せる画像。commit して push した直後の commit で消す（main に残さない）。"""
 
 
 class StepStatus(StrEnum):
@@ -38,6 +55,7 @@ STEPS: list[tuple[str, str]] = [
     ("design", "スター設計"),
     ("generate", "dbt・Semantic Layer・テストを生成"),
     ("verify", "テスト（失敗時は自己修復）"),
+    ("charts", "チャートを生成"),
     ("commit", "commit / push"),
     ("pr", "PR を作成"),
 ]
@@ -60,6 +78,7 @@ class PipelineResult:
     design: PhysicalDesign | None = None
     repair: RepairResult | None = None
     files: list[str] = field(default_factory=list)
+    chart: ChartPreview | None = None
 
 
 class PipelineError(Exception):
@@ -157,6 +176,18 @@ class GenerationPipeline:
                 + (f"（自己修復 {len(repair.attempts)} 回）" if repair.attempts else ""),
             )
 
+            step("charts", StepStatus.RUNNING)
+            chart = self._charts(beam, generation.queries, wt)
+            result.chart = chart
+            if chart is None:
+                step("charts", StepStatus.DONE, "指標がありません")
+            else:
+                step(
+                    "charts",
+                    StepStatus.FAILED if chart.error else StepStatus.DONE,
+                    chart.error or f"{len(chart.charts)} チャート",
+                )
+
             step("commit", StepStatus.RUNNING)
             files = self.workspace.stage(wt, ["warehouse", "beam"])
             if not files:
@@ -165,6 +196,8 @@ class GenerationPipeline:
             self.workspace.commit(
                 wt, f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成"
             )
+            if chart is not None and not chart.error:
+                chart.image_url = self._commit_image(wt, beam)
             self.workspace.push(wt)
             pushed = True
             step("commit", StepStatus.DONE, f"{len(files)} ファイル")
@@ -183,7 +216,7 @@ class GenerationPipeline:
                     for a in repair.attempts
                 ],
             )
-            body = pr_body(beam, design, files, verification, generation.tasks)
+            body = pr_body(beam, design, files, verification, generation.tasks, chart)
             result.pr_url = self.github.create_pr(wt, pr_title(beam), body, draft=not repair.ok)
             step("pr", StepStatus.DONE, result.pr_url)
             result.ok = repair.ok
@@ -202,6 +235,64 @@ class GenerationPipeline:
                 except Exception:
                     pass
             return result
+
+    def _charts(
+        self, beam: BeamModel, queries: list[MetricQuery], wt: Worktree
+    ) -> ChartPreview | None:
+        """既定のチャートの元ファイルとボードを書き、検査して PNG に描画する。
+
+        失敗してもモデルと指標の PR は作る（チャートは含めず、理由を PR 本文に書く）。
+        """
+        spec = chart_spec(beam, queries)
+        if spec is None:
+            return None
+        warehouse = wt.path / "warehouse"
+        spec_rel = f"{SPECS_DIR}/{beam.name}.yml"
+        spec_path = warehouse / spec_rel
+        board_path = warehouse / "charts" / f"{beam.name}.yml"
+        preview = ChartPreview(
+            spec=f"warehouse/{spec_rel}",
+            charts=[(c.get("title", name), c["type"]) for name, c in spec["charts"].items()],
+        )
+        mf = self.config.bin_dir / "mf"
+        try:
+            spec_path.parent.mkdir(parents=True, exist_ok=True)
+            board_path.parent.mkdir(parents=True, exist_ok=True)
+            spec_path.write_text(
+                "# adp が BEAM の指標要求から生成（SQL は書かない。ADR 0002）\n"
+                + yaml.safe_dump(spec, allow_unicode=True, sort_keys=False, width=100),
+                encoding="utf-8",
+            )
+            board_path.write_text(compile_board(beam.name, spec, warehouse, mf), encoding="utf-8")
+            problems = check(warehouse, mf)
+            if problems:
+                raise ChartError(" / ".join(problems))
+            render_png(
+                warehouse,
+                self.config.bin_dir / "dct",
+                beam.name,
+                wt.path / ASSETS_DIR / f"{beam.name}.png",
+            )
+        except (ChartError, OSError, subprocess.SubprocessError) as e:
+            spec_path.unlink(missing_ok=True)
+            board_path.unlink(missing_ok=True)
+            shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
+            preview.error = str(e)
+        return preview
+
+    def _commit_image(self, wt: Worktree, beam: BeamModel) -> str | None:
+        """画像を commit し、次の commit で消す。PR 本文は画像のある commit を参照する。"""
+        image = f"{ASSETS_DIR}/{beam.name}.png"
+        repo = self.workspace.remote_repo()
+        if repo is None or not (wt.path / image).exists():
+            return None
+        self.workspace.stage(wt, [ASSETS_DIR])
+        sha = self.workspace.commit(
+            wt, "chore: PR 本文に載せるチャートの画像（次の commit で削除）"
+        )
+        self.workspace.remove(wt, ASSETS_DIR)
+        self.workspace.commit(wt, "chore: チャートの画像を削除（main には残さない）")
+        return f"https://github.com/{repo}/blob/{sha}/{image}?raw=true"
 
     def _prepare_warehouse(self, wt: Worktree) -> Path:
         """worktree の warehouse に、検証用の DuckDB と dbt パッケージを用意する。"""

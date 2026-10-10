@@ -234,7 +234,7 @@ MVP の段階では手動で計測する。
 
 - **dbt Charts のサーバー（`dct serve`）**: 認証の無いサーバーで、任意の SQL を実行できる機能がある。ブラウザに直接公開しない。使う場合も 127.0.0.1 で起動し、画面には backend が結果だけを渡す（O5 の決定はこの制約の中で行う）。
 - **チャート定義の SQL**: dbt Charts の定義には SQL を書ける。生成するチャート定義には手書きの SQL を入れず、Semantic Layer の指標から作ったものだけにし、CI で確認する（O4）。
-- **生成エージェントのガード**: 生成時にチャートを描画して確認する場合、`dct` を許可するコマンドに加える必要がある。その際、guardrails.md を更新し、外部アクセス禁止が dbt Charts の DuckDB 接続にも効くことを確認する（#40）。
+- **生成エージェントのガード**: チャートの生成と描画（`dct render`）は、エージェントではなくパイプラインが決まった手順で行う（#42）。エージェントには `dct` を許可せず、`charts/` と `chart_specs/` にも書かせない。描画は dbt プロファイル経由なので、DuckDB の外部アクセス禁止が効く（#40）。
 - **フィードバックの文章**: ユーザーの自由記述は、Claude に要約させるときもデータとして扱い、指示として扱わない。
 
 ## Privacy
@@ -287,6 +287,7 @@ MVP の段階では手動で計測する。
 | R16 | MetricFlow は DuckDB + latest spec で動く（cumulative の window はフラグで対応）。backend からは `mf` CLI で呼ぶ | [ADR 0001](adr/0001-metricflow-on-duckdb.md) |
 | R17 | 可視化は dbt Charts（0.9.x）を使う。接続は dbt のプロファイル経由（`warehouse/dbt_charts.yml`）で、DuckDB の SQL には外部アクセス禁止がそのまま効く。DuckDB の外の経路（独自の duckdb ソース、ボードの HTTP 取得）は、設定ファイルの保護とボードの検査で塞ぐ（O6・O9 を解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
 | R18 | チャートは指標と切り口だけで書き（`warehouse/chart_specs/*.yml`）、MetricFlow が作る SQL（`mf query --explain`、カタログ名は外す）を埋め込んだ dbt Charts のボードを `python -m adp.charts compile` で書き出す。手書きの SQL のボードと古いボードは `make dbt-build` で検出する（O4 を (a) で解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
+| R19 | 生成 PR には既定のチャート（指標ごとに 1 つ）を含め、本文に PNG を載せる。画像は PR のブランチで追加した直後の commit で消し、本文は画像のある commit の URL で参照する（main にバイナリを残さない。squash merge が前提） | #42、[modeling-conventions](modeling-conventions.md) |
 
 ## Alternatives considered
 

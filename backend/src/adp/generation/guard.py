@@ -28,6 +28,8 @@ PROTECTED_FILES = {
     # dbt Charts の接続設定。独自の duckdb ソースで外部アクセスを戻せるため（ADR 0002）
     "dbt_charts.yml",
 }
+# チャートは生成後に adp.charts が書き出す。エージェントには書かせない（手書きの SQL を入れない）
+PROTECTED_DIRS = {"charts", "chart_specs"}
 _DBT = {"parse", "build", "compile", "test", "ls", "list"}
 _MF = {"validate-configs", "query", "list"}
 # 値を取るオプション（値にパスを渡せないものだけ）
@@ -95,6 +97,8 @@ class WorkspaceGuard:
                 return (
                     f"{target.name} は書き換えられません（書けるのは SQL / YAML / Markdown だけ）"
                 )
+            if PROTECTED_DIRS & set(target.relative_to(self.root).parts[:1]):
+                return "チャート（charts/ と chart_specs/）は書き換えられません"
             if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
                 return "env_var などで環境変数を読む内容は書けません"
         return None

@@ -117,6 +117,12 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 - チャートは `warehouse/chart_specs/<board>.yml` に、指標・切り口・並び順だけで書く（SQL を書かない）。`make charts` で dbt Charts のボードを書き出す（ADR 0002）。
 - ボードの x / y / color には MetricFlow の参照名（`store__store_name`、`metric_time__month`、指標名）を使う。
+- 生成パイプラインは、確定した指標ごとに既定のチャートを 1 つ作る（`warehouse/chart_specs/<beam>.yml`、#42）。
+  - 時間の切り口がある → 折れ線（x: 時間、color: 最初のカテゴリの切り口）
+  - 比率で時間の切り口が無い → 月別の折れ線
+  - カテゴリの切り口だけ → 棒（切り口が 1 つなら上位 20 件、2 つ目は color）
+  - 切り口が無い → KPI
+- 生成 PR の本文には、ボードを PNG に描画した画像を載せる。画像は PR のブランチで commit した直後の commit で消し、PR 本文は画像のある commit を参照する（main に画像を残さない）。描画できなければ、チャートを含めずに理由を PR 本文に書く。
 
 ### BEAM の group_by → MetricFlow の参照名
 

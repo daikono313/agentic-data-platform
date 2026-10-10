@@ -38,6 +38,10 @@ def test_guard(tmp_path: Path) -> None:
         ("Glob", {"pattern": "/Users/**/.env"}),
         ("Glob", {"pattern": "../**/*"}),
         ("Write", {"file_path": str(tmp_path / ".." / "x.sql"), "content": "x"}),
+        # チャートは adp.charts が書き出す（#42）
+        ("Write", {"file_path": "charts/x.yml", "content": "title: x"}),
+        ("Write", {"file_path": "chart_specs/x.yml", "content": "title: x"}),
+        ("Edit", {"file_path": str(tmp_path / "charts/.gitkeep/x.yml"), "new_string": "x"}),
         ("Write", {"file_path": "models/x.py", "content": "def model(dbt, s): ..."}),
         ("Edit", {"file_path": "dbt_project.yml", "new_string": "x"}),
         ("Edit", {"file_path": "profiles.yml", "new_string": "x"}),

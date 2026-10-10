@@ -46,6 +46,7 @@ SOURCE = "warehouse"
 SPECS_DIR = "chart_specs"
 CHARTS_CONFIG = {"sources": {SOURCE: {"type": "dbt_profile", "profile": "adp", "target": "dev"}}}
 MF_TIMEOUT_S = 120
+RENDER_TIMEOUT_S = 180
 _QUERY_KEYS = {"metrics", "group_by", "order", "limit", "filters", "start_time", "end_time"}
 # 元ファイルで使えるキー（許可リスト）。
 # dbt Charts の他の機能（extends、ボードの入れ子、HTML、地図など）は使わない
@@ -424,6 +425,32 @@ def check(warehouse: Path, mf: Path) -> list[str]:
                 f"{name}.yml: まだ書き出されていません（python -m adp.charts compile を実行）"
             )
     return problems
+
+
+def render_png(warehouse: Path, dct: Path, board: str, out: Path) -> None:
+    """ボードを PNG に描画する（PR 本文に載せる静的出力。描画できることの検証も兼ねる）。"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            str(dct),
+            "render",
+            f"charts/{board}.yml",
+            "--format",
+            "png",
+            "-o",
+            str(out),
+            "--no-cache",
+        ],
+        cwd=warehouse,
+        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse), "NO_COLOR": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=RENDER_TIMEOUT_S,
+    )
+    if result.returncode != 0 or not out.exists():
+        detail = " ".join((result.stderr or result.stdout).split())[-300:]
+        raise ChartError(f"{board} を描画できませんでした: {detail}")
 
 
 def _check_sources(warehouse: Path) -> list[str]:

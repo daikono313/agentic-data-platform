@@ -33,6 +33,21 @@ class Verification:
     repair_attempts: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ChartPreview:
+    """生成したチャート（#42）。"""
+
+    spec: str
+    """元ファイルのパス（warehouse/chart_specs/<board>.yml）。"""
+    charts: list[tuple[str, str]] = field(default_factory=list)
+    """(タイトル, 種類)"""
+    image_url: str | None = None
+    error: str | None = None
+
+
+_TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
+
+
 _ABS_PATH = re.compile(r"(?:/Users|/home|/private|/tmp|[A-Z]:\\)[^\s`'\")]*")
 
 
@@ -62,6 +77,7 @@ def pr_body(
     files: list[str],
     verification: Verification,
     tasks: list[AgentTask] | None = None,
+    chart: ChartPreview | None = None,
 ) -> str:
     lines: list[str] = []
     lines += ["## 要求", "", f"> {_cell(beam.request)}", ""]
@@ -106,6 +122,19 @@ def pr_body(
     lines += ["## スター設計", "", "```mermaid", er_diagram(design).rstrip(), "```", ""]
 
     lines += ["## 生成したファイル", ""] + [f"- `{f}`" for f in files] + [""]
+
+    if chart is not None:
+        lines += ["## チャート", ""]
+        if chart.error:
+            lines += [f"- ❌ チャートを作れませんでした: {_cell(chart.error)}", ""]
+        else:
+            lines.append(f"元ファイル `{chart.spec}`（SQL は MetricFlow が作る）")
+            lines += [""] + [
+                f"- {_cell(title)}（{_TYPE_LABEL.get(kind, kind)}）" for title, kind in chart.charts
+            ]
+            if chart.image_url:
+                lines += ["", f"![チャート]({chart.image_url})"]
+            lines.append("")
 
     lines += ["## 検証", ""]
     lines.append(f"- dbt build: {'✅ 成功' if verification.dbt_build_passed else '❌ 失敗'}")

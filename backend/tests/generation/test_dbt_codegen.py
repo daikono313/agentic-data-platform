@@ -35,6 +35,9 @@ def _warehouse_copy(tmp: Path) -> Path:
             head = path.read_text(encoding="utf-8").lstrip()[:40]
             if head.startswith(("-- adp により生成", "# adp により生成")):
                 path.unlink()
+    # 生成した指標を使うチャートも除く（指標が無いと書き出せないため）
+    for path in [*dst.joinpath("charts").glob("*.yml"), *dst.joinpath("chart_specs").glob("*.yml")]:
+        path.unlink()
     spec = importlib.util.spec_from_file_location(
         "gen_sample", dst / "scripts/generate_sample_data.py"
     )

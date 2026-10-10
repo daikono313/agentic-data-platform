@@ -71,9 +71,18 @@ class GitWorkspace:
         return self.run(["git", *args], cwd or self.repo_root, None).stdout.strip()
 
     def remote_owner(self) -> str | None:
+        repo = self.remote_repo()
+        return repo.split("/")[0] if repo else None
+
+    def remote_repo(self) -> str | None:
+        """origin の `<owner>/<repo>`。"""
         url = self.git("remote", "get-url", "origin").rstrip("/")
-        m = re.search(r"[:/]([^/:]+)/[^/]+?(?:\.git)?$", url)
-        return m.group(1) if m else None
+        m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url)
+        return f"{m.group(1)}/{m.group(2)}" if m else None
+
+    def remove(self, wt: Worktree, path: str) -> None:
+        """path を削除して stage する。"""
+        self.git("rm", "-r", "-q", "--", path, cwd=wt.path)
 
     def _branch_exists(self, branch: str) -> bool:
         if self.git("branch", "--list", branch):
