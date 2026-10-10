@@ -364,8 +364,8 @@ def _stray_files(root: Path, label: str) -> list[str]:
     dbt Charts は charts/ の下の .yml / .yaml / .md / .markdown をすべて配信し、
     シンボリックリンクもたどるため、許可するものだけを数える（#55 のレビュー）。
     """
-    if not root.exists():
-        return []
+    if root.is_symlink() or not root.is_dir():
+        return []  # charts/ がディレクトリでないことは _check_sources が報告する
     problems = []
     for entry in sorted(os.scandir(root), key=lambda e: e.name):
         ok = (
