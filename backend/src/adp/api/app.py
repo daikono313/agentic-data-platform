@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from adp.api.service import Conflict, NotFound, SessionService, SSEEvent
 from adp.api.store import Store
+from adp.datasets import DatasetIndex
 
 
 class CreateSession(BaseModel):
@@ -25,7 +26,7 @@ class SendMessage(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
-def create_app(service: SessionService) -> FastAPI:
+def create_app(service: SessionService, datasets: DatasetIndex | None = None) -> FastAPI:
     app = FastAPI(title="ADP")
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
     app.add_middleware(
@@ -36,6 +37,13 @@ def create_app(service: SessionService) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/datasets")
+    def list_datasets() -> dict[str, Any]:
+        """取得可能な指標・モデル・元データ・BEAM 成果物の一覧（#38）。"""
+        if datasets is None:
+            raise HTTPException(503, "データ一覧は利用できません")
+        return datasets.all().model_dump(mode="json")
 
     @app.post("/sessions")
     def create_session(body: CreateSession) -> dict[str, Any]:
@@ -127,4 +135,4 @@ def build_default_app() -> FastAPI:
         settings,
     )
     service = SessionService(Store(REPO_ROOT / ".adp" / "app.db"), interviewer, pipeline.run)
-    return create_app(service)
+    return create_app(service, DatasetIndex(REPO_ROOT, catalog, Path(sys.executable).parent / "mf"))
