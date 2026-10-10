@@ -31,3 +31,4 @@ warehouse/data/
 
 # os
 .DS_Store
+warehouse/.user.yml
