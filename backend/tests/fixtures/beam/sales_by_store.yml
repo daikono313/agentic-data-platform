@@ -164,7 +164,9 @@ metrics:
     type: simple
     event: customer_orders_product
     measure: sales_amount
-    filter: order_status.order_status が cancelled の注文を除く
+    filter: キャンセルされた注文を除く
+    filters:
+      - {ref: order_status.order_status, operator: '!=', values: [cancelled]}
     group_by: [date.day, store.store_name, store.channel]
     status: confirmed
 gaps:

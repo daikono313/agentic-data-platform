@@ -11,8 +11,16 @@ from typing import Any, Protocol
 
 import yaml
 
+from adp.beam import BeamModel
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
 from adp.design.builder import dim_key_expr
+from adp.generation.semantic import (
+    MetricQuery,
+    dim_semantics,
+    fact_model_semantics,
+    fact_semantics,
+    metric_definitions,
+)
 
 UNKNOWN_LABEL = "不明"
 
@@ -58,12 +66,15 @@ class Generation:
     files: list[GeneratedFile] = field(default_factory=list)
     tasks: list[AgentTask] = field(default_factory=list)
     reused: list[str] = field(default_factory=list)
+    queries: list[MetricQuery] = field(default_factory=list)
+    """生成後に確認する指標のクエリ（元の要求）。"""
 
 
-def _yaml(models: list[dict[str, Any]]) -> str:
-    body = yaml.safe_dump(
-        {"version": 2, "models": models}, allow_unicode=True, sort_keys=False, width=100
-    )
+def _yaml(models: list[dict[str, Any]], metrics: list[dict[str, Any]] | None = None) -> str:
+    data: dict[str, Any] = {"version": 2, "models": models}
+    if metrics:
+        data["metrics"] = metrics
+    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100)
     return "# adp により生成\n" + body
 
 
@@ -138,7 +149,7 @@ def _is_text(info: WarehouseInfo, table: str, column: Column, alias_tables: dict
     return types.get(col, "").upper() == "VARCHAR"
 
 
-def dim_files(dim: DimTable, info: WarehouseInfo) -> list[GeneratedFile]:
+def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> list[GeneratedFile]:
     alias_tables = {dim.base.alias: dim.base.table} | {
         j.right.alias: j.right.table for j in dim.joins
     }
@@ -175,15 +186,17 @@ def dim_files(dim: DimTable, info: WarehouseInfo) -> list[GeneratedFile]:
         }
     ]
     columns += [{"name": c.name, "description": c.description} for c in dim.columns]
-    yml = _yaml(
-        [
-            {
-                "name": dim.name,
-                "description": f"{dim.label}ディメンション。SCD Type1。不明メンバーの行を含む",
-                "columns": columns,
-            }
-        ]
-    )
+    model: dict[str, Any] = {
+        "name": dim.name,
+        "description": f"{dim.label}ディメンション。SCD Type1。不明メンバーの行を含む",
+    }
+    if semantic:
+        model_sem, col_sem = dim_semantics(dim)
+        model |= model_sem
+        for entry in columns:
+            entry.update(col_sem.get(entry["name"], {}))
+    model["columns"] = columns
+    yml = _yaml([model])
     return [
         GeneratedFile(f"models/marts/{dim.name}.sql", sql),
         GeneratedFile(f"models/marts/{dim.name}.yml", yml),
@@ -193,7 +206,12 @@ def dim_files(dim: DimTable, info: WarehouseInfo) -> list[GeneratedFile]:
 # --- fct -----------------------------------------------------------------------------------
 
 
-def fact_files(fact: FactTable) -> list[GeneratedFile]:
+def fact_files(
+    fact: FactTable,
+    beam: BeamModel | None = None,
+    design: PhysicalDesign | None = None,
+    has_date_entity: bool = False,
+) -> tuple[list[GeneratedFile], list[MetricQuery]]:
     sql = (
         f"-- adp により生成\n-- 元イベント: {fact.label}（{fact.fact_type.value}）\n"
         f"-- 粒度: {fact.grain}\n"
@@ -202,9 +220,12 @@ def fact_files(fact: FactTable) -> list[GeneratedFile]:
         + _from_clause(fact.base, fact.joins)
         + "\n"
     )
+    event = beam.event(fact.event) if beam else None
+    col_sem = fact_semantics(fact, event) if event else {}
     columns: list[dict[str, Any]] = []
     for c in fact.columns:
         entry: dict[str, Any] = {"name": c.name, "description": c.description}
+        entry.update(col_sem.get(c.name, {}))
         tests: list[Any] = []
         if fact.grain_columns == [c.name]:
             tests += ["unique", "not_null"]
@@ -221,8 +242,16 @@ def fact_files(fact: FactTable) -> list[GeneratedFile]:
     model: dict[str, Any] = {
         "name": fact.name,
         "description": f"{fact.label}（{fact.fact_type.value}）。粒度: {fact.grain}",
-        "columns": columns,
     }
+    top_metrics: list[dict[str, Any]] = []
+    queries: list[MetricQuery] = []
+    if beam is not None and design is not None and event is not None:
+        model |= fact_model_semantics(fact, has_date_entity)
+        defs = metric_definitions(beam, design, fact)
+        if defs.in_model:
+            model["metrics"] = defs.in_model
+        top_metrics, queries = defs.top_level, defs.queries
+    model["columns"] = columns
     if len(fact.grain_columns) > 1:
         model["data_tests"] = [
             {
@@ -233,14 +262,18 @@ def fact_files(fact: FactTable) -> list[GeneratedFile]:
         ]
     return [
         GeneratedFile(f"models/marts/{fact.name}.sql", sql),
-        GeneratedFile(f"models/marts/{fact.name}.yml", _yaml([model])),
-    ]
+        GeneratedFile(f"models/marts/{fact.name}.yml", _yaml([model], top_metrics)),
+    ], queries
 
 
 # --- 全体 ----------------------------------------------------------------------------------
 
 
-def generate_models(design: PhysicalDesign, info: WarehouseInfo) -> Generation:
+def generate_models(
+    design: PhysicalDesign, info: WarehouseInfo, beam: BeamModel | None = None
+) -> Generation:
+    """dbt モデルを生成する。beam を渡すと Semantic Layer（entity・指標）も生成する。"""
+    semantic = beam is not None
     if design.blockers:
         raise ValueError(
             "確認が必要な課題があるため生成できません: "
@@ -283,7 +316,19 @@ def generate_models(design: PhysicalDesign, info: WarehouseInfo) -> Generation:
                     )
                 )
         else:
-            result.files += dim_files(dim, info)
+            result.files += dim_files(dim, info, semantic)
+            continue
+        if semantic and dim.roles:
+            result.tasks.append(
+                AgentTask(
+                    kind="add_role_entities",
+                    target=dim.name,
+                    instruction=(
+                        f"既存の {dim.name} の semantic model に、役割 {', '.join(dim.roles)} の"
+                        f" derived_semantics（type: unique, expr: {dim.key_column}）を追加する。"
+                    ),
+                )
+            )
 
     for fact in design.facts:
         if fact.name in existing:
@@ -295,5 +340,7 @@ def generate_models(design: PhysicalDesign, info: WarehouseInfo) -> Generation:
                 )
             )
         else:
-            result.files += fact_files(fact)
+            files, queries = fact_files(fact, beam, design, has_date_entity="dim_date" in existing)
+            result.files += files
+            result.queries += queries
     return result

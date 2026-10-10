@@ -193,6 +193,11 @@ def _metric_issues(model: BeamModel) -> list[str]:
             event.time_dimension is None
         ):
             issues.append(f"{p} 時間軸で集計するには agg_time_dimension が必要です")
+        for f in metric.filters:
+            if resolve_ref(event, f.ref) not in ("attribute", "degenerate"):
+                issues.append(
+                    f"{p} filter の {f.ref} がイベントの属性・縮退ディメンションにありません"
+                )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
