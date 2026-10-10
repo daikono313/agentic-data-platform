@@ -17,6 +17,7 @@
 | C7 | 敵対的レビューで blocking な指摘がない | **新しいコンテキストの subagent** が、issue の完了条件・[design-doc.md](design-doc.md)・差分を読んでレビューする。指摘は PR コメントに残す |
 | C8 | 秘密情報が含まれない | 差分に `.env` の値、トークン、鍵が含まれない（CI で検査する） |
 | C9 | 設計と矛盾しない | Resolved issues の決定を覆す変更なら、ADR（`docs/adr/`）を追加し、design-doc を更新している |
+| C10 | プロンプトの変更は eval の前後比較で効果を示す（インタビューのプロンプト・知識ファイル・tool の説明を変える PR のみ） | 変更の前と後で `make eval REPEAT=3` を回し、`make eval-compare BEFORE=… AFTER=…` の表を PR 本文に貼る。合格率が下がらず、狙った数値（フィードバックの分類に対応するもの）がよくなっていること。プロンプトのバージョン（`PROMPT_VERSION`）を上げる（[evals/README.md](../evals/README.md)） |
 
 ## Promotion policy（マージの扱い）
 

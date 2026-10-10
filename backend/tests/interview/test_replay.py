@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from adp.evals.interview import _check
+from adp.evals.interview import _check, is_transcript_check
 from adp.interview import Interviewer, new_state
 from adp.llm import LLMSettings, ScriptedRunner
 
@@ -48,5 +48,6 @@ async def test_replay_recorded_eval(path: Path) -> None:
             encoding="utf-8"
         )
     )
-    results = [_check(state.beam, c) for c in scenario["checks"]]
+    # 再生では会話の文が無いので、BEAM 成果物のチェックだけを行う
+    results = [_check(state.beam, c) for c in scenario["checks"] if not is_transcript_check(c)]
     assert all(r.passed for r in results), [(r.name, r.detail) for r in results if not r.passed]

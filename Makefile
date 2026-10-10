@@ -1,6 +1,6 @@
 SAMPLE_ORDERS ?= 30000
 
-.PHONY: sample-data setup lint test dbt-build charts eval dev dev-backend dev-frontend check-secrets
+.PHONY: sample-data setup lint test dbt-build charts eval eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -37,7 +37,19 @@ charts:
 
 # 実際の LLM（既定は Claude Code のログイン認証）でインタビューの eval を回す
 eval:
-	cd backend && uv run python -m adp.evals interview $(if $(SCENARIO),--scenario $(SCENARIO))
+	cd backend && uv run python -m adp.evals interview $(if $(SCENARIO),--scenario $(SCENARIO)) $(if $(REPEAT),--repeat $(REPEAT))
+
+# eval の前後比較（プロンプトを直したら PR に貼る。certificate C10）: make eval-compare BEFORE=.adp/evals/<前> AFTER=.adp/evals/<後>
+eval-compare:
+	cd backend && uv run python -m adp.evals compare $(abspath $(BEFORE)) $(abspath $(AFTER))
+
+# フィードバックの集計（SUMMARY=1 で Claude による要約と改善案）。会話の抜粋を含むので公開しない
+feedback-report:
+	cd backend && uv run python -m adp.evals feedback-report $(if $(SUMMARY),--summary)
+
+# 低評価のセッションから eval シナリオの下書きを .adp/eval-drafts/ に作る（合成に書き換えてから evals/ へ）
+feedback-drafts:
+	cd backend && uv run python -m adp.evals feedback-drafts
 
 dev-backend:
 	cd backend && uv run uvicorn --factory adp.api.app:build_default_app --reload --port 8000
