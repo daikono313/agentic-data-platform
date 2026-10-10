@@ -273,4 +273,4 @@ gaps:
   description: '工数(effort: medium)はモデラーの見積もり'
   event: customer_orders_product
   related: effort
-finalized_at: '2026-10-10T13:24:19.047858Z'
+finalized_at: '2026-10-10T14:45:16.740381Z'
