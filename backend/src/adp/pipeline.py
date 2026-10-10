@@ -255,7 +255,10 @@ class GenerationPipeline:
         board_path = warehouse / "charts" / f"{beam.name}.yml"
         preview = ChartPreview(
             spec=f"warehouse/{spec_rel}",
-            charts=[(c.get("title", name), c["type"]) for name, c in spec["charts"].items()],
+            charts=[
+                (c.get("title") or c.get("label") or name, c["type"])
+                for name, c in spec["charts"].items()
+            ],
         )
         if spec_path.exists() or board_path.exists():
             # 既存のチャート（手で整えたものを含む）は上書きも削除もしない

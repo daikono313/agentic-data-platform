@@ -1,3 +1,4 @@
+import type { ChartOptions, ChartRequest, ChartResult } from './charts'
 import type { Datasets } from './datasets'
 import type { InterviewEvent, JobEvent, SessionView } from './types'
 
@@ -66,6 +67,21 @@ export const api = {
   },
   async reopen(id: string): Promise<SessionView> {
     return json(await fetch(`${BASE}/sessions/${id}/reopen`, { method: 'POST' }))
+  },
+  async chartOptions(jobId?: string | null): Promise<ChartOptions> {
+    const q = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''
+    return json(await fetch(`${BASE}/charts/options${q}`))
+  },
+  async renderChart(req: ChartRequest, jobId?: string | null, signal?: AbortSignal): Promise<ChartResult> {
+    const q = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''
+    return json(
+      await fetch(`${BASE}/charts/render${q}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+        signal,
+      }),
+    )
   },
   async *jobEvents(jobId: string): AsyncGenerator<JobEvent> {
     yield* readSSE<JobEvent>(await fetch(`${BASE}/jobs/${jobId}/events`))

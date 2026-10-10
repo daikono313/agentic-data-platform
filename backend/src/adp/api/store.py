@@ -44,6 +44,8 @@ class JobRow(SQLModel, table=True):
     steps_json: str
     pr_url: str | None = None
     error: str | None = None
+    branch: str | None = None
+    """生成ジョブの作業ブランチ（描画画面で PR の内容をプレビューするため。#43）。"""
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -53,6 +55,14 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """後から足した列を、既存の DB にも追加する（create_all は既存のテーブルを変えない）。"""
+        with self.engine.begin() as conn:
+            columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(jobs)")}
+            if "branch" not in columns:
+                conn.exec_driver_sql("ALTER TABLE jobs ADD COLUMN branch VARCHAR")
 
     # --- session ---
     def save_session(self, session_id: str, state: InterviewState) -> None:
@@ -102,12 +112,14 @@ class Store:
         steps: list[dict[str, Any]],
         pr_url: str | None = None,
         error: str | None = None,
+        branch: str | None = None,
     ) -> None:
         with Session(self.engine) as db:
             row = db.get(JobRow, job_id)
             if row is None:
                 row = JobRow(id=job_id, session_id=session_id, status=status, steps_json="[]")
             row.status, row.pr_url, row.error = status, pr_url, error
+            row.branch = branch or row.branch
             row.steps_json = json.dumps(steps, ensure_ascii=False)
             row.updated_at = _now()
             db.add(row)

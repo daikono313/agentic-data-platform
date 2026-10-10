@@ -1,6 +1,7 @@
 import { BarChart3, Database, Table2 } from 'lucide-react'
 import { useState } from 'react'
 
+import { chartUrl } from '@/api/charts'
 import { exampleRequests, matches, rankDimensions, type Datasets } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -53,7 +54,12 @@ export function DatasetsPanel({ datasets, error, onPickExample, compact }: Props
         <ul className="space-y-2">
           {metrics.map((m) => (
             <li key={m.name} className="rounded-md border p-2" data-testid={`metric-${m.name}`}>
-              <p className="text-sm font-medium">{m.label}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">{m.label}</p>
+                <a href={chartUrl(m.name)} className="shrink-0 text-xs text-primary underline">
+                  チャートで見る
+                </a>
+              </div>
               {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
               <div className="mt-1 flex flex-wrap gap-1">
                 {rankDimensions(m.dimensions)

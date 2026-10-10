@@ -7,17 +7,13 @@
 - sources: 元データ（ソースカタログ）
 - beams: 確定した BEAM 成果物（どの要求から指標が作られたか）
 
-切り口は MetricFlow に問い合わせる（`mf list dimensions`、ADR 0001 の方針で CLI を使う）。
-数秒かかるので、semantic manifest が更新されるまで結果をキャッシュする。
+切り口はプロセス内の MetricFlow に問い合わせる（`mf list dimensions` と同じ結果。DB には接続しない。
+ADR 0003）。
 """
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +21,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from adp.catalog.catalog import Catalog, CatalogUnavailable
-
-MF_TIMEOUT_S = 120
-MF_PARALLEL = 4
+from adp.charts import ChartError, MetricFlowCompiler
 
 
 class Dimension(BaseModel):
@@ -91,14 +85,12 @@ class Datasets(BaseModel):
 
 
 class DatasetIndex:
-    def __init__(self, repo_root: Path, catalog: Catalog, mf: Path) -> None:
+    def __init__(self, repo_root: Path, catalog: Catalog | None) -> None:
         self.repo_root = repo_root
         self.warehouse = repo_root / "warehouse"
         self.catalog = catalog
-        self.mf = mf
-        self._dims_cache: dict[str, tuple[float, list[str]]] = {}
-        self._lock = threading.Lock()
-        """同時に来た要求で mf を二重に起動しない。"""
+        self.compiler = MetricFlowCompiler(self.warehouse)
+        """切り口の一覧はプロセス内の MetricFlow から取る（mf の起動を待たない。#43）。"""
 
     # --- 指標 ------------------------------------------------------------------------------
 
@@ -124,27 +116,6 @@ class DatasetIndex:
                 for entity in entities:
                     labels[f"{entity}__{d['name']}"] = (label, text)
         return labels
-
-    def _dimensions_for(self, metric: str, mtime: float) -> list[str]:
-        cached = self._dims_cache.get(metric)
-        if cached and cached[0] == mtime:
-            return cached[1]
-        result = subprocess.run(
-            [str(self.mf), "list", "dimensions", "--metrics", metric],
-            cwd=self.warehouse,
-            env=os.environ | {"DBT_PROFILES_DIR": str(self.warehouse), "NO_COLOR": "1"},
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=MF_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"mf list dimensions --metrics {metric} が失敗しました")
-        names = [
-            line.split("•", 1)[1].strip() for line in result.stdout.splitlines() if "•" in line
-        ]
-        self._dims_cache[metric] = (mtime, names)
-        return names
 
     def metrics(self, beams: list[BeamInfo], errors: list[str]) -> list[MetricInfo]:
         manifest = self._semantic_manifest()
@@ -185,21 +156,12 @@ class DatasetIndex:
                     return found
             return None
 
-        try:
-            mtime = (self.warehouse / "target" / "semantic_manifest.json").stat().st_mtime
-        except OSError:
-            errors.append(
-                "Semantic Layer の定義を読めませんでした（make dbt-build を実行してください）"
-            )
-            return []
-        names = [m["name"] for m in manifest.get("metrics", [])]
         dims: dict[str, list[str] | Exception] = {}
-        with self._lock, ThreadPoolExecutor(MF_PARALLEL) as pool:
-            for name, future in [(n, pool.submit(self._dimensions_for, n, mtime)) for n in names]:
-                try:
-                    dims[name] = future.result()
-                except (RuntimeError, subprocess.TimeoutExpired) as e:
-                    dims[name] = e
+        for m in manifest.get("metrics", []):
+            try:
+                dims[m["name"]] = self.compiler.dimensions(m["name"])
+            except ChartError as e:
+                dims[m["name"]] = e
 
         result = []
         for m in manifest.get("metrics", []):
@@ -259,6 +221,8 @@ class DatasetIndex:
         return sorted(result, key=lambda m: (m.kind != "fct", m.name))
 
     def sources(self, errors: list[str]) -> list[SourceInfo]:
+        if self.catalog is None:
+            return []
         try:
             tables = self.catalog.list_sources()
             return [

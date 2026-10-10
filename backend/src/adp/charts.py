@@ -30,7 +30,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -237,7 +240,11 @@ def compile_sql(warehouse: Path, mf: Path, query: MetricQuery) -> str:
         raise ChartError(
             f"MetricFlow で SQL を作れませんでした（{' '.join(query.args())}）: {detail}"
         )
-    sql = "\n".join(lines[start:]).strip()
+    return _finish_sql("\n".join(lines[start:]).strip(), query)
+
+
+def _finish_sql(sql: str, query: MetricQuery) -> str:
+    """ボードに埋め込める形にする。DB ファイル名に依存しないよう、カタログ名は外す。"""
     # dbt Charts もボードの SQL を Jinja で展開する。テンプレートを残さない
     if re.search(r"\{[{%#]|[}%#]\}", sql):
         raise ChartError(
@@ -247,6 +254,142 @@ def compile_sql(warehouse: Path, mf: Path, query: MetricQuery) -> str:
     for table in tree.find_all(exp.Table):
         table.set("catalog", None)
     return tree.sql(dialect="duckdb", pretty=True)
+
+
+class MetricFlowCompiler:
+    """プロセス内の MetricFlow で SQL を作る（描画画面用。#43）。
+
+    `target/semantic_manifest.json` だけを読み、DB には接続しない（DuckDB をロックしない）。
+    出力は `mf query --explain` と同じ。manifest が更新されたら読み直す。
+    """
+
+    def __init__(self, warehouse: Path) -> None:
+        self.warehouse = warehouse
+        self._lock = threading.Lock()
+        self._engine: Any = None
+        self._mtime = 0.0
+
+    def _get_engine(self) -> Any:
+        from dbt_metricflow.cli.dbt_connectors.dbt_config_accessor import dbtArtifacts
+        from metricflow.engine.metricflow_engine import MetricFlowEngine
+        from metricflow.protocols.sql_client import SqlEngine
+        from metricflow.sql.render.duckdb_renderer import DuckDbSqlPlanRenderer
+        from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
+
+        path = self.warehouse / "target" / "semantic_manifest.json"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError as e:
+            raise ChartError(
+                "Semantic Layer の定義がありません（dbt parse を実行してください）"
+            ) from e
+        if self._engine is None or mtime != self._mtime:
+
+            class _NoConnection:
+                """SQL を作るだけで、実行はしない。"""
+
+                sql_engine_type = SqlEngine.DUCKDB
+                sql_plan_renderer = DuckDbSqlPlanRenderer()
+
+                def _refuse(self, *_: Any, **__: Any) -> Any:
+                    raise ChartError("描画画面の MetricFlow は SQL を実行しません")
+
+                query = execute = dry_run = _refuse
+
+                def close(self) -> None:
+                    pass
+
+                def render_bind_parameter_key(self, key: str) -> str:
+                    return "$" + key
+
+            try:
+                manifest = dbtArtifacts.build_semantic_manifest_from_dbt_project_root(
+                    self.warehouse
+                )
+            except Exception as e:
+                raise ChartError(f"Semantic Layer の定義を読めません: {e}") from e
+            self._engine = MetricFlowEngine(
+                semantic_manifest_lookup=SemanticManifestLookup(manifest),
+                sql_client=_NoConnection(),
+            )
+            self._mtime = mtime
+        return self._engine
+
+    def sql(self, query: MetricQuery) -> str:
+        from metricflow.engine.metricflow_engine import MetricFlowQueryRequest
+
+        def _time(value: str | None) -> datetime | None:
+            return datetime.fromisoformat(value) if value else None
+
+        with self._lock:
+            engine = self._get_engine()
+            try:
+                result = engine.explain(
+                    mf_request=MetricFlowQueryRequest.create(
+                        metric_names=query.metrics,
+                        group_by_names=query.group_by or None,
+                        order_by_names=query.order or None,
+                        limit=query.limit,
+                        where_constraints=query.filters or None,
+                        time_constraint_start=_time(query.start_time),
+                        time_constraint_end=_time(query.end_time),
+                    )
+                )
+            except ChartError:
+                raise
+            except Exception as e:
+                detail = " ".join(str(e).split())[:300]
+                raise ChartError(
+                    f"MetricFlow で SQL を作れませんでした（{' '.join(query.args())}）: {detail}"
+                ) from e
+        return _finish_sql(str(result.sql_statement.without_descriptions.sql).strip(), query)
+
+    def dimensions(self, metric: str) -> list[str]:
+        """`mf list dimensions --metrics <metric>` と同じ名前の一覧。"""
+        with self._lock:
+            engine = self._get_engine()
+            try:
+                dims = engine.simple_dimensions_for_metrics([metric])
+            except Exception as e:
+                raise ChartError(f"{metric} の切り口を取れません: {e}") from e
+        return [str(d.granularity_free_dunder_name) for d in dims]
+
+
+class BoardRenderer:
+    """dbt Charts をプロセス内で使い、ボードを SVG に描画する（描画画面用。#43）。
+
+    接続は warehouse の dbt_charts.yml（dbt プロファイル経由。外部アクセスは無効）。描画のたびに
+    接続を閉じ、DuckDB を開いたままにしない（dbt build を妨げない）。
+    """
+
+    def __init__(self, warehouse: Path) -> None:
+        self.warehouse = warehouse
+        self._lock = threading.Lock()
+        self._session: Any = None
+
+    def svg(self, board: dict[str, Any]) -> str:
+        from dbt_charts.agent_api import InMemoryBoard, ProjectSession
+
+        problems = _check_sources(self.warehouse)
+        if problems:
+            raise ChartError(" / ".join(problems))
+        text = yaml.safe_dump(board, allow_unicode=True, sort_keys=False)
+        with self._lock:
+            if self._session is None:
+                self._session = ProjectSession.open(self.warehouse)
+            try:
+                result = self._session.render_board(
+                    InMemoryBoard(text, path=None), format="svg", use_cache=False
+                )
+            finally:
+                self._session.refresh()
+        errors = [*result.validation_errors, *result.chart_errors]
+        if result.board_error is not None:
+            errors.insert(0, result.board_error)
+        if result.status != "ok" or not isinstance(result.data, str):
+            detail = " / ".join(str(getattr(e, "message", e)) for e in errors[:3])
+            raise ChartError(f"描画できませんでした: {detail or result.status}")
+        return result.data
 
 
 def _validate_spec(name: str, spec: Any) -> dict[str, Any]:
@@ -337,20 +480,26 @@ def _check_layout(name: str, layout: Any, charts: set[str]) -> None:
             raise ChartError(f"{name}: レイアウトにはチャート名と rows / cols だけを書けます")
 
 
-def compile_board(name: str, spec: Any, warehouse: Path, mf: Path) -> str:
+def build_board(name: str, spec: Any, sql_for: Callable[[MetricQuery], str]) -> dict[str, Any]:
+    """元ファイルを検査し、各クエリを MetricFlow の SQL にしたボード（辞書）を作る。"""
     spec = _validate_spec(name, spec)
     board: dict[str, Any] = {}
     if "title" in spec:
         board["title"] = spec["title"]
     board["source"] = SOURCE
     board["queries"] = {
-        q: {"sql": compile_sql(warehouse, mf, MetricQuery.parse(q, data))}
+        q: {"sql": sql_for(MetricQuery.parse(q, data))}
         for q, data in spec["metric_queries"].items()
     }
     board["charts"] = spec["charts"]
     for key in ("rows", "cols"):
         if key in spec:
             board[key] = spec[key]
+    return board
+
+
+def compile_board(name: str, spec: Any, warehouse: Path, mf: Path) -> str:
+    board = build_board(name, spec, lambda q: compile_sql(warehouse, mf, q))
     body = yaml.safe_dump(board, allow_unicode=True, sort_keys=False, width=100)
     return HEADER.format(name=name) + body
 
