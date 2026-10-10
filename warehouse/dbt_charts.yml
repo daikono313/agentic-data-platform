@@ -1,0 +1,6 @@
+# dbt Charts のプロジェクト設定（ADR 0002）。接続は dbt のプロファイル（profiles.yml）を使う
+sources:
+  warehouse:
+    type: dbt_profile
+    profile: adp
+    target: dev

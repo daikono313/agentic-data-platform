@@ -1,7 +1,7 @@
 # 0002: 可視化に dbt Charts を使い、Semantic Layer の指標を描画する
 
 - 日付: 2026-10-10
-- ステータス: Proposed（#40 の PoC の結果で Accepted / 変更）
+- ステータス: Accepted（#40 の PoC で確認。2026-10-10）
 - 関連: #37, #40, #41, #43、design-doc の Goals 6、Non-goals、O4、O5
 
 ## 背景
@@ -16,6 +16,13 @@ v2 では、作った指標をその場でチャートで見られるように�
 2. **指標の定義は Semantic Layer に一元化したまま**にする（design-doc R5）。dbt Charts は Semantic Layer に未対応なので（今後の予定とする紹介記事はあるが、公式の約束ではない: [oflight の記事](https://www.oflight.co.jp/en/columns/dbt-charts-yaml-dashboards-ai-agents-2026)）、チャートから MetricFlow の指標を使う仕組みを作る（方式は O4、#41 で決める）。チャートの中で集計を書き直さない。生成するチャート定義に手書きの SQL を入れず、CI で確認する。
    - GitHub のリポジトリは非公開の upstream のミラーで PR を受け付けない（PyPI の README）。そのため O4 の (c)「本体に機能を足す」は、ローカルの拡張・フォークに限られる。
 3. 範囲は「Semantic Layer の指標を、決まった切り口・期間・チャートの種類で見る画面」まで。ダッシュボードの自由なレイアウト編集、アドホックな SQL、権限管理は作らない。
+
+## PoC の結果（#40、dbt-charts 0.9.1）
+
+- **接続**: `warehouse/dbt_charts.yml` に `type: dbt_profile`（profile: adp）のソースを置くと、dbt の `profiles.yml` 経由で DuckDB に接続できる。DuckDB のパスは profiles.yml（`ADP_DUCKDB_PATH`）に従うので、生成パイプラインのコピーした DB でもそのまま使える（O9 を解決）。
+- **描画**: 生成済みの `fct_order_lines` に対するボードを、`dct render` で text / SVG に出力できた（`backend/tests/test_dbt_charts.py`）。
+- **安全**: `enable_external_access: false`（profiles.yml）は dbt Charts からの接続にも効く。`read_text` で外部ファイルを読めないことをテストで確認した。`dct serve` は既定で localhost だけで待ち受ける。
+- **依存**: このリポジトリの固定バージョンのまま追加できた（backend の依存に `dbt-charts>=0.9.1,<0.10`）。
 
 ## 検討した代替案
 
