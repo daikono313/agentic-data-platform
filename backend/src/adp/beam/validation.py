@@ -95,6 +95,8 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
         issues.append(f"{p} agg_time_dimension {event.agg_time_dimension} が When にありません")
     if event.priority is None:
         issues.append(f"{p} 優先度が決まっていません")
+    if not event.examples:
+        issues.append(f"{p} 具体例がありません（1 件以上聞いて examples に記録してください）")
     if event.table_name is None:
         issues.append(f"{p} fct のテーブル名（table_name）が決まっていません")
 
