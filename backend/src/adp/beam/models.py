@@ -127,9 +127,12 @@ def _check_row_expr(expr: str) -> None:
         "（サブクエリ・集計・他のテーブルの参照は不可。他のテーブルの値は別のイベントや"
         "ディメンションで表します）"
     )
+    # dbt は SQL の中の Jinja を展開する（env_var・run_query で秘密情報の読み出しや任意の SQL）
+    if "{" in expr or "}" in expr:
+        raise ValueError("expr に { } は使えません（Jinja は書けません）")
     try:
         trees = sqlglot.parse(expr, read="duckdb")
-    except sqlglot.errors.ParseError as e:
+    except sqlglot.errors.SqlglotError as e:
         raise ValueError(f"expr を SQL の式として読めません: {expr}") from e
     if len(trees) != 1 or trees[0] is None or isinstance(trees[0], exp.Query):
         raise ValueError(hint)

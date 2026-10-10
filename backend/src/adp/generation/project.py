@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,32 @@ import yaml
 
 from adp.catalog.catalog import Catalog
 from adp.generation.dbt import GeneratedFile
+
+# 生成器が出す Jinja の形（これ以外は書かない。BEAM の文字列から env_var・run_query などを
+# 差し込ませないための最後の確認。#46）
+_ALLOWED_JINJA = [
+    re.compile(r"ref\('[a-z_][a-z0-9_]*'\)"),
+    re.compile(r"source\('[a-z_][a-z0-9_]*', '[a-z_][a-z0-9_]*'\)"),
+    re.compile(r"unknown_key\(\)"),
+    re.compile(r"dim_key\('[^'{}]*'\)|dim_key\(\"[^\"{}]*\"\)"),
+    # YAML のシングルクォートの中では ' が '' になる
+    re.compile(r"Dimension\(('|'')[a-z_][a-z0-9_]*\1\)"),
+]
+_JINJA = re.compile(r"\{\{(.*?)\}\}|\{%|%\}|\{#|#\}", re.DOTALL)
+
+
+def unsafe_jinja(content: str) -> list[str]:
+    """生成物の中の、生成器が出す形以外の Jinja。"""
+    found = []
+    for m in _JINJA.finditer(content):
+        inner = (m.group(1) or "").strip()
+        if not m.group(1) or not any(p.fullmatch(inner) for p in _ALLOWED_JINJA):
+            found.append(m.group(0)[:60])
+    # 許可した形を取り除いた後に、括弧が残っていれば不正（入れ子など）
+    rest = _JINJA.sub("", content)
+    if "{{" in rest or "}}" in rest:
+        found.append("{{ / }}")
+    return found
 
 
 class ProjectInfo:
@@ -84,6 +111,9 @@ class ProjectInfo:
 
         既存のファイルを書き換えてよいのは、元の内容（replaces）が今の内容と同じときだけ。
         """
+        unsafe = [f"{f.path}: {j}" for f in files for j in unsafe_jinja(f.content)]
+        if unsafe:
+            raise ValueError("生成物に使えない Jinja があります: " + " / ".join(unsafe[:5]))
         conflicts = [
             f.path
             for f in files

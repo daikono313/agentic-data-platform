@@ -21,6 +21,7 @@ from adp.api.store import Store
 from adp.catalog.catalog import Catalog
 from adp.chart_view import ChartViews
 from adp.datasets import DatasetIndex
+from adp.design.check import design_issues
 from adp.evals.feedback import report
 from adp.interview import Interviewer
 from adp.llm import LLMSettings, ScriptedRunner
@@ -47,7 +48,11 @@ def test_v2_end_to_end(repo: Path) -> None:  # noqa: F811
     ]
     # 発言の本文も入れる（フィードバックを付ける対象）
     turns[0] = [*turns[0], "返品率の粒度（1 行が何を表すか）を決めましょう。"]
-    interviewer = Interviewer(ScriptedRunner(turns), LLMSettings())
+    catalog = Catalog(repo / "warehouse/data/dev.duckdb")
+    # 本番と同じく、確定前に設計の課題も確かめる
+    interviewer = Interviewer(
+        ScriptedRunner(turns), LLMSettings(), design_issues=design_issues(catalog)
+    )
     gh = FakeGh()
     pipeline = GenerationPipeline(
         PipelineConfig(repo, DBT.parent, repo / "warehouse/data/dev.duckdb", "daikono313"),
@@ -58,7 +63,6 @@ def test_v2_end_to_end(repo: Path) -> None:  # noqa: F811
     )
     store = Store(repo / ".adp" / "app.db")
     service = SessionService(store, interviewer, pipeline.run)
-    catalog = Catalog(repo / "warehouse/data/dev.duckdb")
     client = TestClient(create_app(service, DatasetIndex(repo, catalog), ChartViews(repo)))
 
     # S3-1. 開始画面で使えるデータを見る（返品のテーブルがある）

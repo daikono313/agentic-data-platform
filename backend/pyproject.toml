@@ -16,6 +16,8 @@ dependencies = [
   "dbt-duckdb>=1.11",
   "dbt-metricflow[dbt-duckdb]>=0.15",
   "dbt-charts>=0.9.1,<0.10",
+  # SQL の解析（チャートの SQL、BEAM の式の検査）。MIT。dbt-metricflow 経由でも入るが直接使うので固定
+  "sqlglot>=30.22,<31",
 ]
 
 [dependency-groups]

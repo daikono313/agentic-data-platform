@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +48,9 @@ def new_state(request: str) -> InterviewState:
     return InterviewState(beam=BeamModel(name="draft", title="下書き", request=request))
 
 
+logger = logging.getLogger(__name__)
+
+
 class Interviewer:
     def __init__(
         self,
@@ -72,6 +76,7 @@ class Interviewer:
         try:
             return [f"設計: {i}" for i in self.design_issues(beam)]
         except Exception:  # 設計の確認自体の失敗で確定を止めない（生成時にも確かめる）
+            logger.exception("設計の確認に失敗しました（確定は止めません）")
             return []
 
     def _spec(self, state: InterviewState) -> AgentSpec:
