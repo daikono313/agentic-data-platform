@@ -1,3 +1,4 @@
+import type { Datasets } from './datasets'
 import type { InterviewEvent, JobEvent, SessionView } from './types'
 
 const BASE = '/api'
@@ -37,6 +38,9 @@ export async function* readSSE<T extends { event: string; data: unknown }>(
 }
 
 export const api = {
+  async datasets(): Promise<Datasets> {
+    return json(await fetch(`${BASE}/datasets`))
+  },
   async createSession(request: string): Promise<SessionView> {
     return json(
       await fetch(`${BASE}/sessions`, {

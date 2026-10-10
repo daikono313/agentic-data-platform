@@ -1,9 +1,12 @@
-import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 
 describe('App', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ metrics: [], models: [], sources: [], beams: [], errors: [] })))))
+  })
   afterEach(() => window.history.replaceState(null, '', '/'))
 
   it('最初は要求の入力画面を表示する', () => {
@@ -21,5 +24,31 @@ describe('App', () => {
     expect(screen.getByTestId('how-many')).toHaveTextContent('売上金額')
     expect(screen.getByLabelText('顧客が商品を注文する × 店舗')).toHaveTextContent('✓')
     expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeDisabled()
+  })
+})
+
+describe('App の開始画面', () => {
+  it('要求の例をクリックすると入力欄に入る', async () => {
+    const body = {
+      metrics: [],
+      models: [],
+      beams: [],
+      errors: [],
+      sources: [
+        {
+          name: 'raw.returns',
+          description: '返品',
+          row_count: 1,
+          columns: [
+            { name: 'quantity', description: '返品数量', data_type: 'INTEGER' },
+            { name: 'return_reason', description: '返品理由', data_type: 'VARCHAR' },
+          ],
+        },
+      ],
+    }
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body)))))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '返品理由別の返品の返品数量を見たい' }))
+    expect(screen.getByLabelText('見たい指標')).toHaveValue('返品理由別の返品の返品数量を見たい')
   })
 })
