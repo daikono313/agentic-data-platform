@@ -140,6 +140,7 @@ class SimulatedUser:
     def __init__(self, runner: AgentRunner, settings: LLMSettings, persona: str) -> None:
         self.runner = runner
         self.spec = AgentSpec(
+            purpose="eval-user",
             system_prompt=USER_PROMPT.format(persona=persona),
             model=settings.default_model,
             max_turns=1,

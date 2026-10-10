@@ -63,6 +63,7 @@ class Interviewer:
 
     def _spec(self, state: InterviewState) -> AgentSpec:
         return AgentSpec(
+            purpose="interview",
             system_prompt=system_prompt(),
             model=self.settings.default_model,
             tools={beam_tools.SERVER_NAME: beam_tools.build_tools(state)} | self.extra_tools,

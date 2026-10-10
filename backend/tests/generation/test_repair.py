@@ -43,6 +43,8 @@ def test_guard(tmp_path: Path) -> None:
         ("Edit", {"file_path": "profiles.yml", "new_string": "x"}),
         ("Write", {"file_path": "packages.yml", "content": "x"}),
         ("Write", {"file_path": "models/a.sql", "content": "select '{{ env_var(\"KEY\") }}'"}),
+        ("Write", {"file_path": "models/a.sql", "content": "select '{{ env_var (\"KEY\") }}'"}),
+        ("Write", {"file_path": "models/a.sql", "content": "{% set f = env_var %}{{ f('K') }}"}),
         ("Bash", {"command": "rm -rf /"}),
         ("Bash", {"command": "dbt build; rm -rf /"}),
         ("Bash", {"command": "dbt show --inline 'select 1'"}),
@@ -57,6 +59,17 @@ def test_guard(tmp_path: Path) -> None:
     for tool, data in denied:
         assert guard(tool, data) is not None, (tool, data)
     assert len(guard.denied) == len(denied)
+
+
+def test_guard_checks_content_after_edit(tmp_path: Path) -> None:
+    """2 回の Edit で禁止語を組み立てても拒否する。"""
+    guard = WorkspaceGuard(tmp_path)
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "a.sql").write_text("select '{{ env_XX('K') }}'")
+    assert (
+        guard("Edit", {"file_path": "models/a.sql", "old_string": "_XX", "new_string": "_var"})
+        is not None
+    )
 
 
 async def test_weakening_tests_is_detected(generated) -> None:  # type: ignore[no-untyped-def]

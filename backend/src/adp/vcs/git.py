@@ -17,20 +17,26 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+COMMAND_TIMEOUT_S = 300
+
 Runner = Callable[[Sequence[str], Path, dict[str, str] | None], subprocess.CompletedProcess[str]]
 
 
 def run(
     args: Sequence[str], cwd: Path, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        list(args),
-        cwd=cwd,
-        env=(os.environ | env) if env else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            list(args),
+            cwd=cwd,
+            env=(os.environ | env) if env else None,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise GitError(f"{' '.join(args[:3])} が {COMMAND_TIMEOUT_S} 秒で終わりませんでした") from e
     if result.returncode != 0:
         raise GitError(f"{' '.join(args[:3])} が失敗しました: {result.stderr.strip()[-500:]}")
     return result
