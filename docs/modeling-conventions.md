@@ -115,7 +115,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 ### チャート（dbt Charts）
 
-- チャートは `warehouse/charts/metrics/<board>.yml` に、指標・切り口・並び順だけで書く（SQL を書かない）。`make charts` で dbt Charts のボードを書き出す（ADR 0002）。
+- チャートは `warehouse/chart_specs/<board>.yml` に、指標・切り口・並び順だけで書く（SQL を書かない）。`make charts` で dbt Charts のボードを書き出す（ADR 0002）。
 - ボードの x / y / color には MetricFlow の参照名（`store__store_name`、`metric_time__month`、指標名）を使う。
 
 ### BEAM の group_by → MetricFlow の参照名

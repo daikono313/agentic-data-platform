@@ -1,4 +1,4 @@
-# adp により生成（charts/metrics/store_sales.yml から `python -m adp.charts compile`）。編集しない
+# adp により生成（chart_specs/store_sales.yml から `python -m adp.charts compile`）。編集しない
 title: 店舗別の売上
 source: warehouse
 queries:

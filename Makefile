@@ -31,7 +31,7 @@ dbt-build:
 	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) list metrics; fi
 	cd backend && uv run python -m adp.charts check
 
-# チャートの元ファイル（warehouse/charts/metrics/）から dbt Charts のボードを書き出す
+# チャートの元ファイル（warehouse/chart_specs/）から dbt Charts のボードを書き出す
 charts:
 	cd backend && uv run python -m adp.charts compile
 

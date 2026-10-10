@@ -40,8 +40,8 @@ def warehouse(_base_warehouse: Path) -> Path:  # noqa: F811
     (_base_warehouse / "charts" / "store_sales.yml").unlink(
         missing_ok=True
     )  # PoC の手書きボードを除く
-    (_base_warehouse / "charts" / "metrics").mkdir(exist_ok=True)
-    (_base_warehouse / "charts" / "metrics" / "store_sales.yml").write_text(
+    (_base_warehouse / "chart_specs").mkdir(exist_ok=True)
+    (_base_warehouse / "chart_specs" / "store_sales.yml").write_text(
         yaml.safe_dump(SPEC, allow_unicode=True), encoding="utf-8"
     )
     subprocess.run(
@@ -175,6 +175,27 @@ def _query(**changes: object) -> dict[str, object]:
             "型",
         ),
         (_with(metric_queries=_query(start_time="2024-01-01; drop")), "YYYY-MM-DD"),
+        # Jinja でエスケープの後に引用符を作る（#55 の再レビュー）
+        *[
+            (
+                _with(
+                    metric_queries=_query(
+                        filters=[{"dimension": "store__x", "op": "=", "value": v}]
+                    )
+                ),
+                "使えない文字",
+            )
+            for v in (
+                '{{ "%c"|format(39) }} OR (SELECT 1) > 0 OR {{ "%c"|format(39) }}',
+                "{% raw %}{{ 7*7 }}{% endraw %}",
+                '{{ "{{" }} 7*7 {{ "}}" }}',
+                "a\\",
+            )
+        ],
+        (_with(metric_queries={"q q": {"metrics": ["revenue"]}}), "metric_queries の名前"),
+        (_with(charts=_chart(sort={"by": "x; 1", "order": "desc"})), "sort"),
+        (_with(charts=_chart(sort={"by": "revenue", "order": "sideways"})), "sort"),
+        (_with(charts=_chart(style={"number_format": "{{ 7*7 }}"})), "number_format"),
         (_with(metric_queries=_query(metrics=["no_such_metric"])), "作れません"),
     ],
 )
@@ -229,19 +250,48 @@ def test_unsafe_boards_are_rejected(warehouse: Path) -> None:
         compile_board("x", _with(extra={"q2": {"type": "http", "url": "x"}}), warehouse, MF)
 
 
-def test_check_scans_subdirectories(warehouse: Path) -> None:
-    for rel in ("sub/a.yml", "b.yaml"):
-        path = warehouse / "charts" / rel
-        path.parent.mkdir(exist_ok=True)
-        path.write_text("title: x\n")
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "charts/evil.md",
+        "charts/evil2.markdown",
+        "charts/upper.YML",
+        "charts/b.yaml",
+        "charts/sub/a.yml",
+        "chart_specs/evil3.yaml",
+        "chart_specs/sub/evil4.yml",
+    ],
+)
+def test_check_rejects_files_dbt_charts_would_serve(warehouse: Path, rel: str) -> None:
+    """dbt Charts が配信するのに check が見ない置き場所を作らない（#55 の再レビュー）。"""
+    path = warehouse / rel
+    created_dir = not path.parent.exists()
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("title: x\nsource: warehouse\nqueries:\n  q:\n    sql: select 42 as x\n")
     try:
         problems = check(warehouse, MF)
-        assert any("sub/a.yml" in p for p in problems)
-        assert any("b.yaml" in p for p in problems)
+        top = rel.split("/")[0] + "/" + rel.split("/")[1]
+        assert any(p.startswith(top) for p in problems), problems
     finally:
-        (warehouse / "charts" / "sub" / "a.yml").unlink()
-        (warehouse / "charts" / "sub").rmdir()
-        (warehouse / "charts" / "b.yaml").unlink()
+        path.unlink()
+        if created_dir:
+            path.parent.rmdir()
+
+
+def test_check_rejects_symlinks(warehouse: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evil5.yml").write_text("title: x\n")
+    links = [warehouse / "charts" / "linked", warehouse / "charts" / "linked_board.yml"]
+    links[0].symlink_to(outside, target_is_directory=True)
+    links[1].symlink_to(warehouse / "charts" / "store_sales.yml")
+    try:
+        problems = check(warehouse, MF)
+        assert any(p.startswith("charts/linked:") for p in problems), problems
+        assert any(p.startswith("charts/linked_board.yml:") for p in problems), problems
+    finally:
+        for link in links:
+            link.unlink()
 
 
 def test_extra_chart_sources_are_rejected(warehouse: Path) -> None:

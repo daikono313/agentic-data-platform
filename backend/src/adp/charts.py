@@ -1,6 +1,6 @@
 """dbt Charts から Semantic Layer（MetricFlow）の指標を使う（#41、design-doc O4 の案 (a)）。
 
-チャートの元ファイル `warehouse/charts/metrics/<board>.yml` には、SQL ではなく指標と切り口を書く。
+チャートの元ファイル `warehouse/chart_specs/<board>.yml` には、SQL ではなく指標と切り口を書く。
 
     title: 店舗別の売上
     metric_queries:
@@ -38,10 +38,11 @@ import yaml
 from sqlglot import exp
 
 HEADER = (
-    "# adp により生成（charts/metrics/{name}.yml から `python -m adp.charts compile`）。"
-    "編集しない\n"
+    "# adp により生成（chart_specs/{name}.yml から `python -m adp.charts compile`）。編集しない\n"
 )
 SOURCE = "warehouse"
+# 元ファイルは charts/ の外に置く（charts/ の下は dbt Charts がボードとして配信する）
+SPECS_DIR = "chart_specs"
 MF_TIMEOUT_S = 120
 _QUERY_KEYS = {"metrics", "group_by", "order", "limit", "filters", "start_time", "end_time"}
 # 元ファイルで使えるキー（許可リスト）。
@@ -99,6 +100,7 @@ class ChartError(Exception):
 
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+_SAFE_VALUE = re.compile(r"[^{}%\\\x00-\x1f]{0,200}")
 _OPS = {
     "=": "=",
     "!=": "<>",
@@ -126,6 +128,10 @@ def _literal(value: Any) -> str:
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, str):
+        # MetricFlow は where を Jinja で展開するので、{ } % があるとエスケープの後で引用符や
+        # 任意の SQL を作れる。値に使える文字を絞る（#55 のレビュー）
+        if not _SAFE_VALUE.fullmatch(value):
+            raise ChartError(f"filter の値に使えない文字があります: {value!r}")
         return "'" + value.replace("'", "''") + "'"
     raise ChartError(f"filter の値に使えない型があります: {value!r}")
 
@@ -225,6 +231,11 @@ def compile_sql(warehouse: Path, mf: Path, query: MetricQuery) -> str:
             f"MetricFlow で SQL を作れませんでした（{' '.join(query.args())}）: {detail}"
         )
     sql = "\n".join(lines[start:]).strip()
+    # dbt Charts もボードの SQL を Jinja で展開する。テンプレートを残さない
+    if re.search(r"\{[{%#]|[}%#]\}", sql):
+        raise ChartError(
+            f"MetricFlow の SQL にテンプレート記法が残っています（{' '.join(query.args())}）"
+        )
     tree = sqlglot.parse_one(sql, read="duckdb")
     for table in tree.find_all(exp.Table):
         table.set("catalog", None)
@@ -246,6 +257,9 @@ def _validate_spec(name: str, spec: Any) -> dict[str, Any]:
     queries = spec.get("metric_queries")
     if not isinstance(queries, dict) or not queries:
         raise ChartError(f"{name}: metric_queries がありません")
+    for q in queries:
+        if not isinstance(q, str) or not _IDENT.match(q):
+            raise ChartError(f"{name}: metric_queries の名前は英小文字・数字・_ で書いてください")
     charts = spec.get("charts")
     if not isinstance(charts, dict) or not charts:
         raise ChartError(f"{name}: charts がありません")
@@ -276,10 +290,20 @@ def _validate_spec(name: str, spec: Any) -> dict[str, Any]:
             not isinstance(chart["sort"], dict) or set(chart["sort"]) - _SORT_KEYS
         ):
             raise ChartError(f"{p}.sort は by と order だけです")
+        sort = chart.get("sort") or {}
+        if ("by" in sort and not (isinstance(sort["by"], str) and _IDENT.match(sort["by"]))) or (
+            "order" in sort and sort["order"] not in ("asc", "desc")
+        ):
+            raise ChartError(f"{p}.sort は by に列名、order に asc / desc を書いてください")
         if "style" in chart and (
             not isinstance(chart["style"], dict) or set(chart["style"]) - _STYLE_KEYS
         ):
             raise ChartError(f"{p}.style は number_format だけです")
+        fmt = (chart.get("style") or {}).get("number_format")
+        if fmt is not None and not (
+            isinstance(fmt, str) and re.fullmatch(r"[0-9a-zA-Z$,.~%+\-( ]{1,20}", fmt)
+        ):
+            raise ChartError(f"{p}.style.number_format が不正です")
     if "title" in spec and (
         not isinstance(spec["title"], str) or re.search(r"[<>{}]", spec["title"])
     ):
@@ -325,7 +349,31 @@ def compile_board(name: str, spec: Any, warehouse: Path, mf: Path) -> str:
 
 
 def _specs(warehouse: Path) -> dict[str, Path]:
-    return {p.stem: p for p in sorted((warehouse / "charts" / "metrics").glob("*.yml"))}
+    return {p.stem: p for p in sorted((warehouse / SPECS_DIR).glob("*.yml"))}
+
+
+def _stray_files(root: Path, label: str) -> list[str]:
+    """root の直下の `<名前>.yml` 以外（サブディレクトリ・シンボリックリンク・他の拡張子）を返す。
+
+    dbt Charts は charts/ の下の .yml / .yaml / .md / .markdown をすべて配信し、
+    シンボリックリンクもたどるため、許可するものだけを数える（#55 のレビュー）。
+    """
+    if not root.exists():
+        return []
+    problems = []
+    for entry in sorted(os.scandir(root), key=lambda e: e.name):
+        ok = (
+            not entry.is_symlink()
+            and entry.is_file(follow_symlinks=False)
+            and entry.name.endswith(".yml")
+            and _IDENT.match(entry.name.removesuffix(".yml")) is not None
+        )
+        if not ok and entry.name != ".gitkeep":
+            problems.append(
+                f"{label}/{entry.name}: {label}/ の直下には <名前>.yml だけを置けます"
+                "（サブディレクトリ・シンボリックリンク・他の形式は不可）"
+            )
+    return problems
 
 
 def compile_all(warehouse: Path, mf: Path) -> dict[str, str]:
@@ -350,24 +398,18 @@ def check(warehouse: Path, mf: Path) -> list[str]:
     problems = _check_sources(warehouse)
     expected = compile_all(warehouse, mf)
     charts_dir = warehouse / "charts"
+    problems += _stray_files(charts_dir, "charts") + _stray_files(warehouse / SPECS_DIR, SPECS_DIR)
     boards = [
-        p
-        for p in sorted([*charts_dir.rglob("*.yml"), *charts_dir.rglob("*.yaml")])
-        if (charts_dir / "metrics") not in p.parents
+        p for p in sorted(charts_dir.glob("*.yml")) if not p.is_symlink() and _IDENT.match(p.stem)
     ]
     for path in boards:
-        if path.parent != charts_dir or path.suffix != ".yml":
-            problems.append(
-                f"{path.relative_to(charts_dir)}: ボードは charts/ の直下に .yml で置きます"
-            )
-            continue
         text = path.read_text(encoding="utf-8")
         if not text.startswith("# adp により生成"):
             problems.append(
-                f"{path.name}: 手書きのボードは置けません（charts/metrics/ に元ファイルを書く）"
+                f"{path.name}: 手書きのボードは置けません（chart_specs/ に元ファイルを書く）"
             )
         elif path.stem not in expected:
-            problems.append(f"{path.name}: 元ファイル charts/metrics/{path.stem}.yml がありません")
+            problems.append(f"{path.name}: 元ファイル chart_specs/{path.stem}.yml がありません")
         elif text != expected[path.stem]:
             problems.append(f"{path.name}: 古くなっています（python -m adp.charts compile を実行）")
     for name in expected:
