@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -16,6 +17,7 @@ from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDe
 from adp.design.builder import dim_key_expr
 from adp.generation.semantic import (
     MetricQuery,
+    SemanticError,
     dim_semantics,
     fact_model_semantics,
     fact_semantics,
@@ -54,6 +56,8 @@ class GeneratedFile:
     path: str
     """warehouse/ からの相対パス。"""
     content: str
+    replaces: str | None = None
+    """既存のファイルを書き換える場合の、元の内容（adp が生成したファイルに指標を足すときだけ）。"""
 
 
 @dataclass
@@ -294,6 +298,82 @@ def fact_files(
     ], queries
 
 
+def _extend_existing_fact(
+    fact: FactTable, beam: BeamModel, design: PhysicalDesign, info: WarehouseInfo
+) -> tuple[list[GeneratedFile], list[MetricQuery]] | None:
+    """既にある fct に、この要求の指標（と、その元になる measure の列）だけを足す（#46）。
+
+    S2 のように共通の fct を再利用する場合。adp が生成した fct で、足す列が measure か属性で
+    基のテーブル（t0）だけを参照するときに限る。できなければ None（エージェントに任せる）。
+    既存の列・指標は変えない。
+    """
+    model_file = getattr(info, "model_file", None)
+    if model_file is None:
+        return None
+    yml, sql = model_file(fact.name, ".yml"), model_file(fact.name, ".sql")
+    if yml is None or sql is None:
+        return None
+    (yml_path, yml_text), (sql_path, sql_text) = yml, sql
+    header = "-- adp により生成"
+    base = f"from {{{{ ref('{fact.base.model}') }}}} as t0"
+    if not yml_text.startswith("# adp により生成") or not sql_text.startswith(header):
+        return None
+    if base not in sql_text:
+        return None
+    data = yaml.safe_load(yml_text)
+    model = next(
+        (m for m in data.get("models", []) if isinstance(m, dict) and m.get("name") == fact.name),
+        None,
+    )
+    if model is None or not model.get("semantic_model"):
+        return None
+    try:
+        planned_files, queries = fact_files(fact, beam, design, True, info)
+    except SemanticError:
+        return None
+    planned = yaml.safe_load(planned_files[1].content)
+    planned_model = planned["models"][0]
+
+    existing_metrics = {m.get("name") for m in model.get("metrics", []) or []}
+    existing_metrics |= {m.get("name") for m in data.get("metrics", []) or []}
+    new_in_model = [
+        m for m in planned_model.get("metrics", []) if m["name"] not in existing_metrics
+    ]
+    # 足すのは新しい指標の元になる列だけ（粒度や entity は既存のものを使う）
+    have = {c["name"] for c in model.get("columns", []) if isinstance(c, dict)}
+    needed = {m["expr"] for m in new_in_model if isinstance(m.get("expr"), str)}
+    missing = [c for c in fact.columns if c.name in needed and c.name not in have]
+    if needed - have - {c.name for c in missing}:
+        return None
+    for c in missing:
+        if c.role not in (ColumnRole.MEASURE, ColumnRole.ATTRIBUTE):
+            return None
+        if any(alias != "t0" for alias in re.findall(r"\b(t\d+)\.", c.expr)):
+            return None
+    new_top = [m for m in planned.get("metrics", []) or [] if m["name"] not in existing_metrics]
+    if not missing and not new_in_model and not new_top:
+        return [], queries
+
+    files: list[GeneratedFile] = []
+    if missing:
+        lines = sql_text.rstrip("\n").split("\n")
+        at = next(i for i, line in enumerate(lines) if line.startswith("from "))
+        lines[at - 1] += ","
+        added = [f"    {c.expr} as {c.name}" for c in missing]
+        lines[at:at] = [",\n".join(added)]
+        files.append(GeneratedFile(sql_path, "\n".join(lines) + "\n", replaces=sql_text))
+        entries = {c["name"]: c for c in planned_model["columns"]}
+        model["columns"] = [*model.get("columns", []), *(entries[c.name] for c in missing)]
+    if new_in_model:
+        model["metrics"] = [*(model.get("metrics") or []), *new_in_model]
+    if new_top:
+        data["metrics"] = [*(data.get("metrics") or []), *new_top]
+    head = yml_text[: yml_text.index("\n") + 1]
+    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100)
+    files.append(GeneratedFile(yml_path, head + body, replaces=yml_text))
+    return files, queries
+
+
 # --- 全体 ----------------------------------------------------------------------------------
 
 
@@ -360,11 +440,26 @@ def generate_models(
 
     for fact in design.facts:
         if fact.name in existing:
+            extended = _extend_existing_fact(fact, beam, design, info) if beam is not None else None
+            if extended is not None:
+                files, queries = extended
+                result.reused.append(fact.name)
+                result.files += files
+                result.queries += queries
+                continue
             result.tasks.append(
                 AgentTask(
                     kind="fact_exists",
                     target=fact.name,
-                    instruction=f"{fact.name} は既に存在する。上書きせず差分を PR に書く。",
+                    instruction=f"{fact.name} は既に存在する。既存の列と指標は変更・削除しない。"
+                    + (
+                        " この要求の指標（"
+                        + ", ".join(m.name for m in beam.metrics if m.event == fact.event)
+                        + "）を既存の semantic model に追加し、その元になる列が無ければ追加する: "
+                        + ", ".join(f"{c.name} = {c.expr}" for c in fact.columns)
+                        if beam is not None
+                        else ""
+                    ),
                 )
             )
         else:

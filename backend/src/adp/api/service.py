@@ -122,7 +122,7 @@ class SessionService:
             "phase": state.phase.value,
             "beam": state.beam.model_dump(mode="json"),
             "matrix": build_event_matrix(state.beam).model_dump(mode="json"),
-            "issues": state.beam.finalize_issues(),
+            "issues": self.interviewer.issues(state.beam),
             "choices": state.choices,
             "question": state.question,
             "messages": [m.model_dump(mode="json") for m in state.messages],

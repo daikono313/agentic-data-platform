@@ -161,6 +161,7 @@ def build_default_app() -> FastAPI:
     """本番の組み立て（実際の Claude、ソースカタログ、生成パイプライン）。"""
     from adp.catalog.catalog import Catalog
     from adp.catalog.tools import SERVER_NAME, build_tools
+    from adp.design.check import design_issues
     from adp.interview import Interviewer
     from adp.llm import ClaudeAgentRunner, load_settings
     from adp.llm.settings import REPO_ROOT, read_dotenv
@@ -171,7 +172,12 @@ def build_default_app() -> FastAPI:
     runner = ClaudeAgentRunner(settings)
     db = REPO_ROOT / "warehouse" / "data" / "dev.duckdb"
     catalog = Catalog(db, REPO_ROOT / "warehouse" / "target" / "manifest.json")
-    interviewer = Interviewer(runner, settings, {SERVER_NAME: build_tools(catalog)})
+    interviewer = Interviewer(
+        runner,
+        settings,
+        {SERVER_NAME: build_tools(catalog)},
+        design_issues=design_issues(catalog),
+    )
     account = (
         read_dotenv(REPO_ROOT / ".env").get("ADP_GITHUB_ACCOUNT")
         or GitWorkspace(REPO_ROOT).remote_owner()

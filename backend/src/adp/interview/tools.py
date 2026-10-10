@@ -27,8 +27,8 @@ def _text(text: str, *, error: bool = False) -> dict[str, Any]:
     return result
 
 
-def _remaining(beam: BeamModel) -> str:
-    issues = beam.finalize_issues()
+def _remaining(beam: BeamModel, check: Callable[[BeamModel], list[str]] | None = None) -> str:
+    issues = (check or BeamModel.finalize_issues)(beam)
     if not issues:
         return "確定に必要な情報はそろっています。"
     head = "\n".join(f"- {i}" for i in issues[:15])
@@ -49,8 +49,12 @@ def _schema(model: type[Any]) -> dict[str, Any]:
 
 
 def build_tools(
-    state: InterviewState, on_change: Callable[[], None] | None = None
+    state: InterviewState,
+    on_change: Callable[[], None] | None = None,
+    issues: Callable[[BeamModel], list[str]] | None = None,
 ) -> list[SdkMcpTool[Any]]:
+    """issues: 確定までに残っている課題（既定は BEAM の条件だけ。設計の課題も含められる）。"""
+
     def apply(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
         data = state.beam.model_dump(mode="json")
         try:
@@ -64,7 +68,7 @@ def build_tools(
         state.beam = updated
         if on_change:
             on_change()
-        return _text("反映しました。\n" + _remaining(updated))
+        return _text("反映しました。\n" + _remaining(updated, issues))
 
     def upsert(items: list[dict[str, Any]], key: str, item: dict[str, Any]) -> None:
         for i, existing in enumerate(items):
@@ -75,7 +79,7 @@ def build_tools(
 
     @tool("get_beam", "現在の BEAM 成果物（YAML）と、確定までに残っている課題を返す", {})
     async def get_beam(args: dict[str, Any]) -> dict[str, Any]:
-        return _text(to_yaml(state.beam) + "\n" + _remaining(state.beam))
+        return _text(to_yaml(state.beam) + "\n" + _remaining(state.beam, issues))
 
     @tool(
         "set_overview",

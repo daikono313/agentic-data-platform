@@ -25,6 +25,7 @@ from adp.beam import Aggregation, Availability, BeamModel, GapKind, MetricType, 
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
+from adp.design.check import design_issues
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
@@ -337,7 +338,12 @@ async def run_scenario(
     max_turns: int = 25,
     log: Callable[[str], None] = print,
 ) -> EvalResult:
-    interviewer = Interviewer(runner, settings, {CATALOG_SERVER: catalog_tools(catalog)})
+    interviewer = Interviewer(
+        runner,
+        settings,
+        {CATALOG_SERVER: catalog_tools(catalog)},
+        design_issues=design_issues(catalog),
+    )
     user = SimulatedUser(runner, settings, scenario.persona)
     state = new_state(scenario.request)
     start = time.monotonic()
@@ -370,7 +376,7 @@ async def run_scenario(
             reply = f"{reply}\n\n{state.messages[-1].question}".strip()
         if error:
             break
-        if state.phase == Phase.REVIEW and not state.beam.finalize_issues():
+        if state.phase == Phase.REVIEW and not interviewer.issues(state.beam):
             answer = await user.reply(reply, choices)
             log(f"[{scenario.name}] user: {answer}")
             if answer.strip().startswith("確定します"):

@@ -108,7 +108,35 @@ class SourceRef(_Base):
     def _column_or_expr(self) -> SourceRef:
         if (self.column is None) == (self.expr is None):
             raise ValueError("column と expr のどちらか一方を指定してください")
+        if self.expr is not None:
+            _check_row_expr(self.expr)
         return self
+
+
+def _check_row_expr(expr: str) -> None:
+    """expr は、そのテーブルの列だけを使う 1 行ごとの式に限る（#46）。
+
+    サブクエリ・他のテーブル・集計・ウィンドウ関数は、生成する SQL を壊し、任意の SQL を
+    差し込める経路にもなるので受け付けない。他のテーブルの値は、別のイベントや結合で表す。
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    hint = (
+        "expr には、このテーブルの列だけを使った 1 行ごとの式を書いてください"
+        "（サブクエリ・集計・他のテーブルの参照は不可。他のテーブルの値は別のイベントや"
+        "ディメンションで表します）"
+    )
+    try:
+        trees = sqlglot.parse(expr, read="duckdb")
+    except sqlglot.errors.ParseError as e:
+        raise ValueError(f"expr を SQL の式として読めません: {expr}") from e
+    if len(trees) != 1 or trees[0] is None or isinstance(trees[0], exp.Query):
+        raise ValueError(hint)
+    tree = trees[0]
+    forbidden = (exp.Query, exp.Subquery, exp.Table, exp.AggFunc, exp.Window, exp.Star)
+    if any(tree.find_all(*forbidden)) or any(c.table for c in tree.find_all(exp.Column)):
+        raise ValueError(hint)
 
 
 class Measure(_Base):

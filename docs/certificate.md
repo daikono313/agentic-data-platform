@@ -37,3 +37,9 @@
 1. Umbrella [#18](https://github.com/daikono313/auto_data_platform/issues/18) の子 issue がすべて close されている
 2. design-doc の S1 シナリオがローカルで通しで動く（実際の LLM を使用、#17）
 3. main の CI が green
+
+## v2 の完了
+
+1. Umbrella [#47](https://github.com/daikono313/auto_data_platform/issues/47) の子 issue がすべて close されている
+2. design-doc の S3 と S4 の 1〜2 が通しで動く: 自動テスト（`backend/tests/test_e2e_v2.py`、CI）と、実際の LLM（`make e2e SCENARIO=return_rate_by_category V2=1`）
+3. main の CI が green

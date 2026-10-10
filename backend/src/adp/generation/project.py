@@ -46,6 +46,24 @@ class ProjectInfo:
                     return {c["name"] for c in m.get("columns", []) if isinstance(c, dict)}
         return set()
 
+    def model_file(self, model: str, suffix: str) -> tuple[str, str] | None:
+        """モデルの SQL（suffix=".sql"）か、モデルを定義している YAML（".yml"）。
+
+        (warehouse/ からの相対パス, 内容)。
+        """
+        for p in sorted((self.warehouse_dir / "models").rglob(f"*{suffix}")):
+            text = p.read_text(encoding="utf-8")
+            if suffix == ".sql":
+                if p.stem == model:
+                    return str(p.relative_to(self.warehouse_dir)), text
+                continue
+            data = yaml.safe_load(text)
+            if isinstance(data, dict) and any(
+                isinstance(m, dict) and m.get("name") == model for m in data.get("models", []) or []
+            ):
+                return str(p.relative_to(self.warehouse_dir)), text
+        return None
+
     def declared_sources(self) -> set[str]:
         declared = set()
         for doc in self._yaml_docs():
@@ -62,8 +80,24 @@ class ProjectInfo:
         return sorted(v for v, _ in profile.top_values if v is not None)
 
     def write(self, files: list[GeneratedFile]) -> list[Path]:
-        """生成ファイルを書く。1 つでも既存なら、何も書かずにエラーにする。"""
-        conflicts = [f.path for f in files if (self.warehouse_dir / f.path).exists()]
+        """生成ファイルを書く。1 つでも既存なら、何も書かずにエラーにする。
+
+        既存のファイルを書き換えてよいのは、元の内容（replaces）が今の内容と同じときだけ。
+        """
+        conflicts = [
+            f.path
+            for f in files
+            if (self.warehouse_dir / f.path).exists()
+            and (
+                f.replaces is None
+                or (self.warehouse_dir / f.path).read_text(encoding="utf-8") != f.replaces
+            )
+        ]
+        conflicts += [
+            f.path
+            for f in files
+            if f.replaces is not None and not (self.warehouse_dir / f.path).exists()
+        ]
         if conflicts:
             raise FileExistsError(f"既存のファイルは上書きしません: {', '.join(conflicts)}")
         written = []

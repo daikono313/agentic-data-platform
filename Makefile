@@ -1,6 +1,6 @@
 SAMPLE_ORDERS ?= 30000
 
-.PHONY: sample-data setup lint test dbt-build charts eval eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
+.PHONY: sample-data setup lint test dbt-build charts eval e2e eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -38,6 +38,10 @@ charts:
 # 実際の LLM（既定は Claude Code のログイン認証）でインタビューの eval を回す
 eval:
 	cd backend && uv run python -m adp.evals interview $(if $(SCENARIO),--scenario $(SCENARIO)) $(if $(REPEAT),--repeat $(REPEAT))
+
+# 実際の LLM で通しの E2E（S1。V2=1 で S3・S4 も）。既定は dry-run（push・PR 作成をしない）。PR=1 で本物の PR
+e2e:
+	cd backend && uv run python -m adp.evals.e2e --scenario $(or $(SCENARIO),sales_by_store) $(if $(V2),--v2) $(if $(PR),,--dry-run)
 
 # eval の前後比較（プロンプトを直したら PR に貼る。certificate C10）: make eval-compare BEFORE=.adp/evals/<前> AFTER=.adp/evals/<後>
 eval-compare:
