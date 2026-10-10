@@ -63,7 +63,7 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     beam = load(FIXTURES / "beam" / "sales_by_store.yml")
     design = DesignBuilder(CatalogSchema(catalog)).build(beam)
     assert design.blockers == []
-    generation = generate_models(design, info)
+    generation = generate_models(design, info, beam)
 
     # 共通ディメンションと staging は既存のものを再利用し、fct だけを生成する
     assert [f.path for f in generation.files] == [
@@ -84,6 +84,26 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
 
     result = _dbt(warehouse, "build")
     assert result.returncode == 0, result.stdout[-3000:]
+
+    # 元の要求（日別・店舗別の売上、キャンセル除外）を Semantic Layer から取得できる
+    from adp.generation.semantic import run_query
+
+    assert [(q.metric, q.group_by) for q in generation.queries] == [
+        ("revenue", ["metric_time__day", "store__store_name", "store__channel"])
+    ]
+    mf = DBT.parent / "mf"
+    validate = subprocess.run(
+        [str(mf), "validate-configs"],
+        cwd=warehouse,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse)},
+        check=False,
+    )
+    assert validate.returncode == 0, validate.stdout[-3000:]
+    query = run_query(warehouse, mf, generation.queries[0])
+    assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
+    assert "store__store_name" in query.stdout
 
     con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
     columns = (
@@ -243,3 +263,31 @@ def test_edge_cases_compile(tmp_path: Path) -> None:
     info.write(generation.files)
     result = _dbt(warehouse, "build", "--select", "+fct_coupon_stores", "+dim_store_channel")
     assert result.returncode == 0, result.stdout[-3000:]
+
+
+def test_generated_revenue_matches_reference_metric(tmp_path: Path) -> None:
+    """生成した revenue と、元データから直接集計した値（キャンセル除外の合計）が一致する。"""
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+    mf = DBT.parent / "mf"
+    out = subprocess.run(
+        [str(mf), "query", "--metrics", "revenue", "--csv", str(tmp_path / "r.csv")],
+        cwd=warehouse,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse)},
+        check=False,
+    )
+    assert out.returncode == 0, out.stdout[-2000:]
+    total = float((tmp_path / "r.csv").read_text().splitlines()[1])
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    expected = con.sql(
+        "select sum(i.quantity * i.unit_price - i.discount_amount) from raw.order_items i"
+        " join raw.orders o using (order_id) where o.order_status <> 'cancelled'"
+    ).fetchone()
+    assert expected is not None and total == float(expected[0])

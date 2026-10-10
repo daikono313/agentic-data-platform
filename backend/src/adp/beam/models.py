@@ -281,6 +281,32 @@ class MetricType(StrEnum):
     CUMULATIVE = "cumulative"
 
 
+class FilterOperator(StrEnum):
+    EQUALS = "="
+    NOT_EQUALS = "!="
+    IN = "in"
+    NOT_IN = "not_in"
+
+
+class MetricFilter(_Base):
+    """指標の絞り込み条件。Semantic Layer の filter に変換される。"""
+
+    ref: str = Field(description="`<dimension ref>.<attribute>` または縮退ディメンション名")
+    operator: FilterOperator
+    values: list[str | int | float | bool] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _single_value(self) -> MetricFilter:
+        if (
+            self.operator in (FilterOperator.EQUALS, FilterOperator.NOT_EQUALS)
+            and len(self.values) != 1
+        ):
+            raise ValueError(
+                f"{self.operator.value} の値は 1 つだけ指定してください（複数なら in / not_in）"
+            )
+        return self
+
+
 class MetricStatus(StrEnum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"
@@ -305,9 +331,9 @@ class MetricRequest(_Base):
     window: str | None = Field(
         default=None, description="cumulative のとき（例: '7 days'）。無ければ全期間の累計"
     )
-    filter: str | None = Field(
-        default=None,
-        description="絞り込み条件（例: `store.channel = 'store'`）。日本語の説明でもよい",
+    filter: str | None = Field(default=None, description="絞り込み条件の日本語の説明")
+    filters: list[MetricFilter] = Field(
+        default_factory=list, description="絞り込み条件（すべて AND）。生成に使う"
     )
     group_by: list[str] = Field(
         default_factory=list,
