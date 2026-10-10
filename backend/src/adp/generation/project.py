@@ -55,6 +55,12 @@ class ProjectInfo:
                     declared |= {f"{schema}.{t['name']}" for t in src.get("tables", [])}
         return declared
 
+    def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
+        profile = self.catalog.profile_column(table, column, top=limit)
+        if profile.distinct_count > limit:
+            return None
+        return sorted(v for v, _ in profile.top_values if v is not None)
+
     def write(self, files: list[GeneratedFile]) -> list[Path]:
         """生成ファイルを書く。1 つでも既存なら、何も書かずにエラーにする。"""
         conflicts = [f.path for f in files if (self.warehouse_dir / f.path).exists()]

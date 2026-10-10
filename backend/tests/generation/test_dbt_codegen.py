@@ -69,6 +69,7 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     assert [f.path for f in generation.files] == [
         "models/marts/fct_order_lines.sql",
         "models/marts/fct_order_lines.yml",
+        "tests/assert_fct_order_lines_reconciles_with_source.sql",
     ]
     assert {"dim_customer", "dim_product", "dim_store", "dim_promotion", "stg_orders"} <= set(
         generation.reused
@@ -104,6 +105,11 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     query = run_query(warehouse, mf, generation.queries[0])
     assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
     assert "store__store_name" in query.stdout
+
+    # 生成したテスト（unit test・突合・区分値）が build の中で実行されている
+    assert "test_fct_order_lines_example_1" in result.stdout
+    assert "assert_fct_order_lines_reconciles_with_source" in result.stdout
+    assert "accepted_values_fct_order_lines_payment_method" in result.stdout
 
     con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
     columns = (
@@ -291,3 +297,24 @@ def test_generated_revenue_matches_reference_metric(tmp_path: Path) -> None:
         " join raw.orders o using (order_id) where o.order_status <> 'cancelled'"
     ).fetchone()
     assert expected is not None and total == float(expected[0])
+
+
+def test_generated_tests_catch_broken_sql(tmp_path: Path) -> None:
+    """生成 SQL の計算や結合を壊すと、生成したテストが失敗する（変異テスト）。"""
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+    sql_path = warehouse / "models/marts/fct_order_lines.sql"
+    original = sql_path.read_text(encoding="utf-8")
+
+    sql_path.write_text(original.replace("- t0.discount_amount", "+ t0.discount_amount"))
+    broken = _dbt(warehouse, "test", "--select", "test_type:unit")
+    assert broken.returncode != 0, "計算式の誤りを unit test が検出できていない"
+
+    sql_path.write_text(original.replace("{{ dim_key('t1.promotion_id') }}", "t1.promotion_id"))
+    broken = _dbt(warehouse, "test", "--select", "test_type:unit")
+    assert broken.returncode != 0, "キーの誤りを unit test が検出できていない"
