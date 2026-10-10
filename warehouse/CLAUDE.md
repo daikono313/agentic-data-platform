@@ -2,7 +2,7 @@
 
 ここは手書きのリファレンスモデルと、アプリが生成するモデルの両方の置き場所。生成コードのお手本になるので、規約を厳密に守る。
 
-**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** リファレンス実装は `models/marts/dim_*.sql` と `fct_order_lines.sql`。
+**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、手書きのリファレンス fct は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。
 
 - dbt-core 1.12+、dbt-duckdb、dbt-metricflow、dbt_utils。DuckDB ファイルは `data/*.duckdb`（git では追跡しない）。
 - レイヤーは `models/staging/stg_*` → `models/intermediate/int_*` → `models/marts/dim_*`, `fct_*`。集計済みマート（`agg_*`）は作らない。集計は Semantic Layer で行う。

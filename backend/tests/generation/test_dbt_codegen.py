@@ -1,0 +1,245 @@
+"""生成した dbt モデルを、リポジトリの warehouse を複製した一時プロジェクトで実際に build する。"""
+
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import duckdb
+import pytest
+
+from adp.beam import load
+from adp.catalog.catalog import Catalog
+from adp.design import DesignBuilder
+from adp.design.catalog_schema import CatalogSchema
+from adp.generation import generate_models
+from adp.generation.project import ProjectInfo
+
+ROOT = Path(__file__).parents[3]
+FIXTURES = Path(__file__).parents[1] / "fixtures"
+DBT = Path(sys.executable).parent / "dbt"
+
+
+def _warehouse_copy(tmp: Path) -> Path:
+    dst = tmp / "warehouse"
+    shutil.copytree(
+        ROOT / "warehouse",
+        dst,
+        ignore=shutil.ignore_patterns("target", "data", "logs", ".user.yml"),
+    )
+    spec = importlib.util.spec_from_file_location(
+        "gen_sample", dst / "scripts/generate_sample_data.py"
+    )
+    assert spec and spec.loader
+    gen = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gen
+    spec.loader.exec_module(gen)
+    gen.load(dst / "data" / "dev.duckdb", gen.generate(500, 3))
+    return dst
+
+
+def _dbt(warehouse: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ | {"DBT_PROFILES_DIR": str(warehouse)}
+    if args[0] == "build" and not (warehouse / "dbt_packages" / "dbt_utils").exists():
+        deps = subprocess.run(
+            [str(DBT), "deps"], cwd=warehouse, env=env, capture_output=True, text=True, check=False
+        )
+        assert deps.returncode == 0, deps.stdout[-2000:]
+    return subprocess.run(
+        [str(DBT), *args], cwd=warehouse, env=env, capture_output=True, text=True, check=False
+    )
+
+
+@pytest.fixture(scope="module")
+def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _warehouse_copy(tmp_path_factory.mktemp("gen"))
+
+
+def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    generation = generate_models(design, info)
+
+    # 共通ディメンションと staging は既存のものを再利用し、fct だけを生成する
+    assert [f.path for f in generation.files] == [
+        "models/marts/fct_order_lines.sql",
+        "models/marts/fct_order_lines.yml",
+    ]
+    assert {"dim_customer", "dim_product", "dim_store", "dim_promotion", "stg_orders"} <= set(
+        generation.reused
+    )
+    assert generation.tasks == []
+    info.write(generation.files)
+    with pytest.raises(FileExistsError):
+        info.write(generation.files)
+
+    # 手書きのリファレンスも同じプロジェクトに入れて比較する
+    ref_sql = (FIXTURES / "generation/reference/fct_order_lines.sql").read_text(encoding="utf-8")
+    (warehouse / "models/marts/ref_fct_order_lines.sql").write_text(ref_sql, encoding="utf-8")
+
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    columns = (
+        "order_line_id, order_id, customer_key, product_key, store_key, promotion_key,"
+        " ordered_on, ordered_at, payment_method, quantity, unit_price, sales_amount"
+    )
+    for a, b in (
+        ("fct_order_lines", "ref_fct_order_lines"),
+        ("ref_fct_order_lines", "fct_order_lines"),
+    ):
+        diff = con.sql(f"select {columns} from main.{a} except select {columns} from main.{b}")
+        assert diff.fetchall() == [], f"{a} にだけある行があります"
+
+
+def test_new_dimension_and_staging_are_generated(tmp_path: Path) -> None:
+    """既存モデルが無い場合は staging と dim も生成し、build が通る。"""
+    warehouse = _warehouse_copy(tmp_path)
+    for name in ("dim_store", "stg_stores"):
+        for p in (warehouse / "models").rglob(f"{name}.sql"):
+            p.unlink()
+    for yml in (warehouse / "models").rglob("_*.yml"):
+        text = yml.read_text(encoding="utf-8")
+        for name in ("dim_store", "stg_stores"):
+            text = _drop_model_entry(text, name)
+        yml.write_text(text, encoding="utf-8")
+
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    design = DesignBuilder(CatalogSchema(catalog)).build(
+        load(FIXTURES / "beam" / "sales_by_store.yml")
+    )
+    generation = generate_models(design, info)
+    paths = [f.path for f in generation.files]
+    assert "models/staging/stg_stores.sql" in paths and "models/marts/dim_store.sql" in paths
+    dim_sql = next(f.content for f in generation.files if f.path.endswith("dim_store.sql"))
+    assert "'不明'" in dim_sql and "{{ unknown_key() }}" in dim_sql
+    info.write(generation.files)
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+
+
+def _drop_model_entry(text: str, name: str) -> str:
+    import yaml
+
+    data = yaml.safe_load(text)
+    for key in ("models",):
+        if key in data:
+            data[key] = [m for m in data[key] if m.get("name") != name]
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def test_existing_dim_missing_columns_become_tasks(warehouse: Path) -> None:
+    from adp.beam import Attribute, Availability, SourceRef
+
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    store = beam.events[0].dimension("store")
+    assert store is not None
+    store.attributes.append(
+        Attribute(
+            name="opened_on",
+            label="開店日",
+            source=SourceRef(table="raw.stores", column="opened_on"),
+            availability=Availability.AVAILABLE,
+        )
+    )
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    generation = generate_models(design, ProjectInfo(warehouse, catalog))
+    tasks = [(t.kind, t.target) for t in generation.tasks]
+    assert ("add_dim_columns", "dim_store") in tasks
+
+
+def test_blockers_stop_generation(warehouse: Path) -> None:
+    from adp.design import DesignIssue, IssueSeverity
+
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    design = DesignBuilder(CatalogSchema(catalog)).build(
+        load(FIXTURES / "beam" / "sales_by_store.yml")
+    )
+    design.issues.append(DesignIssue(severity=IssueSeverity.BLOCKER, message="x"))
+    with pytest.raises(ValueError, match="確認が必要"):
+        generate_models(design, ProjectInfo(warehouse, catalog))
+
+
+def test_write_is_all_or_nothing(tmp_path: Path) -> None:
+    from adp.generation import GeneratedFile
+
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "b.sql").write_text("old")
+    info = ProjectInfo(tmp_path, Catalog(tmp_path / "x.duckdb"))
+    with pytest.raises(FileExistsError):
+        info.write([GeneratedFile("models/a.sql", "a"), GeneratedFile("models/b.sql", "b")])
+    assert not (tmp_path / "models" / "a.sql").exists()
+
+
+def test_edge_cases_compile(tmp_path: Path) -> None:
+    """式の自然キー、FK が粒度の fct、未宣言のソースでも dbt が通る。"""
+    import duckdb as ddb
+
+    from adp.beam import FactType
+    from adp.design import (
+        Column,
+        ColumnRole,
+        DimTable,
+        FactTable,
+        PhysicalDesign,
+        SourceTable,
+    )
+
+    warehouse = _warehouse_copy(tmp_path)
+    con = ddb.connect(str(warehouse / "data" / "dev.duckdb"))
+    con.execute(
+        "create table raw.coupons as select store_id, channel, 'C' || store_id as code"
+        " from raw.stores"
+    )
+    con.close()
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    base = SourceTable(table="raw.coupons", model="stg_coupons", alias="t0")
+    dim = DimTable(
+        name="dim_store_channel",
+        dimension="store_channel",
+        label="店舗チャネル",
+        key_column="store_channel_key",
+        base=base,
+        columns=[
+            Column(
+                name="store_channel",
+                role=ColumnRole.NATURAL_KEY,
+                expr="t0.store_id || '-' || t0.channel",
+            ),
+            Column(name="channel", role=ColumnRole.ATTRIBUTE, expr="t0.channel"),
+        ],
+    )
+    fact = FactTable(
+        name="fct_coupon_stores",
+        event="e",
+        label="クーポン",
+        fact_type=FactType.TRANSACTION,
+        grain="店舗チャネル",
+        grain_columns=["store_channel_key"],
+        base=base,
+        columns=[
+            Column(
+                name="store_channel_key",
+                role=ColumnRole.FOREIGN_KEY,
+                expr="{{ dim_key(\"t0.store_id || '-' || t0.channel\") }}",
+                references="dim_store_channel.store_channel_key",
+            ),
+            Column(name="code", role=ColumnRole.DEGENERATE, expr="t0.code"),
+        ],
+        primary_entity="coupon_store",
+    )
+    design = PhysicalDesign(beam="x", facts=[fact], dims=[dim], uses_dim_date=False)
+    info = ProjectInfo(warehouse, catalog)
+    generation = generate_models(design, info)
+    assert "models/staging/_adp_coupons__sources.yml" in [f.path for f in generation.files]
+    info.write(generation.files)
+    result = _dbt(warehouse, "build", "--select", "+fct_coupon_stores", "+dim_store_channel")
+    assert result.returncode == 0, result.stdout[-3000:]

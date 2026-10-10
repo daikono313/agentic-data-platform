@@ -31,5 +31,5 @@ design-doc R12 で、Semantic Layer は OSS の MetricFlow を latest spec で�
 
 ## 影響
 
-- `make dbt-build` に、MetricFlow の検証とスモーククエリ（`mf query`）を含める。
+- `make dbt-build` に、MetricFlow の検証を含める（指標がある場合）。指標は生成物なので、`mf query` での確認は生成の統合テストで行う（#12 / #13）。
 - docs/modeling-conventions.md に Semantic Layer の書き方を追加する。
