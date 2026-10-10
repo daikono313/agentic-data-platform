@@ -26,4 +26,3 @@ models:
     description: 注文明細（raw.order_items を整形）
     columns:
       - {name: order_item_id, data_tests: [unique, not_null]}
-      - {name: sales_amount, description: 売上金額（数量 × 単価 − 値引、税抜）}

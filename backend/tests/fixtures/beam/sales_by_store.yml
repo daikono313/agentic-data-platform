@@ -4,6 +4,7 @@ title: 店舗別の売上
 request: 店舗ごとの売上を見たい
 events:
   - name: customer_orders_product
+    table_name: order_lines
     label: 顧客が商品を注文する
     subject: 顧客
     verb: 注文する

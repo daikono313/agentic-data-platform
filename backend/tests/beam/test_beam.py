@@ -43,6 +43,10 @@ def test_yaml_roundtrip(model: BeamModel, tmp_path: Path) -> None:
     assert from_yaml(to_yaml(model)) == model
 
 
+def test_fact_table_name(model: BeamModel) -> None:
+    assert model.events[0].fact_table == "fct_order_lines"
+
+
 def test_fact_type_from_story(model: BeamModel) -> None:
     event = model.events[0]
     assert event.fact_type == FactType.TRANSACTION

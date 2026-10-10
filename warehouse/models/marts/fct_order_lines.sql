@@ -14,6 +14,7 @@ select
     i.quantity,
     i.unit_price,
     i.discount_amount,
-    i.sales_amount
+    -- BEAM measure sales_amount の source.expr
+    i.quantity * i.unit_price - i.discount_amount as sales_amount
 from {{ ref('stg_order_items') }} as i
 inner join {{ ref('stg_orders') }} as o on i.order_id = o.order_id

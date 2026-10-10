@@ -6,33 +6,61 @@
 
 | レイヤー | 接頭辞 | マテリアライズ | 役割 |
 |---|---|---|---|
-| staging | `stg_` | view | ソース1テーブルにつき1モデル。列名の整形、型変換、単純な派生列（例: `sales_amount`）のみ。結合しない |
+| staging | `stg_` | view | ソース1テーブルにつき1モデル。列名の整形と型変換のみ（日時から日付を切り出す程度は可）。計算や結合はしない |
 | intermediate | `int_` | view | 複数の stg を組み合わせる再利用可能な中間処理。必要なときだけ作る |
 | marts | `dim_` / `fct_` | table | ディメンショナルモデル。BI と Semantic Layer はここだけを参照する |
 
 集計済みマート（`agg_*`）は作らない。集計は Semantic Layer（MetricFlow）で行う（design-doc R5）。
 
-## BEAM 成果物との対応
+## BEAM 成果物との対応（生成ルール）
+
+BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで機械的に名前と構造を決める。例は `backend/tests/fixtures/beam/sales_by_store.yml` → `fct_order_lines`。
+
+### イベント → fct
 
 | BEAM | dbt |
 |---|---|
-| ビジネスイベント `customer_orders_product` | `fct_<名詞の複数形>`（例: `fct_order_lines`）。名前はイベントの粒度で付ける |
-| story_type: discrete / recurring / evolving | transaction / periodic snapshot / accumulating snapshot |
-| grain / grain_keys | fct の主キー。`dbt_utils.unique_combination_of_columns` でテストする |
-| measure | fct の数値列 |
-| dimension（Who / What / Where / Why / How） | `dim_<name>` と、fct 側の `<name>_key` |
-| dimension の role | fct 側の列名を `<role>_key` にし、同じ `dim_<name>` を参照する |
-| When | `dim_date` を共有し、fct には日付列（`<role>_on`）と日時列（`<role>_at`）を置く。日付列から `dim_date.date_day` への relationships テストを付ける |
-| degenerate dimension | fct に直接置く（`order_id` など） |
-| 属性が1つだけでマスタの無い How / Why（例: 支払方法） | dim を作らず fct の列にする |
-| example | dbt unit test の期待値 |
+| `event.table_name`（必須） | `fct_<table_name>`（例: `order_lines` → `fct_order_lines`） |
+| `story_type` | discrete → transaction、recurring → periodic snapshot、evolving → accumulating snapshot |
+| `measures[].source` | fct の列 `<measure.name>`。`column` ならそのまま、`expr` なら **fct の SQL で計算する**（staging では計算しない） |
+| `degenerate_dimensions[]` | fct の列 `<name>`（source の列を改名） |
+| `grain_keys` | fct の主キー。縮退ディメンションならその列、dimension ref なら後述のキー列。複数あれば `dbt_utils.unique_combination_of_columns`、1つなら `unique` |
+
+### ディメンション → dim と fct の列
+
+ディメンションは次の3種類に分ける。
+
+| 種類 | 判定 | dim | fct の列 |
+|---|---|---|---|
+| 通常 | When 以外で、`business_key.table` が `fact_key.table` と異なる | `dim_<name>`（主キー `<name>_key`、列は属性名） | `<ref>_key` = `{{ dim_key('<fact_key>') }}` |
+| マスタなし | When 以外で、`business_key` と `fact_key` が同じ列 | 作らない | `<ref>` = fact_key の列（属性はこの1列だけを持つ） |
+| When | `w: when` | `dim_date` を共有 | 下記 |
+
+- `<ref>` は `role` があれば role、無ければ name。
+- When の列: fact_key の列名が `_at` で終わるなら、日時列 `<base>_at` と日付列 `<base>_on`（`cast(... as date)`）を置く（例: `ordered_at` → `ordered_at` / `ordered_on`）。fact_key が expr か、`_at` で終わらない列なら、`<ref>_at` / `<ref>_on` にする。日付列から `dim_date.date_day` への relationships テストを付ける。
+- 同じ dim を role 違いで複数回使う場合は、`<role>_key` を複数置き、どれも同じ `dim_<name>` を参照する。
+
+### 具体例（examples） → unit test
+
+- unit test の対象は fct（計算は fct で行うため）。
+- measure と縮退ディメンションのキーは、`expect` の期待値にする。
+- dim の属性（`<ref>.<attr>`）と When のキーは、`given` の入力行（stg）を組み立てるのに使い、fct の出力では検証しない。
+- 入力行に必要で具体例に無い列は、テストが成り立つ最小の値で補う（例: 値引 0）。
+- 外部キーが NULL の入力を1行入れ、不明メンバーのキー（`md5('__unknown__')`）になることも検証する。
 
 ## キー
 
-- dim の主キーは `<name>_key`。自然キーから `{{ dim_key('<自然キー>') }}` で作る（`dbt_utils.generate_surrogate_key` のハッシュ）。
-- fct の外部キーも、同じ `dim_key()` でイベント側の自然キーから作る。dim と結合して取得しない（結合の漏れで行が消えるのを防ぐ）。
-- 自然キーが NULL の場合は不明メンバーのキーになる。各 dim には `{{ unknown_key() }}` の行を1行入れる。表示名は「不明」、意味のある場合は「プロモーションなし」のように書く。
-- そのため fct の外部キーは常に NOT NULL になる。
+- dim の主キーは `<name>_key`。自然キーから `{{ dim_key('<自然キー>') }}` で作る（`dbt_utils.generate_surrogate_key` のハッシュ）。NULL は番兵値 `__unknown__` に置き換えてからハッシュする。
+- fct の外部キーも、同じ `dim_key()` でイベント側の自然キー（fact_key）から作る。dim と結合して取得しない（結合の漏れで行が消えるのを防ぐ）。
+- 自然キーが NULL の場合は不明メンバーのキーになる。各 dim には `{{ unknown_key() }}` の行を1行入れる。
+  - 不明メンバー行の文字列の属性は「不明」にする。業務上の意味がある場合は、その意味を表す値にする（例: プロモーションの `promotion_name` は「プロモーションなし」、`promotion_type` は `none`）。
+  - 区分値の `accepted_values` には、不明メンバー行の値も含める。
+- そのため transaction fact の外部キーは常に NOT NULL になる。
+- accumulating snapshot のマイルストーン日付（例: `delivered_on`）は、イベントが起きるまで NULL になるので、`not_null` を付けず relationships だけを付ける。
+
+## dim_date
+
+- 範囲は `dbt_project.yml` の vars（`adp_date_start` / `adp_date_end`）で決める。When のソースの日付がすべて収まるようにし、収まらない場合は vars を広げる。
 
 ## SCD
 
@@ -43,9 +71,9 @@
 | 対象 | テスト |
 |---|---|
 | すべての dim / fct の主キー | `unique`、`not_null` |
-| fct の外部キー | `not_null`、`relationships`（dim へ） |
-| fct の粒度 | `dbt_utils.unique_combination_of_columns`（grain_keys） |
-| 区分値 | `accepted_values` |
+| fct の外部キー | `relationships`（dim へ）。transaction fact では `not_null` も付ける |
+| fct の粒度 | grain_keys が1つなら主キーの `unique`、複数なら `dbt_utils.unique_combination_of_columns` |
+| 区分値 | `accepted_values`（不明メンバー行の値も含める） |
 | fct の計算列 | BEAM の具体例から作る unit test |
 | fct の件数と金額 | ソースとの突合テスト（`tests/assert_<fct>_reconciles_with_source.sql`） |
 

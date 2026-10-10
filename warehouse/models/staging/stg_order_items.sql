@@ -4,6 +4,5 @@ select
     product_id,
     quantity,
     unit_price,
-    discount_amount,
-    quantity * unit_price - discount_amount as sales_amount
+    discount_amount
 from {{ source('raw', 'order_items') }}

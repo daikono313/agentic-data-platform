@@ -204,7 +204,11 @@ class EventExample(_Base):
 class BusinessEvent(_Base):
     """「誰が・何をする」のビジネスイベント。fct 1 つに対応する。"""
 
-    name: Identifier = Field(description="例: customer_orders_product。fct_<name> の元になる")
+    name: Identifier = Field(description="例: customer_orders_product")
+    table_name: Identifier | None = Field(
+        default=None,
+        description="fct テーブル名の名詞部分。粒度を表す複数形（例: order_lines）",
+    )
     label: str = Field(description="例: 顧客が商品を注文する")
     subject: str = Field(description="Who（主語）")
     verb: str = Field(description="動詞")
@@ -227,6 +231,10 @@ class BusinessEvent(_Base):
     impact: Level | None = None
     effort: Level | None = None
     source_tables: list[str] = Field(default_factory=list)
+
+    @property
+    def fact_table(self) -> str:
+        return f"fct_{self.table_name or self.name}"
 
     @property
     def fact_type(self) -> FactType:
