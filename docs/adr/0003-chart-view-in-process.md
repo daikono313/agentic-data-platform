@@ -26,7 +26,9 @@
 ## 影響
 
 - ADR 0001 の 3（「backend からは `mf` CLI をサブプロセスで呼ぶ」）を、描画画面とデータ一覧については更新する。生成パイプライン・`adp.charts compile / check`・検証は、これまでどおり CLI を使う。
-- MetricFlow（0.213）と dbt Charts（0.9.x）の Python API に依存する。dbt Charts の `agent_api` は公開 API だが、MetricFlow の `MetricFlowEngine` は内部 API に近い。バージョンを上げるときは `test_chart_view.py`・`test_datasets.py`・`test_charts.py`（CLI と同じ SQL になること）で確かめる。
+- MetricFlow（0.213）と dbt Charts（0.9.x）の Python API に依存する。dbt Charts の `agent_api` は公開 API だが、MetricFlow の `MetricFlowEngine` は内部 API に近い。バージョンを上げるときは `test_chart_view.py`・`test_datasets.py`・`test_charts.py` で確かめる（`test_chart_view.py` に、CLI と同じ SQL になることのテストがある）。
+- プロセス内の dbt Charts は、環境変数 `DBT_PROFILES_DIR` / `ADP_DUCKDB_PATH` でプロファイルや DB の場所が変わる（CLI のように固定できない）。設定されていれば描画を止めて理由を返す。
+- 切り口の値が多いと SVG が十数 MB になるので、3 MB を超えたら描かずに、粒度・期間・切り口を変えるよう返す。
 
 ## 検討した代替案
 

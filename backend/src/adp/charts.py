@@ -50,6 +50,8 @@ SPECS_DIR = "chart_specs"
 CHARTS_CONFIG = {"sources": {SOURCE: {"type": "dbt_profile", "profile": "adp", "target": "dev"}}}
 MF_TIMEOUT_S = 120
 RENDER_TIMEOUT_S = 180
+MAX_SVG_BYTES = 3_000_000
+"""描画画面の SVG の上限（切り口の値が多いと十数 MB になり、画面が重くなるため）。"""
 _QUERY_KEYS = {"metrics", "group_by", "order", "limit", "filters", "start_time", "end_time"}
 # 元ファイルで使えるキー（許可リスト）。
 # dbt Charts の他の機能（extends、ボードの入れ子、HTML、地図など）は使わない
@@ -371,6 +373,14 @@ class BoardRenderer:
         from dbt_charts.agent_api import InMemoryBoard, ProjectSession
 
         problems = _check_sources(self.warehouse)
+        # プロセス内の dbt Charts は、環境変数でプロファイルや DB の場所が変わる
+        # （CLI のように固定できない）
+        for name in ("DBT_PROFILES_DIR", "ADP_DUCKDB_PATH"):
+            if os.environ.get(name):
+                problems.append(
+                    f"環境変数 {name} を外して backend を起動してください"
+                    "（描画が別の DB を見るため）"
+                )
         if problems:
             raise ChartError(" / ".join(problems))
         text = yaml.safe_dump(board, allow_unicode=True, sort_keys=False)
@@ -381,6 +391,8 @@ class BoardRenderer:
                 result = self._session.render_board(
                     InMemoryBoard(text, path=None), format="svg", use_cache=False
                 )
+            except Exception as e:
+                raise ChartError(f"描画できませんでした: {e}") from e
             finally:
                 self._session.refresh()
         errors = [*result.validation_errors, *result.chart_errors]
@@ -389,6 +401,11 @@ class BoardRenderer:
         if result.status != "ok" or not isinstance(result.data, str):
             detail = " / ".join(str(getattr(e, "message", e)) for e in errors[:3])
             raise ChartError(f"描画できませんでした: {detail or result.status}")
+        if len(result.data) > MAX_SVG_BYTES:
+            raise ChartError(
+                "チャートが大きすぎます（切り口の値が多すぎます）。粒度を粗くするか、期間を絞るか、"
+                "別の切り口を選んでください"
+            )
         return result.data
 
 

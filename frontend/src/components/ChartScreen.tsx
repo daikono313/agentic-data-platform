@@ -47,9 +47,15 @@ export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?
           jobId,
           controller.signal,
         )
-        .then(setResult)
+        .then((r) => {
+          // 新しい条件で描き直し始めていたら、古い結果は表示しない
+          if (!controller.signal.aborted) setResult(r)
+        })
         .catch((e) => {
-          if (!controller.signal.aborted) setError(errorText(e))
+          if (controller.signal.aborted) return
+          // 失敗したら前のチャートを消す（選んだ条件と違うチャートを残さない）
+          setResult(null)
+          setError(errorText(e))
         })
         .finally(() => {
           if (!controller.signal.aborted) setLoading(false)
@@ -158,7 +164,7 @@ export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?
           {result ? (
             <img src={svgDataUrl(result.svg)} alt={result.title} className="w-full" />
           ) : (
-            !error && <p className="text-sm text-muted-foreground">描画しています…</p>
+            !error && !notFound && <p className="text-sm text-muted-foreground">描画しています…</p>
           )}
           {result && (
             <details className="mt-2 text-xs">

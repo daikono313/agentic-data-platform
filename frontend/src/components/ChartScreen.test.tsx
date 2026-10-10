@@ -70,6 +70,29 @@ describe('描画画面', () => {
     expect(await screen.findByText('期間の開始が終了より後になっています')).toBeInTheDocument()
   })
 
+  it('描き直しに失敗したら前のチャートを消す', async () => {
+    let fail = false
+    stubFetch(() =>
+      fail
+        ? new Response(JSON.stringify({ detail: '描画できませんでした' }), { status: 422 })
+        : new Response(JSON.stringify({ svg: '<svg/>', kind: 'line', title: '月別', sql: '' })),
+    )
+    render(<App />)
+    expect(await screen.findByAltText('月別')).toBeInTheDocument()
+    fail = true
+    fireEvent.change(screen.getByLabelText('粒度'), { target: { value: 'week' } })
+    expect(await screen.findByText('描画できませんでした')).toBeInTheDocument()
+    expect(screen.queryByAltText('月別')).toBeNull()
+  })
+
+  it('無い指標は理由だけを出す', async () => {
+    window.history.replaceState(null, '', chartUrl('no_such'))
+    stubFetch(() => new Response('{}'))
+    render(<App />)
+    expect(await screen.findByText(/指標 no_such がありません/)).toBeInTheDocument()
+    expect(screen.queryByText('描画しています…')).toBeNull()
+  })
+
   it('生成ジョブからはその PR の内容でプレビューする', async () => {
     window.history.replaceState(null, '', chartUrl('revenue', 'job1'))
     const calls = stubFetch(() => new Response(JSON.stringify({ svg: '<svg/>', kind: 'line', title: 't', sql: '' })))

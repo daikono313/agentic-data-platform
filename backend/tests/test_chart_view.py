@@ -12,9 +12,10 @@ from adp.api.app import create_app
 from adp.api.service import SessionService
 from adp.api.store import Store
 from adp.chart_view import ChartRequest, ChartView, ChartViews
-from adp.charts import ChartError
+from adp.charts import ChartError, MetricQuery, compile_sql
 from adp.interview import Interviewer
 from adp.llm import LLMSettings, ScriptedRunner
+from tests.test_charts import MF
 from tests.test_dbt_charts import warehouse  # noqa: F401  （fixture。dbt build 済み）
 
 
@@ -38,6 +39,50 @@ def test_bar_and_kpi(view: ChartView) -> None:
     assert bar.kind == "bar" and "LIMIT 20" in bar.sql
     kpi = view.render(ChartRequest(metric="revenue", grain=None))
     assert kpi.kind == "kpi" and kpi.svg.lstrip().startswith("<svg")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"metrics": ["revenue"], "group_by": ["metric_time__month", "store__channel"]},
+        {
+            "metrics": ["revenue"],
+            "group_by": ["store__store_name"],
+            "order": ["-revenue"],
+            "limit": 20,
+        },
+        {"metrics": ["revenue"], "start_time": "2024-01-01", "end_time": "2024-03-31"},
+        {
+            "metrics": ["revenue"],
+            "group_by": ["metric_time__week"],
+            "filters": [{"dimension": "store__channel", "op": "=", "value": "app"}],
+        },
+    ],
+)
+def test_in_process_sql_matches_mf_cli(
+    view: ChartView,
+    warehouse: Path,  # noqa: F811
+    query: dict[str, object],
+) -> None:
+    """プロセス内の MetricFlow は `mf query --explain` と同じ SQL を作る（ADR 0003）。"""
+    q = MetricQuery.parse("q", query)
+    assert view.index.compiler.sql(q) == compile_sql(warehouse, MF, q)
+
+
+def test_env_vars_that_change_the_db_are_refused(
+    view: ChartView, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ADP_DUCKDB_PATH", "/tmp/other.duckdb")
+    with pytest.raises(ChartError, match="ADP_DUCKDB_PATH"):
+        view.render(ChartRequest(metric="revenue"))
+
+
+def test_too_large_charts_are_refused(view: ChartView, monkeypatch: pytest.MonkeyPatch) -> None:
+    from adp import charts
+
+    monkeypatch.setattr(charts, "MAX_SVG_BYTES", 100)
+    with pytest.raises(ChartError, match="大きすぎます"):
+        view.render(ChartRequest(metric="revenue"))
 
 
 def test_period_is_applied(view: ChartView) -> None:
