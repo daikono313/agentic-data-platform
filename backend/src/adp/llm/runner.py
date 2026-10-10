@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    HookMatcher,
     ResultMessage,
     SdkMcpTool,
     StreamEvent,
@@ -37,11 +38,15 @@ class AgentSpec:
     cwd: Path | None = None
     thinking: bool = True
     """False にすると拡張思考を無効にする（対話の応答を速くし、内容を思考に隠させない）。"""
+    allowed_builtin: list[str] = field(default_factory=list)
+    """確認なしで許可する組み込み tool のパターン（例: `Bash(dbt build:*)`）。"""
+    pre_tool_use: PreToolUseHook | None = None
+    """組み込み tool の実行前に呼ばれ、拒否理由（文字列）を返すと実行を止める。"""
 
     @property
     def allowed_tools(self) -> list[str]:
         names = [f"mcp__{srv}__{t.name}" for srv, ts in self.tools.items() for t in ts]
-        return names + self.builtin_tools
+        return names + (self.allowed_builtin or self.builtin_tools)
 
 
 @dataclass
@@ -68,6 +73,9 @@ class TurnResult:
 
 
 AgentEvent = TextDelta | ToolCall | TurnResult
+
+PreToolUseHook = Callable[[str, dict[str, Any]], str | None]
+"""(tool 名, 入力) → 拒否理由。None なら許可。"""
 
 
 class AgentRunner(Protocol):
@@ -102,6 +110,9 @@ class ClaudeAgentRunner:
             include_partial_messages=True,
             env=self.settings.subprocess_env(),
             thinking=None if spec.thinking else {"type": "disabled"},
+            # 許可リストに無い操作は確認を求めず拒否する（非対話のため）
+            permission_mode="dontAsk",
+            hooks=_hooks(spec.pre_tool_use) if spec.pre_tool_use else None,
         )
 
     async def run(
@@ -145,6 +156,22 @@ def _error_text(message: ResultMessage) -> str:
     errors = getattr(message, "errors", None) or []
     detail = message.result or "; ".join(str(e) for e in errors)
     return f"{message.subtype}: {detail}" if detail else str(message.subtype)
+
+
+def _hooks(check: PreToolUseHook) -> dict[Any, list[HookMatcher]]:
+    async def pre_tool_use(data: Any, tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        reason = check(str(data.get("tool_name", "")), dict(data.get("tool_input", {})))
+        if reason is None:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }
+
+    return {"PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use])]}  # type: ignore[list-item]
 
 
 ScriptStep = str | tuple[str, dict[str, Any]]

@@ -44,6 +44,10 @@ class WarehouseInfo(Protocol):
         """dbt の sources に宣言済みのテーブル（`<schema>.<table>`）。"""
         ...
 
+    def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
+        """列の値の種類（NULL を除く）。limit を超える場合は None。"""
+        ...
+
 
 @dataclass
 class GeneratedFile:
@@ -70,10 +74,16 @@ class Generation:
     """生成後に確認する指標のクエリ（元の要求）。"""
 
 
-def _yaml(models: list[dict[str, Any]], metrics: list[dict[str, Any]] | None = None) -> str:
+def _yaml(
+    models: list[dict[str, Any]],
+    metrics: list[dict[str, Any]] | None = None,
+    unit_tests: list[dict[str, Any]] | None = None,
+) -> str:
     data: dict[str, Any] = {"version": 2, "models": models}
     if metrics:
         data["metrics"] = metrics
+    if unit_tests:
+        data["unit_tests"] = unit_tests
     body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100)
     return "# adp により生成\n" + body
 
@@ -185,7 +195,14 @@ def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> lis
             "data_tests": ["unique", "not_null"],
         }
     ]
-    columns += [{"name": c.name, "description": c.description} for c in dim.columns]
+    from adp.generation.tests import dim_column_tests
+
+    extra = dim_column_tests(dim, info)
+    columns += [
+        {"name": c.name, "description": c.description}
+        | ({"data_tests": extra[c.name]} if c.name in extra else {})
+        for c in dim.columns
+    ]
     model: dict[str, Any] = {
         "name": dim.name,
         "description": f"{dim.label}ディメンション。SCD Type1。不明メンバーの行を含む",
@@ -211,7 +228,11 @@ def fact_files(
     beam: BeamModel | None = None,
     design: PhysicalDesign | None = None,
     has_date_entity: bool = False,
+    info: WarehouseInfo | None = None,
 ) -> tuple[list[GeneratedFile], list[MetricQuery]]:
+    from adp.generation.tests import fact_column_tests, reconciliation_test, unit_test
+
+    extra = fact_column_tests(fact, info) if info else {}
     sql = (
         f"-- adp により生成\n-- 元イベント: {fact.label}（{fact.fact_type.value}）\n"
         f"-- 粒度: {fact.grain}\n"
@@ -236,6 +257,7 @@ def fact_files(
             tests.append(
                 {"relationships": {"arguments": {"to": f"ref('{ref_model}')", "field": ref_col}}}
             )
+        tests += extra.get(c.name, [])
         if tests:
             entry["data_tests"] = tests
         columns.append(entry)
@@ -260,9 +282,15 @@ def fact_files(
                 }
             }
         ]
+    unit_tests: list[dict[str, Any]] = []
+    if beam is not None and event is not None and info is not None:
+        for i, example in enumerate(event.examples):
+            if (ut := unit_test(beam, fact, info, example, i)) is not None:
+                unit_tests.append(ut)
     return [
         GeneratedFile(f"models/marts/{fact.name}.sql", sql),
-        GeneratedFile(f"models/marts/{fact.name}.yml", _yaml([model], top_metrics)),
+        GeneratedFile(f"models/marts/{fact.name}.yml", _yaml([model], top_metrics, unit_tests)),
+        reconciliation_test(fact),
     ], queries
 
 
@@ -340,7 +368,9 @@ def generate_models(
                 )
             )
         else:
-            files, queries = fact_files(fact, beam, design, has_date_entity="dim_date" in existing)
+            files, queries = fact_files(
+                fact, beam, design, has_date_entity="dim_date" in existing, info=info
+            )
             result.files += files
             result.queries += queries
     return result
