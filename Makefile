@@ -1,4 +1,6 @@
-.PHONY: setup lint test dbt-build dev dev-backend dev-frontend check-secrets
+SAMPLE_ORDERS ?= 30000
+
+.PHONY: sample-data setup lint test dbt-build dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -7,9 +9,13 @@ setup:
 	cd backend && uv sync --locked
 	cd frontend && pnpm install --frozen-lockfile
 	$(DBT) deps
+	$(MAKE) sample-data
+
+sample-data:
+	cd warehouse && $(abspath .)/backend/.venv/bin/python scripts/generate_sample_data.py --orders $(SAMPLE_ORDERS)
 
 lint: check-secrets
-	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy src tests
+	cd backend && uv run ruff check . ../warehouse/scripts && uv run ruff format --check . ../warehouse/scripts && uv run mypy src tests
 	cd frontend && pnpm lint && pnpm typecheck
 
 test:

@@ -1,0 +1,92 @@
+version: 2
+
+sources:
+  - name: raw
+    description: EC 売上ドメインの合成ソースデータ（scripts/generate_sample_data.py で生成）
+    schema: raw
+    tables:
+      - name: customers
+        description: 顧客マスタ（Who）
+        columns:
+          - {name: customer_id, description: 顧客ID, data_tests: [unique, not_null]}
+          - {name: customer_name, description: 顧客名}
+          - {name: gender, description: 性別}
+          - {name: birth_date, description: 生年月日}
+          - {name: prefecture, description: 居住都道府県}
+          - {name: region, description: 居住地方}
+          - {name: membership_rank, description: 会員ランク（bronze / silver / gold / platinum）}
+          - {name: signup_date, description: 会員登録日}
+          - {name: updated_at, description: 最終更新日時}
+      - name: products
+        description: 商品マスタ（What）
+        columns:
+          - {name: product_id, description: 商品ID, data_tests: [unique, not_null]}
+          - {name: product_name, description: 商品名}
+          - {name: category, description: 商品カテゴリ}
+          - {name: subcategory, description: 商品サブカテゴリ}
+          - {name: brand, description: ブランド}
+          - {name: list_price, description: 定価（円・税抜）}
+          - {name: unit_cost, description: 標準原価（円・税抜）。実績原価ではない}
+          - {name: launched_on, description: 発売日}
+      - name: stores
+        description: 店舗・チャネルマスタ（Where）。online / app は都道府県を持たない
+        columns:
+          - {name: store_id, description: 店舗ID, data_tests: [unique, not_null]}
+          - {name: store_name, description: 店舗名}
+          - {name: channel, description: 販売チャネル（store / online / app）}
+          - {name: prefecture, description: 所在都道府県}
+          - {name: region, description: 所在地方}
+          - {name: opened_on, description: 開店日}
+      - name: promotions
+        description: プロモーション（Why）
+        columns:
+          - {name: promotion_id, description: プロモーションID, data_tests: [unique, not_null]}
+          - {name: promotion_name, description: プロモーション名}
+          - {name: promotion_type, description: 種類（percent_off / point_up / bundle）}
+          - {name: discount_rate, description: 割引率}
+          - {name: start_date, description: 開始日}
+          - {name: end_date, description: 終了日}
+      - name: orders
+        description: 注文ヘッダ（When / Who / Where / Why / How）
+        columns:
+          - {name: order_id, description: 注文ID, data_tests: [unique, not_null]}
+          - {name: customer_id, description: 顧客ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'customers')", field: customer_id}}}]}
+          - {name: store_id, description: 店舗ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'stores')", field: store_id}}}]}
+          - {name: ordered_at, description: 注文日時}
+          - {name: promotion_id, description: 適用プロモーションID（無い場合は NULL）, data_tests: [{relationships: {arguments: {to: "source('raw', 'promotions')", field: promotion_id}}}]}
+          - {name: order_status, description: 注文ステータス（completed / cancelled / returned。1明細でも返品があれば returned）, data_tests: [{accepted_values: {arguments: {values: [completed, cancelled, returned]}}}]}
+          - {name: payment_method, description: 支払方法}
+          - {name: updated_at, description: 最終更新日時}
+      - name: order_items
+        description: 注文明細（How many）
+        columns:
+          - {name: order_item_id, description: 注文明細ID, data_tests: [unique, not_null]}
+          - {name: order_id, description: 注文ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'orders')", field: order_id}}}]}
+          - {name: product_id, description: 商品ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'products')", field: product_id}}}]}
+          - {name: quantity, description: 数量}
+          - {name: unit_price, description: 販売単価（円・税抜）}
+          - {name: discount_amount, description: 値引額（円・税抜）}
+      - name: payments
+        description: 支払（How）
+        columns:
+          - {name: payment_id, description: 支払ID, data_tests: [unique, not_null]}
+          - {name: order_id, description: 注文ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'orders')", field: order_id}}}]}
+          - {name: payment_method, description: 支払方法}
+          - {name: amount, description: 支払金額（円・税抜。値引後の明細合計）}
+          - {name: paid_at, description: 支払日時}
+      - name: shipments
+        description: 配送（How）。online / app の注文のみ
+        columns:
+          - {name: shipment_id, description: 配送ID, data_tests: [unique, not_null]}
+          - {name: order_id, description: 注文ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'orders')", field: order_id}}}]}
+          - {name: shipping_method, description: 配送方法}
+          - {name: shipped_at, description: 出荷日時}
+          - {name: delivered_at, description: 配達日時}
+      - name: returns
+        description: 返品
+        columns:
+          - {name: return_id, description: 返品ID, data_tests: [unique, not_null]}
+          - {name: order_item_id, description: 注文明細ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'order_items')", field: order_item_id}}}]}
+          - {name: returned_at, description: 返品日時}
+          - {name: quantity, description: 返品数量}
+          - {name: return_reason, description: 返品理由}
