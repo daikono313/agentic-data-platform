@@ -61,3 +61,17 @@ describe('reducer', () => {
     expect(s.session?.messages).toHaveLength(1)
   })
 })
+
+describe('reducer (#36)', () => {
+  it('本文が空で質問だけの発言も残し、最新の質問と選択肢にそろえる', () => {
+    let s = reducer(base, { type: 'user', text: 'x' })
+    s = reducer(s, { type: 'event', event: { event: 'choices', data: { question: 'Q1', options: ['a', 'b'] } } })
+    s = reducer(s, {
+      type: 'event',
+      event: { event: 'done', data: { message: { role: 'assistant', text: '', question: 'Q2', choices: ['a', 'b'] } } },
+    })
+    expect(s.session?.messages.at(-1)?.question).toBe('Q2')
+    expect(s.session?.question).toBe('Q2')
+    expect(s.session?.choices).toEqual(['a', 'b'])
+  })
+})

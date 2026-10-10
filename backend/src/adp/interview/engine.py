@@ -184,10 +184,11 @@ class _Snapshot:
     beam_json: str
     phase: Phase
     choices: list[str]
+    question: str | None
 
     @classmethod
     def of(cls, state: InterviewState) -> _Snapshot:
-        return cls(state.beam.model_dump_json(), state.phase, list(state.choices))
+        return cls(state.beam.model_dump_json(), state.phase, list(state.choices), state.question)
 
     def diff(self, state: InterviewState) -> list[InterviewEvent]:
         changes: list[InterviewEvent] = []
@@ -198,7 +199,8 @@ class _Snapshot:
         if state.phase != self.phase:
             self.phase = state.phase
             changes.append(PhaseChanged(state.phase))
-        if state.choices != self.choices:
+        if state.choices != self.choices or state.question != self.question:
             self.choices = list(state.choices)
+            self.question = state.question
             changes.append(ChoicesPresented(list(state.choices), state.question))
         return changes

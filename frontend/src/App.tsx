@@ -61,8 +61,18 @@ export function reducer(state: State, action: Action): State {
         case 'choices':
           return { ...state, session: { ...s, choices: event.data.options, question: event.data.question } }
         case 'done': {
-          const messages: ChatMessage[] = event.data.message.text ? [...s.messages, event.data.message] : s.messages
-          return { ...state, busy: false, draft: '', error: event.data.error ?? null, session: { ...s, messages } }
+          const m = event.data.message
+          // 本文が空でも、質問だけの発言は残す（#36）
+          const messages: ChatMessage[] = m.text || m.question ? [...s.messages, m] : s.messages
+          // 選択肢は発言に記録された最後のものを正とする（同じ選択肢で質問だけ変わった場合も反映する）
+          const choices = m.choices?.length ? { choices: m.choices, question: m.question ?? null } : {}
+          return {
+            ...state,
+            busy: false,
+            draft: '',
+            error: event.data.error ?? null,
+            session: { ...s, messages, ...choices },
+          }
         }
         default:
           return state

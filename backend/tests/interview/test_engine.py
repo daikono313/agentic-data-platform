@@ -196,3 +196,17 @@ async def test_remove_gap_rejects_bad_index() -> None:
     state = new_state("売上")
     await collect(Interviewer(runner, LLMSettings()), state, "売上")
     assert runner.tool_results[0].get("is_error")
+
+
+def test_transcript_checks_tolerate_punctuation_and_other_ui_words() -> None:
+    from adp.evals.interview import _transcript_checks
+    from adp.interview import ChatMessage
+
+    repeat = [
+        ChatMessage(role="assistant", text="前置き。見たいですか? ", question="見たいですか？")
+    ]
+    assert not {r.name: r.passed for r in _transcript_checks(repeat)}[
+        "question_not_repeated_in_text"
+    ]
+    ok = [ChatMessage(role="assistant", text="画面上のボタンの配置は自由です。", question="Q？")]
+    assert all(r.passed for r in _transcript_checks(ok))

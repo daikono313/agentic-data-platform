@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -136,7 +137,12 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
     return CheckResult(label, passed, detail)
 
 
-_POSITION_WORDS = ("上の選択肢", "下の選択肢", "上のボタン", "下のボタン", "ボタンから選")
+_POSITION_WORDS = ("上の選択肢", "下の選択肢", "上のボタンから", "下のボタンから", "ボタンから選")
+_PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()]")
+
+
+def _normalize(text: str) -> str:
+    return _PUNCT.sub("", text)
 
 
 def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
@@ -144,7 +150,9 @@ def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
     position = [m.text[:60] for m in assistant if any(w in m.text for w in _POSITION_WORDS)]
     repeated = [
-        m.text[:60] for m in assistant if m.question and m.question.strip() and m.question in m.text
+        m.text[:60]
+        for m in assistant
+        if m.question and _normalize(m.question) and _normalize(m.question) in _normalize(m.text)
     ]
     return [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
