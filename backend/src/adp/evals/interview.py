@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import time
@@ -25,6 +26,7 @@ from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
+from adp.interview.prompts import prompt_version
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 
@@ -76,6 +78,9 @@ class EvalResult:
     """ターンごとのエージェントの tool 呼び出し（CI での再生テストに使う）。"""
     beam: dict[str, Any] | None = None
     error: str | None = None
+    metrics: dict[str, float] = field(default_factory=dict)
+    """会話の質の数値（transcript_metrics）。"""
+    prompt_version: str | None = None
 
 
 def _metrics_events(beam: BeamModel) -> list[tuple[Any, Any]]:
@@ -145,8 +150,84 @@ def _normalize(text: str) -> str:
     return _PUNCT.sub("", text)
 
 
+# 回答者（データの専門家ではない）にそのまま使うとわかりにくい言葉
+# （#45。フィードバックの分類「専門用語がわからない」）
+JARGON = (
+    "粒度",
+    "グレイン",
+    "ディメンション",
+    "ファクト",
+    "メジャー",
+    "スタースキーマ",
+    "コンフォーム",
+    "縮退",
+    "エンティティ",
+    "カーディナリティ",
+    "SCD",
+    "BEAM",
+    "7W",
+    "grain",
+    "dimension",
+    "fact table",
+    "measure",
+)
+_EXPLAINED = re.compile(r"^\s*(?:[（(]|とは|＝|=|:|：)")
+_QUESTION = re.compile(r"[^。\n？?]*[？?]")
+DUPLICATE_RATIO = 0.95
+"""同じ質問とみなす類似度（「顧客について…」「商品について…」のような型の同じ別の質問は除く）。"""
+
+
+def _unexplained_jargon(messages: list[Any]) -> list[str]:
+    """説明なしで使った専門用語（会話で最初に使ったときに、括弧などで説明していないもの）。"""
+    text = "\n".join(_shown(m) for m in messages if m.role == "assistant")
+    found = []
+    for term in JARGON:
+        i = text.find(term)
+        if i >= 0 and not _EXPLAINED.match(text[i + len(term) : i + len(term) + 4]):
+            found.append(term)
+    return found
+
+
+def _shown(m: Any) -> str:
+    """画面に出る文（本文と、ボタンの上の質問文）。"""
+    return f"{m.text}\n{m.question}" if getattr(m, "question", None) else str(m.text)
+
+
+def _repeated_questions(messages: list[Any]) -> list[str]:
+    """別の発言で、同じ質問をもう一度した（フィードバックの「質問が重複している」）。"""
+    questions: list[tuple[int, str, str]] = []
+    for i, m in enumerate(m for m in messages if m.role == "assistant"):
+        for q in _QUESTION.findall(_shown(m)):
+            normalized = _normalize(q)
+            if len(normalized) >= 8:
+                questions.append((i, normalized, q.strip()))
+    repeated = []
+    for a in range(len(questions)):
+        for b in range(a + 1, len(questions)):
+            same_message = questions[a][0] == questions[b][0]
+            ratio = difflib.SequenceMatcher(None, questions[a][1], questions[b][1]).ratio()
+            if not same_message and ratio >= DUPLICATE_RATIO:
+                repeated.append(questions[b][2])
+    return repeated
+
+
+def transcript_metrics(messages: list[Any]) -> dict[str, float]:
+    """会話の質の数値（前後比較に使う。#45）。"""
+    assistant = [m for m in messages if m.role == "assistant"]
+    lengths = [len(_shown(m)) for m in assistant] or [0]
+    return {
+        "assistant_turns": len(assistant),
+        "questions": sum(1 for m in assistant if _QUESTION.search(_shown(m))),
+        "avg_chars": round(sum(lengths) / len(lengths), 1),
+        "max_chars": max(lengths),
+        "unexplained_jargon": len(_unexplained_jargon(messages)),
+        "repeated_questions": len(_repeated_questions(messages)),
+        "position_words": sum(1 for m in assistant if any(w in m.text for w in _POSITION_WORDS)),
+    }
+
+
 def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
-    """会話の質のチェック（#36）。"""
+    """会話の質のチェック（#36、#45）。どのシナリオでも行う。"""
     assistant = [m for m in messages if m.role == "assistant"]
     position = [m.text[:60] for m in assistant if any(w in m.text for w in _POSITION_WORDS)]
     repeated = [
@@ -154,10 +235,27 @@ def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
         for m in assistant
         if m.question and _normalize(m.question) and _normalize(m.question) in _normalize(m.text)
     ]
+    jargon = _unexplained_jargon(messages)
+    again = _repeated_questions(messages)
     return [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
+        CheckResult("no_unexplained_jargon", not jargon, ", ".join(jargon)),
+        CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
     ]
+
+
+def _scenario_transcript_check(spec: Any, messages: list[Any]) -> CheckResult | None:
+    """シナリオで指定する会話の上限（フィードバックの「質問が長い・多い」から作る）。"""
+    if not isinstance(spec, dict):
+        return None
+    name, raw = next(iter(spec.items()))
+    metrics = transcript_metrics(messages)
+    limits = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
+    if name not in limits:
+        return None
+    value = metrics[limits[name]]
+    return CheckResult(f"{name}: {raw}", value <= int(raw), str(value))
 
 
 class SimulatedUser:
@@ -233,7 +331,10 @@ async def run_scenario(
             continue
         message = await user.reply(reply, choices)
 
-    checks = [_check(state.beam, c) for c in scenario.checks]
+    checks = [
+        _scenario_transcript_check(c, state.messages) or _check(state.beam, c)
+        for c in scenario.checks
+    ]
     checks += _transcript_checks(state.messages)
     return EvalResult(
         scenario=scenario.name,
@@ -242,16 +343,21 @@ async def run_scenario(
         turns=turns,
         duration_s=round(time.monotonic() - start, 1),
         first_token_s=[round(t, 2) for t in first_tokens],
-        transcript=[{"role": m.role, "text": m.text} for m in state.messages],
+        transcript=[
+            {"role": m.role, "text": m.text, **({"question": m.question} if m.question else {})}
+            for m in state.messages
+        ],
+        metrics=transcript_metrics(state.messages),
+        prompt_version=prompt_version(),
         tool_calls=tool_calls,
         beam=state.beam.model_dump(mode="json"),
         error=error,
     )
 
 
-def save(result: EvalResult, out_dir: Path) -> Path:
+def save(result: EvalResult, out_dir: Path, suffix: str = "") -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{result.scenario}.json"
+    path = out_dir / f"{result.scenario}{suffix}.json"
     data = {
         **{k: v for k, v in result.__dict__.items() if k != "checks"},
         "checks": [c.__dict__ for c in result.checks],
