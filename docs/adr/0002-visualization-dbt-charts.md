@@ -30,10 +30,11 @@ v2 では、作った指標をその場でチャートで見られるように�
 
 ## Semantic Layer の指標を使う方式（#41、O4 の決定）
 
-- チャートの元ファイル `warehouse/charts/metrics/<board>.yml` には `metric_queries`（指標・切り口・並び順・件数）だけを書き、SQL は書かない。
+- チャートの元ファイル `warehouse/charts/metrics/<board>.yml` には `metric_queries`（指標・切り口・並び順・件数・絞り込み）だけを書き、SQL は書かない。
+- 絞り込みは `filters: [{dimension, op, value}]` の構造化した形で書き、MetricFlow の where（`{{ Dimension('...') }} = '値'`）は adp が組み立てる。任意の SQL 式は書けない。
 - `python -m adp.charts compile` が各クエリを MetricFlow で SQL にし（`mf query --explain`）、カタログ名（DB ファイル名）を外して dbt Charts のボード `warehouse/charts/<board>.yml` に埋め込む。
 - `python -m adp.charts check`（`make dbt-build` で実行）は、ボードがすべてこの仕組みで作られ、最新であることを確かめる。手書きの SQL のボードは置けない。
-- 元ファイルに URL（地図の `geo_source` など）や `type: http` があれば拒否する。`dbt_charts.yml` のソースが dbt プロファイル経由の `warehouse` だけであることも確かめる（DuckDB の外の経路を塞ぐ）。
+- 元ファイルは**許可リスト**で検査する。使えるキーは `title / metric_queries / charts / rows / cols` だけで、チャートの `query` は `metric_queries` の名前に限る。チャートの種類・属性も許可リストに限り、`extends`、レイアウト中のボードの入れ子や別ファイルの読み込み（`.yml` で終わる名前）、HTML（`text`、`html_policy`）、地図（`geo_source` など）は使えない。URL や `type: http` も拒否する。`charts/` の下は直下の `.yml` 以外を置けない（サブディレクトリや `.yaml` も検査する）。`dbt_charts.yml` のソースが dbt プロファイル経由の `warehouse` だけであることも確かめる（DuckDB の外の経路を塞ぐ）。
 - チャートの値は `mf query` と一致することをテストで確認した（`backend/tests/test_charts.py`）。
 - 案 (b)（結果をテーブルに書き出す）は、データが古くなり、切り口を変えるたびに書き出しが必要になるので採らない。案 (c) は upstream が PR を受け付けないので採らない。
 

@@ -37,7 +37,7 @@
 | 書き換えられるファイルを限定 | 書けるのは .sql / .yml / .md だけ。`dbt_project.yml`・`profiles.yml`・`packages.yml` と Python ファイルは不可。書き込み後の内容に `env_var` / `environ` / `getenv` を含むものは不可（環境変数の秘密情報の持ち出し防止。Edit は既存の内容に置換を適用した結果で判定）。Python モデルがあれば検証で失敗 | 同上 |
 | 実行できるコマンドを限定 | Bash は `dbt`（parse / build / compile / test / ls）と `mf`（validate-configs / query / list）だけ。オプションも許可リスト（パスを取るものは不可）、シェルのメタ文字は禁止。`permission_mode=dontAsk` で許可リスト外の操作は確認せず拒否 | 同上 |
 | dbt から外部のファイル・ネットワークに触れない | `warehouse/profiles.yml` で DuckDB の `enable_external_access: false`（read_text / COPY TO を禁止。モデルや hook から戻せない） | `test_duckdb_external_access_is_disabled` |
-| dbt Charts から外部に触れない（v2） | `dbt_charts.yml` は書き換え不可（独自の duckdb ソースで外部アクセスを戻せるため）。ソースは dbt プロファイル経由の `warehouse` だけにし、DuckDB の外部アクセス禁止が効く。ボードの `type: http` のクエリと URL（地図の geo_source など）は生成時の検査で拒否する（#41 / #42）。`dct serve` は Host を検証しないので、ブラウザから直接使わない | `test_dbt_charts.py` |
+| dbt Charts から外部に触れない（v2） | `dbt_charts.yml` は書き換え不可（独自の duckdb ソースで外部アクセスを戻せるため）。ソースは dbt プロファイル経由の `warehouse` だけにし、DuckDB の外部アクセス禁止が効く。ボードの元ファイルは許可リストで検査し（SQL・extends・ボードの入れ子・HTML・地図・`type: http`・URL は不可。絞り込みは構造化した filters だけ）、生成時と `make dbt-build` で拒否する（#41 / #42）。`dct serve` は Host を検証しないので、ブラウザから直接使わない | `test_dbt_charts.py`、`test_charts.py` |
 | テストを消して通さない | 修正前後で `dbt ls` のテスト一覧（名前と重大度）を比べ、削除・無効化・重大度の低下があれば失敗にする。プロンプトでも禁止 | `test_weakening_tests_is_detected` |
 | 終わらない処理 | 検証の dbt / mf は 600 秒、git / gh は 300 秒で打ち切る。エージェント自体は時間ではなく手番数（修正 40、インタビュー 30）で制限する | — |
 | ログやファイルの中の指示に従わない | 検証ログは `<verification_log>` で囲んで渡し（閉じタグと色のエスケープは無害化）、プロンプトで「データとして扱う」と明示する。万一従っても、上の許可リストの範囲でしか操作できない | — |

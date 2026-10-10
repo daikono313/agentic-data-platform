@@ -105,30 +105,143 @@ def test_check_detects_hand_written_and_stale(warehouse: Path) -> None:
         board.write_text(original, encoding="utf-8")
 
 
-def test_spec_validation(warehouse: Path) -> None:
-    with pytest.raises(ChartError, match="SQL"):
-        compile_board("x", {"queries": {"q": {"sql": "select 1"}}}, warehouse, MF)
-    with pytest.raises(ChartError, match="使えないキー"):
-        compile_board(
-            "x", {"metric_queries": {"q": {"metrics": ["revenue"], "sql": "x"}}}, warehouse, MF
-        )
-    with pytest.raises(ChartError, match="作れません"):
-        compile_board(
-            "x", {"metric_queries": {"q": {"metrics": ["no_such_metric"]}}}, warehouse, MF
-        )
+def _with(**changes: object) -> dict[str, object]:
+    spec = yaml.safe_load(yaml.safe_dump(SPEC, allow_unicode=True))
+    spec.update(changes)
+    return spec  # type: ignore[no-any-return]
+
+
+def _chart(**changes: object) -> dict[str, object]:
+    chart = dict(SPEC["charts"]["stores"])  # type: ignore[index]
+    chart.update(changes)
+    return {"stores": chart}
+
+
+def _query(**changes: object) -> dict[str, object]:
+    query = dict(SPEC["metric_queries"]["by_store"])  # type: ignore[index]
+    query.update(changes)
+    return {"by_store": query}
+
+
+@pytest.mark.parametrize(
+    ("spec", "match"),
+    [
+        # 手書き SQL の経路（#55 のレビュー）
+        (_with(queries={"q": {"sql": "select 1"}}), "SQL"),
+        (_with(charts=_chart(query="select 1 as revenue")), "SQL は書けません"),
+        (_with(charts=_chart(query={"sql": "select 1"})), "SQL は書けません"),
+        (_with(rows=[{"queries": {"q": {"sql": "select 1"}}, "charts": {}}]), "rows / cols"),
+        (_with(rows=["../lib/base.yml"]), "チャート"),
+        (_with(extends="../lib/base.yml"), "使えないキー"),
+        (_with(charts={"base.yml": SPEC["charts"]["stores"]}), "チャート名"),  # type: ignore[index]
+        (_with(metric_queries=_query(sql="x")), "使えないキー"),
+        (_with(metric_queries=_query(where="1=1 or exists (select 1)")), "使えないキー"),
+        # 外部への経路・HTML
+        (_with(charts=_chart(geo_source="world-countries")), "使えないキー"),
+        (_with(charts=_chart(type="geoshape")), "type"),
+        (_with(html_policy="trusted-raw"), "使えないキー"),
+        (_with(rows=[{"text": "<img src=x>"}]), "rows / cols"),
+        (_with(title="<img src=x>"), "使えない文字"),
+        (_with(charts=_chart(title="{{ x }}")), "使えない文字"),
+        (_with(charts=_chart(source="//evil/x")), "URL|使えないキー"),
+        (_with(charts=_chart(x="store__store_name || 1")), "列名"),
+        # 入力の型
+        (_with(metric_queries=_query(metrics="revenue")), "文字列のリスト"),
+        (_with(metric_queries=_query(limit="x")), "正の整数"),
+        (_with(metric_queries=_query(group_by=["a b"])), "使えない名前"),
+        (_with(metric_queries=_query(filters="x")), "filters"),
+        (
+            _with(metric_queries=_query(filters=[{"dimension": "x", "op": "=", "value": 1}])),
+            "dimension",
+        ),
+        (
+            _with(
+                metric_queries=_query(filters=[{"dimension": "store__x", "op": "like", "value": 1}])
+            ),
+            "op",
+        ),
+        (
+            _with(
+                metric_queries=_query(filters=[{"dimension": "store__x", "op": "in", "value": 1}])
+            ),
+            "リスト",
+        ),
+        (
+            _with(
+                metric_queries=_query(
+                    filters=[{"dimension": "store__x", "op": "=", "value": {"a": 1}}]
+                )
+            ),
+            "型",
+        ),
+        (_with(metric_queries=_query(start_time="2024-01-01; drop")), "YYYY-MM-DD"),
+        (_with(metric_queries=_query(metrics=["no_such_metric"])), "作れません"),
+    ],
+)
+def test_spec_validation(warehouse: Path, spec: dict[str, object], match: str) -> None:
+    with pytest.raises(ChartError, match=match):
+        compile_board("x", spec, warehouse, MF)
+
+
+def test_filters_are_metricflow_dimensions(warehouse: Path) -> None:
+    q = MetricQuery.parse(
+        "q",
+        {
+            "metrics": ["revenue"],
+            "filters": [
+                {"dimension": "store__store_name", "op": "in", "value": ["O'Hare", "b"]},
+                {"dimension": "store__store_name", "op": "!=", "value": "c"},
+            ],
+        },
+    )
+    assert q.filters == [
+        "{{ Dimension('store__store_name') }} in ('O''Hare', 'b')",
+        "{{ Dimension('store__store_name') }} <> 'c'",
+    ]
+    board = compile_board(
+        "x",
+        _with(
+            metric_queries=_query(
+                filters=[{"dimension": "store__store_name", "op": "!=", "value": "c"}]
+            )
+        ),
+        warehouse,
+        MF,
+    )
+    assert "<> 'c'" in board
+
+
+def test_nested_layout_renders(warehouse: Path) -> None:
+    spec = _with(rows=[{"cols": ["stores", "stores"]}])
+    path = warehouse / "charts" / "nested.yml"
+    path.write_text(compile_board("nested", spec, warehouse, MF), encoding="utf-8")
+    try:
+        result = _dct(warehouse, "render", "charts/nested.yml", "--format", "text")
+        assert result.returncode == 0, result.stdout + result.stderr
+    finally:
+        path.unlink()
 
 
 def test_unsafe_boards_are_rejected(warehouse: Path) -> None:
-    base = {"metric_queries": {"q": {"metrics": ["revenue"]}}}
     with pytest.raises(ChartError, match="URL"):
-        compile_board(
-            "x",
-            base | {"charts": {"m": {"type": "geoshape", "geo_source": "http://x/a.json"}}},
-            warehouse,
-            MF,
-        )
+        compile_board("x", _with(charts=_chart(title="http://x/a.json")), warehouse, MF)
     with pytest.raises(ChartError, match="type: http"):
-        compile_board("x", base | {"extra": {"q2": {"type": "http", "url": "x"}}}, warehouse, MF)
+        compile_board("x", _with(extra={"q2": {"type": "http", "url": "x"}}), warehouse, MF)
+
+
+def test_check_scans_subdirectories(warehouse: Path) -> None:
+    for rel in ("sub/a.yml", "b.yaml"):
+        path = warehouse / "charts" / rel
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("title: x\n")
+    try:
+        problems = check(warehouse, MF)
+        assert any("sub/a.yml" in p for p in problems)
+        assert any("b.yaml" in p for p in problems)
+    finally:
+        (warehouse / "charts" / "sub" / "a.yml").unlink()
+        (warehouse / "charts" / "sub").rmdir()
+        (warehouse / "charts" / "b.yaml").unlink()
 
 
 def test_extra_chart_sources_are_rejected(warehouse: Path) -> None:
