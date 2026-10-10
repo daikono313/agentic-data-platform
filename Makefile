@@ -35,7 +35,7 @@ eval:
 	cd backend && uv run python -m adp.evals interview $(if $(SCENARIO),--scenario $(SCENARIO))
 
 dev-backend:
-	cd backend && uv run uvicorn adp.api.app:app --reload --port 8000
+	cd backend && uv run uvicorn --factory adp.api.app:build_default_app --reload --port 8000
 
 dev-frontend:
 	cd frontend && pnpm dev

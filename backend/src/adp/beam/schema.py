@@ -23,8 +23,21 @@ def json_schema() -> dict[str, Any]:
     return schema
 
 
+def _strip_field_titles(node: Any) -> Any:
+    """プロパティの title を除く（TS の型生成で Name1 のような別名が量産されるのを防ぐ）。"""
+    if isinstance(node, dict):
+        out = {k: _strip_field_titles(v) for k, v in node.items()}
+        for prop in out.get("properties", {}).values():
+            if isinstance(prop, dict):
+                prop.pop("title", None)
+        return out
+    if isinstance(node, list):
+        return [_strip_field_titles(v) for v in node]
+    return node
+
+
 def main() -> None:
-    text = json.dumps(json_schema(), ensure_ascii=False, indent=2) + "\n"
+    text = json.dumps(_strip_field_titles(json_schema()), ensure_ascii=False, indent=2) + "\n"
     if len(sys.argv) > 1:
         out = Path(sys.argv[1])
         out.parent.mkdir(parents=True, exist_ok=True)

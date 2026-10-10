@@ -1,0 +1,408 @@
+/* backend の adp.beam から生成。手で編集しない（pnpm gen:types） */
+
+/**
+ * 足し上げてよいか。単価は non_additive、残高は時間方向に semi_additive。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Additivity".
+ */
+export type Additivity = "additive" | "semi_additive" | "non_additive";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Aggregation".
+ */
+export type Aggregation = "sum" | "count" | "count_distinct" | "average" | "min" | "max";
+/**
+ * ソースデータで作れるか。
+ */
+export type Availability = "unknown" | "available" | "unavailable";
+/**
+ * ソースデータで作れるか。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Availability".
+ */
+export type Availability1 = "unknown" | "available" | "unavailable";
+/**
+ * イベントの種類。fct の種類を決める。
+ */
+export type StoryType = "discrete" | "recurring" | "evolving";
+export type Aggregation1 = "sum" | "count" | "count_distinct" | "average" | "min" | "max";
+/**
+ * 足し上げてよいか。単価は non_additive、残高は時間方向に semi_additive。
+ */
+export type Additivity1 = "additive" | "semi_additive" | "non_additive";
+/**
+ * ソースデータで作れるか。
+ */
+export type Availability2 = "unknown" | "available" | "unavailable";
+/**
+ * How many 以外の 6W。How many は measure として別に持つ。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "W".
+ */
+export type W = "who" | "what" | "when" | "where" | "why" | "how";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "TimeGrain".
+ */
+export type TimeGrain = "day" | "week" | "month" | "quarter" | "year";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Level".
+ */
+export type Level = "high" | "medium" | "low";
+export type MetricType = "simple" | "ratio" | "derived" | "cumulative";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "FilterOperator".
+ */
+export type FilterOperator = "=" | "!=" | "in" | "not_in";
+export type MetricStatus = "draft" | "confirmed" | "blocked";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "GapKind".
+ */
+export type GapKind = "data_unavailable" | "unanswered" | "conflict" | "deferred";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "FactType".
+ */
+export type FactType = "transaction" | "periodic_snapshot" | "accumulating_snapshot";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MetricStatus".
+ */
+export type MetricStatus1 = "draft" | "confirmed" | "blocked";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MetricType".
+ */
+export type MetricType1 = "simple" | "ratio" | "derived" | "cumulative";
+/**
+ * イベントの種類。fct の種類を決める。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "StoryType".
+ */
+export type StoryType1 = "discrete" | "recurring" | "evolving";
+
+export interface BEAM {
+  [k: string]: unknown;
+}
+/**
+ * ディメンションの属性。dim のカラムになる。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Attribute".
+ */
+export interface Attribute {
+  name: string;
+  label: string;
+  description?: string;
+  examples?: string[];
+  source?: SourceRef | null;
+  availability?: Availability;
+  /**
+   * 値の変更履歴が必要か（SCD Type2 の要否。MVP では記録のみ）
+   */
+  history_required?: boolean;
+}
+/**
+ * ソースのどこから作るか。column か expr のどちらかを指定する。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "SourceRef".
+ */
+export interface SourceRef {
+  /**
+   * ソーステーブル（例: raw.orders）
+   */
+  table: string;
+  column?: string | null;
+  /**
+   * column で表せない場合の SQL 式
+   */
+  expr?: string | null;
+}
+/**
+ * BEAM 成果物のルート。beam/<name>.yml に保存される。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "BeamModel".
+ */
+export interface BeamModel {
+  schema_version?: number;
+  name: string;
+  title: string;
+  /**
+   * ユーザーの最初の要求文
+   */
+  request: string;
+  events?: BusinessEvent[];
+  metrics?: MetricRequest[];
+  gaps?: Gap[];
+  finalized_at?: string | null;
+}
+/**
+ * 「誰が・何をする」のビジネスイベント。fct 1 つに対応する。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "BusinessEvent".
+ */
+export interface BusinessEvent {
+  /**
+   * 例: customer_orders_product
+   */
+  name: string;
+  /**
+   * fct テーブル名の名詞部分。粒度を表す複数形（例: order_lines）
+   */
+  table_name?: string | null;
+  /**
+   * 例: 顧客が商品を注文する
+   */
+  label: string;
+  /**
+   * Who（主語）
+   */
+  subject: string;
+  /**
+   * 動詞
+   */
+  verb: string;
+  /**
+   * What（目的語）
+   */
+  object: string;
+  story_type?: StoryType;
+  /**
+   * 1 行が何を表すか（日本語）
+   */
+  grain?: string | null;
+  /**
+   * 粒度を一意にするキー。縮退ディメンション名または dimension ref
+   */
+  grain_keys?: string[];
+  measures?: Measure[];
+  dimensions?: Dimension[];
+  degenerate_dimensions?: DegenerateDimension[];
+  /**
+   * 指標を時間で集計するときの When の ref。When が複数あるときは必須
+   */
+  agg_time_dimension?: string | null;
+  examples?: EventExample[];
+  priority?: Level | null;
+  impact?: Level | null;
+  effort?: Level | null;
+  source_tables?: string[];
+}
+/**
+ * How many。fct の数値カラムになる。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Measure".
+ */
+export interface Measure {
+  name: string;
+  /**
+   * 表示名（日本語）
+   */
+  label: string;
+  description?: string;
+  aggregation?: Aggregation1;
+  additivity?: Additivity1;
+  /**
+   * 単位（円、個 など）
+   */
+  unit?: string | null;
+  /**
+   * semi_additive のとき、足し上げできない When の ref（例: 残高の date）
+   */
+  non_additive_dimension?: string | null;
+  source?: SourceRef | null;
+  availability?: Availability2;
+}
+/**
+ * 6W のいずれかに対応するディメンション。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Dimension".
+ */
+export interface Dimension {
+  w: W;
+  /**
+   * ディメンション名（例: customer）。dim_<name> になる
+   */
+  name: string;
+  label: string;
+  description?: string;
+  /**
+   * 同じディメンションを複数の役割で使う場合の役割名（例: ship_to）
+   */
+  role?: string | null;
+  attributes?: Attribute[];
+  /**
+   * 粗い→細かいの順の属性名（例: region, prefecture）
+   */
+  hierarchy?: string[];
+  /**
+   * When の最小粒度
+   */
+  time_grain?: TimeGrain | null;
+  /**
+   * ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）
+   */
+  business_key?: SourceRef | null;
+  /**
+   * イベント側のソースで、このディメンションを指すカラム（例: raw.orders.customer_id、When なら raw.orders.ordered_at）。役割ごとに異なる
+   */
+  fact_key?: SourceRef | null;
+}
+/**
+ * dim テーブルを持たない、fct に直接置く識別子（例: 注文番号）。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "DegenerateDimension".
+ */
+export interface DegenerateDimension {
+  name: string;
+  label: string;
+  source: SourceRef;
+}
+/**
+ * インタビューで集めた具体例（event story）。unit test の期待値になる。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "EventExample".
+ */
+export interface EventExample {
+  /**
+   * キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、または When の dimension ref（値は日付・日時の文字列）
+   */
+  values: {
+    [k: string]: string | number | boolean | null;
+  };
+}
+/**
+ * 「How many ○○ by △△」の形にした指標の要求。Semantic Layer の metric になる。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MetricRequest".
+ */
+export interface MetricRequest {
+  name: string;
+  label: string;
+  /**
+   * ユーザーの元の言葉
+   */
+  question: string;
+  /**
+   * How many の形に言い換えた問い
+   */
+  framed_question: string;
+  type?: MetricType;
+  event: string;
+  /**
+   * simple / cumulative のとき
+   */
+  measure?: string | null;
+  /**
+   * ratio のとき（metric 名）
+   */
+  numerator?: string | null;
+  /**
+   * ratio のとき（metric 名）
+   */
+  denominator?: string | null;
+  /**
+   * derived のとき。他の metric 名を使った四則演算のみ
+   */
+  expr?: string | null;
+  /**
+   * cumulative のとき（例: '7 days'）。無ければ全期間の累計
+   */
+  window?: string | null;
+  /**
+   * 絞り込み条件の日本語の説明
+   */
+  filter?: string | null;
+  /**
+   * 絞り込み条件（すべて AND）。生成に使う
+   */
+  filters?: MetricFilter[];
+  /**
+   * `<dimension ref>.<attribute>`、縮退ディメンション名、または時間軸 `<When ref>.<day|week|month|quarter|year>` の一覧
+   */
+  group_by?: string[];
+  status?: MetricStatus;
+}
+/**
+ * 指標の絞り込み条件。Semantic Layer の filter に変換される。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MetricFilter".
+ */
+export interface MetricFilter {
+  /**
+   * `<dimension ref>.<attribute>` または縮退ディメンション名
+   */
+  ref: string;
+  operator: FilterOperator;
+  /**
+   * @minItems 1
+   */
+  values: [string, ...string[]];
+}
+/**
+ * 未解決事項。PR 本文に書かれ、data_unavailable は issue も起票される。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Gap".
+ */
+export interface Gap {
+  kind: GapKind;
+  description: string;
+  event?: string | null;
+  w?: W | null;
+  /**
+   * 関係する measure / 属性の参照
+   */
+  related?: string | null;
+}
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "EventMatrix".
+ */
+export interface EventMatrix {
+  columns: MatrixColumn[];
+  rows: MatrixRow[];
+}
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MatrixColumn".
+ */
+export interface MatrixColumn {
+  name: string;
+  label: string;
+  w: W;
+  conformed: boolean;
+}
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MatrixRow".
+ */
+export interface MatrixRow {
+  event: string;
+  label: string;
+  fact_type: FactType;
+  grain: string | null;
+  priority: Level | null;
+  impact: Level | null;
+  effort: Level | null;
+  measures: string[];
+  dimensions: {
+    [k: string]: string[];
+  };
+}
