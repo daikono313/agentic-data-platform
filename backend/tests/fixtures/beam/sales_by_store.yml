@@ -152,6 +152,7 @@ metrics:
     type: simple
     event: customer_orders_product
     measure: sales_amount
+    filter: キャンセルされた注文を除く
     group_by: [date.day, store.store_name, store.channel]
     status: confirmed
 gaps:

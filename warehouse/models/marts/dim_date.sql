@@ -8,9 +8,9 @@ with spine as (
 
 select
     cast(date_day as date) as date_day,
-    extract(year from date_day) as year,
-    extract(quarter from date_day) as quarter,
-    extract(month from date_day) as month,
+    extract(year from date_day) as calendar_year,
+    extract(quarter from date_day) as calendar_quarter,
+    extract(month from date_day) as calendar_month,
     cast(date_trunc('month', date_day) as date) as month_start,
     cast(date_trunc('week', date_day) as date) as week_start,
     isodow(date_day) as day_of_week,

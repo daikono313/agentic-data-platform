@@ -224,7 +224,6 @@ MVP の段階では手動で計測する。
 
 | # | 問題 | 選択肢 | 次の一手 |
 |---|---|---|---|
-| O1 | MetricFlow が DuckDB + latest spec で問題なく動くか | (a) 動く (b) legacy spec に戻す (c) 代替を探す | #6 で PoC し、結果を ADR に残す |
 | O2 | Agent SDK（CLI 起動）の応答速度が SLO を満たすか | (a) 満たす (b) インタビューだけ Messages API にする | #8 で計測する |
 | O3 | リポジトリのライセンス | MIT / Apache-2.0 / 指定なし | オーナーが判断する |
 
@@ -247,6 +246,7 @@ MVP の段階では手動で計測する。
 | R13 | Web は FastAPI + React | backend を dbt・MetricFlow・Agent SDK と同じ Python にそろえられる |
 | R14 | PR 作成は gh CLI（daikono313） | ローカル MVP では追加の設定が不要 |
 | R15 | 細かい選定（Vite / shadcn / SSE / SQLite / uv / pnpm / dbt_utils / ハッシュのサロゲートキー / `beam/*.yml` / ブランチ名 `beam/<event>-<yyyymmdd>` / 既存 dim は再利用し、カラム追加のみ許可） | 後から戻せる項目のため推奨案で確定 |
+| R16 | MetricFlow は DuckDB + latest spec で動く（cumulative の window はフラグで対応）。backend からは `mf` CLI で呼ぶ | [ADR 0001](adr/0001-metricflow-on-duckdb.md) |
 
 ## Alternatives considered
 

@@ -11,7 +11,7 @@
 | C1 | lint と型チェックが通る | `make lint`（ruff / mypy / eslint / tsc） |
 | C2 | ユニットテストが通る | `make test`（pytest / vitest） |
 | C3 | 変更したコードにテストがある | PR の差分に、対応するテストの追加・更新が含まれる |
-| C4 | サンプルデータで dbt が通る | `make dbt-build`（`dbt build` + `dbt parse` + `mf validate-configs`） |
+| C4 | サンプルデータで dbt が通る | `make dbt-build`（`dbt build` + `dbt parse` + `mf validate-configs` + `mf query` のスモーククエリ） |
 | C5 | eval が通る（インタビューや生成に関わる変更のみ） | `make eval`（CI では録画した応答で実行し、ローカルでは実際の LLM で実行） |
 | C6 | CI が green | GitHub Actions |
 | C7 | 敵対的レビューで blocking な指摘がない | **新しいコンテキストの subagent** が、issue の完了条件・[design-doc.md](design-doc.md)・差分を読んでレビューする。指摘は PR コメントに残す |
