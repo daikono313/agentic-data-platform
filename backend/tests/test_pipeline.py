@@ -49,17 +49,16 @@ class FakeGh:
         self.calls.append(list(args))
         if "--body-file" in args:
             self.bodies.append(Path(list(args)[list(args).index("--body-file") + 1]).read_text())
-        out = (
-            "tok"
-            if list(args)[:3] == ["gh", "auth", "token"]
-            else "https://github.com/o/r/pull/1\n"
-        )
+        if list(args)[:3] == ["gh", "auth", "token"]:
+            out = "tok"
+        elif list(args)[:3] == ["gh", "repo", "view"]:
+            out = "daikono313/repo\n"
+        else:
+            out = "https://github.com/o/r/pull/1\n"
         return subprocess.CompletedProcess(args, 0, out, "")
 
 
-async def test_pipeline_end_to_end(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # テストの origin はローカルの bare リポジトリなので、GitHub の <owner>/<repo> を与える
-    monkeypatch.setattr(GitWorkspace, "remote_repo", lambda self: "daikono313/repo")
+async def test_pipeline_end_to_end(repo: Path) -> None:
     beam = load(FIXTURES / "beam" / "sales_by_store.yml")
     beam.finalize()
     gh = FakeGh()

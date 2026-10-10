@@ -67,7 +67,10 @@ class WorkspaceGuard:
         return resolved == self.root or self.root in resolved.parents
 
     def __call__(self, tool: str, data: dict[str, Any]) -> str | None:
-        reason = self._check(tool, data)
+        try:
+            reason = self._check(tool, data)
+        except Exception as e:  # 判定できない入力（NUL を含むパスなど）は拒否する
+            reason = f"入力を判定できません: {type(e).__name__}"
         if reason:
             self.denied.append(f"{tool}: {reason}")
         return reason

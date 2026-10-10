@@ -17,7 +17,7 @@ from adp.vcs import (
     pr_body,
     pr_title,
 )
-from adp.vcs.git import GitError
+from adp.vcs.git import GitError, Worktree
 from tests.design.test_builder import FakeSchema
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml"
@@ -49,23 +49,20 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("url", "expected"),
+    ("out", "expected"),
     [
-        ("git@github.com:daikono313/auto_data_platform.git", "daikono313/auto_data_platform"),
-        ("https://github.com/daikono313/auto_data_platform", "daikono313/auto_data_platform"),
-        ("https://gitlab.com/a/b.git", None),
-        ("https://evil-github.com/a/b", None),
-        ("https://x.com/github.com/a/b", None),
-        ("/tmp/remote/daikono313/repo.git", None),
+        ("daikono313/auto_data_platform\n", "daikono313/auto_data_platform"),
+        ("", None),
+        ("a/b)](https://evil", None),
     ],
 )
-def test_remote_repo_is_github_only(url: str, expected: str | None) -> None:
+def test_repo_name_from_gh(out: str, expected: str | None) -> None:
     def runner(
         args: Sequence[str], cwd: Path, env: dict[str, str] | None
     ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args, 0, url + "\n", "")
+        return subprocess.CompletedProcess(args, 0, "tok" if "auth" in args else out, "")
 
-    assert GitWorkspace(Path("."), runner).remote_repo() == expected
+    assert GitHub(Path("."), "daikono313", runner).repo_name(Worktree(Path("."), "b")) == expected
 
 
 def test_branch_name() -> None:

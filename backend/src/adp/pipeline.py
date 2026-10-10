@@ -293,7 +293,7 @@ class GenerationPipeline:
         image = f"{ASSETS_DIR}/{beam.name}.png"
         before: str | None = None
         try:
-            repo = self.workspace.remote_repo()
+            repo = self.github.repo_name(wt)
             if repo is None or not (wt.path / image).exists():
                 shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
                 return None

@@ -75,14 +75,6 @@ class GitWorkspace:
         m = re.search(r"[:/]([^/:]+)/[^/]+?(?:\.git)?$", url)
         return m.group(1) if m else None
 
-    def remote_repo(self) -> str | None:
-        """origin が GitHub のときの `<owner>/<repo>`（それ以外は None）。"""
-        url = self.git("remote", "get-url", "origin").rstrip("/")
-        m = re.search(
-            r"^(?:https://|ssh://git@|git@)github\.com[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url
-        )
-        return f"{m.group(1)}/{m.group(2)}" if m else None
-
     def remove(self, wt: Worktree, path: str) -> None:
         """path を削除して stage する。"""
         self.git("rm", "-r", "-q", "--", path, cwd=wt.path)
@@ -159,6 +151,15 @@ class GitHub:
     def check(self) -> None:
         """push する前に、PR を作れる状態か（アカウントとトークン）を確かめる。"""
         self._env()
+
+    def repo_name(self, wt: Worktree) -> str | None:
+        """GitHub 上の `<owner>/<repo>`（SSH のホストエイリアスの origin でも gh が解決する）。"""
+        out = self.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            wt.path,
+            self._env(),
+        ).stdout.strip()
+        return out if re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", out) else None
 
     def create_pr(
         self, wt: Worktree, title: str, body: str, base: str = "main", draft: bool = False
