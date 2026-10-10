@@ -1,6 +1,6 @@
 # モデリング規約
 
-`warehouse/` の dbt モデルの規約。手書きのリファレンス実装（`dim_*` / `fct_order_lines`）と、アプリが生成するモデルの両方に適用する。生成エージェントは、この文書とリファレンス実装をお手本にする。
+`warehouse/` の dbt モデルの規約。既存の共通ディメンション（`dim_*`）と、アプリが生成するモデルの両方に適用する。生成器（`backend/src/adp/generation/`）はこの文書をテンプレートとして実装している。手書きのリファレンス fct（`backend/tests/fixtures/generation/reference/`）は、生成結果と行単位で一致することをテストで確認している。
 
 ## レイヤー
 

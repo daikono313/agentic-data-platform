@@ -27,8 +27,8 @@ dbt-build:
 	$(DBT) deps
 	$(DBT) build
 	$(DBT) parse
-	@if grep -rqsE 'semantic_models?:' warehouse/models; then $(MF) validate-configs; else echo 'mf validate-configs: semantic model が無いためスキップ'; fi
-	@if grep -rqsE 'semantic_models?:' warehouse/models; then $(MF) query --metrics revenue --group-by metric_time__month --limit 1; fi
+	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) validate-configs; else echo 'mf validate-configs: metric が無いためスキップ'; fi
+	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) list metrics; fi
 
 dev-backend:
 	cd backend && uv run uvicorn adp.api.app:app --reload --port 8000
