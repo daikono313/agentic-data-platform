@@ -151,7 +151,7 @@ def _normalize(text: str) -> str:
 
 
 # 回答者（データの専門家ではない）にそのまま使うとわかりにくい言葉
-# （#45。フィードバックの分類「専門用語がわからない」）
+# （#45。フィードバックの分類「専門用語がわからない」）。英語は大文字・小文字を区別せず単語で探す
 JARGON = (
     "粒度",
     "グレイン",
@@ -171,10 +171,20 @@ JARGON = (
     "fact table",
     "measure",
 )
-_EXPLAINED = re.compile(r"^\s*(?:[（(]|とは|＝|=|:|：)")
+# 用語の後（複合語の続き「テーブル」なども許す）に括弧・「とは」などがあれば説明済み
+_EXPLAINED_AFTER = re.compile(r"^[ァ-ヶー]{0,6}\s*(?:[（(]|とは|＝|=|:|：)")
+# 「1 行が何を表すか（粒度）」のように、説明の後に括弧で添えた場合も説明済み
+_EXPLAINED_BEFORE = re.compile(r"[（(]\s*$")
 _QUESTION = re.compile(r"[^。\n？?]*[？?]")
 DUPLICATE_RATIO = 0.95
 """同じ質問とみなす類似度（「顧客について…」「商品について…」のような型の同じ別の質問は除く）。"""
+_CONFIRM_WORDS = ("確定", "よろしいですか", "問題ありませんか")
+
+
+def _term_pattern(term: str) -> re.Pattern[str]:
+    if term.isascii():
+        return re.compile(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", re.IGNORECASE)
+    return re.compile(re.escape(term))
 
 
 def _unexplained_jargon(messages: list[Any]) -> list[str]:
@@ -182,8 +192,12 @@ def _unexplained_jargon(messages: list[Any]) -> list[str]:
     text = "\n".join(_shown(m) for m in messages if m.role == "assistant")
     found = []
     for term in JARGON:
-        i = text.find(term)
-        if i >= 0 and not _EXPLAINED.match(text[i + len(term) : i + len(term) + 4]):
+        m = _term_pattern(term).search(text)
+        if m is None:
+            continue
+        after = text[m.end() : m.end() + 12]
+        before = text[max(0, m.start() - 3) : m.start()]
+        if not (_EXPLAINED_AFTER.match(after) or _EXPLAINED_BEFORE.search(before)):
             found.append(term)
     return found
 
@@ -194,19 +208,31 @@ def _shown(m: Any) -> str:
 
 
 def _repeated_questions(messages: list[Any]) -> list[str]:
-    """別の発言で、同じ質問をもう一度した（フィードバックの「質問が重複している」）。"""
-    questions: list[tuple[int, str, str]] = []
-    for i, m in enumerate(m for m in messages if m.role == "assistant"):
+    """別の発言で、同じ質問をもう一度した（フィードバックの「質問が重複している」）。
+
+    ユーザーが聞き返した直後の言い直しと、確定の確認（修正のたびに聞き直す）は数えない。
+    """
+    questions: list[tuple[int, str, str, bool]] = []
+    previous_user = ""
+    n = -1
+    for m in messages:
+        if m.role != "assistant":
+            previous_user = str(m.text)
+            continue
+        n += 1
+        asked_back = "？" in previous_user or "?" in previous_user
         for q in _QUESTION.findall(_shown(m)):
             normalized = _normalize(q)
             if len(normalized) >= 8:
-                questions.append((i, normalized, q.strip()))
+                exempt = asked_back or any(w in q for w in _CONFIRM_WORDS)
+                questions.append((n, normalized, q.strip(), exempt))
     repeated = []
     for a in range(len(questions)):
         for b in range(a + 1, len(questions)):
-            same_message = questions[a][0] == questions[b][0]
+            if questions[a][0] == questions[b][0] or questions[b][3]:
+                continue
             ratio = difflib.SequenceMatcher(None, questions[a][1], questions[b][1]).ratio()
-            if not same_message and ratio >= DUPLICATE_RATIO:
+            if ratio >= DUPLICATE_RATIO:
                 repeated.append(questions[b][2])
     return repeated
 
@@ -226,8 +252,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
     }
 
 
-def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
-    """会話の質のチェック（#36、#45）。どのシナリオでも行う。"""
+def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
     position = [m.text[:60] for m in assistant if any(w in m.text for w in _POSITION_WORDS)]
     repeated = [
@@ -237,25 +262,49 @@ def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
     ]
     jargon = _unexplained_jargon(messages)
     again = _repeated_questions(messages)
-    return [
+    results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
         CheckResult("no_unexplained_jargon", not jargon, ", ".join(jargon)),
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
     ]
+    return {r.name: r for r in results}
+
+
+TRANSCRIPT_CHECKS = (
+    "no_choice_position_words",
+    "question_not_repeated_in_text",
+    "no_unexplained_jargon",
+    "no_repeated_questions",
+)
+TRANSCRIPT_LIMITS = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
+
+
+def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
+    """会話の質のチェック（#36、#45）。どのシナリオでも行う。"""
+    return list(_transcript_check_map(messages).values())
+
+
+def is_transcript_check(spec: Any) -> bool:
+    """会話を見るチェックか（BEAM 成果物だけを見る再生テストや E2E では行わない）。"""
+    name = spec if isinstance(spec, str) else next(iter(spec))
+    return name in TRANSCRIPT_CHECKS or name in TRANSCRIPT_LIMITS
 
 
 def _scenario_transcript_check(spec: Any, messages: list[Any]) -> CheckResult | None:
-    """シナリオで指定する会話の上限（フィードバックの「質問が長い・多い」から作る）。"""
-    if not isinstance(spec, dict):
+    """会話を見るチェック（シナリオに書いたもの）。BEAM のチェックなら None。"""
+    if not is_transcript_check(spec):
         return None
+    if isinstance(spec, str):
+        return _transcript_check_map(messages)[spec]
     name, raw = next(iter(spec.items()))
-    metrics = transcript_metrics(messages)
-    limits = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
-    if name not in limits:
-        return None
-    value = metrics[limits[name]]
+    value = transcript_metrics(messages)[TRANSCRIPT_LIMITS[name]]
     return CheckResult(f"{name}: {raw}", value <= int(raw), str(value))
+
+
+def run_check(beam: BeamModel, messages: list[Any], spec: Any) -> CheckResult:
+    """シナリオの 1 つのチェック（BEAM 成果物か会話のどちらかを見る）。"""
+    return _scenario_transcript_check(spec, messages) or _check(beam, spec)
 
 
 class SimulatedUser:
@@ -331,11 +380,9 @@ async def run_scenario(
             continue
         message = await user.reply(reply, choices)
 
-    checks = [
-        _scenario_transcript_check(c, state.messages) or _check(state.beam, c)
-        for c in scenario.checks
-    ]
-    checks += _transcript_checks(state.messages)
+    checks = [run_check(state.beam, state.messages, c) for c in scenario.checks]
+    named = {c.name for c in checks}
+    checks += [c for c in _transcript_checks(state.messages) if c.name not in named]
     return EvalResult(
         scenario=scenario.name,
         passed=error is None and all(c.passed for c in checks),

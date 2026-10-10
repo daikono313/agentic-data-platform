@@ -23,7 +23,14 @@ APP_DB = REPO_ROOT / ".adp" / "app.db"
 
 async def _interview(args: argparse.Namespace) -> int:
     from adp.catalog.catalog import Catalog
-    from adp.evals.interview import SCENARIO_DIR, Scenario, default_out_dir, run_scenario, save
+    from adp.evals.interview import (
+        SCENARIO_DIR,
+        EvalResult,
+        Scenario,
+        default_out_dir,
+        run_scenario,
+        save,
+    )
     from adp.interview.prompts import prompt_version
     from adp.llm import ClaudeAgentRunner, load_settings
 
@@ -59,6 +66,12 @@ async def _interview(args: argparse.Namespace) -> int:
             except Exception as e:  # 1 つのシナリオの失敗で全体を止めない
                 print(f"FAIL {name} 例外: {e}")
                 failed += 1
+                # 前後比較で合格率を水増ししないよう、失敗として残す
+                save(
+                    EvalResult(path.stem, False, [], 0, 0.0, error=f"例外: {e}"),
+                    out_dir,
+                    suffix="" if args.repeat == 1 else f".{i + 1}",
+                )
                 continue
             save(result, out_dir, suffix="" if args.repeat == 1 else f".{i + 1}")
             mark = "PASS" if result.passed else "FAIL"

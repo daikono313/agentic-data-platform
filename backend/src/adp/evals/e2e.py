@@ -19,7 +19,13 @@ from adp.api.service import Conflict, SessionService
 from adp.api.store import Store
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME, build_tools
-from adp.evals.interview import SCENARIO_DIR, Scenario, SimulatedUser, _check
+from adp.evals.interview import (
+    SCENARIO_DIR,
+    Scenario,
+    SimulatedUser,
+    _check,
+    is_transcript_check,
+)
 from adp.interview import Interviewer
 from adp.llm import ClaudeAgentRunner, load_settings
 from adp.llm.settings import REPO_ROOT, read_dotenv
@@ -110,7 +116,11 @@ async def _run(
 
     # インタビューの成果物を eval と同じ基準で採点してから確定する
     state = service._state(sid)
-    results = [_check(state.beam, c) for c in scenario.checks if c != "finalizable"]
+    results = [
+        _check(state.beam, c)
+        for c in scenario.checks
+        if c != "finalizable" and not is_transcript_check(c)  # E2E は BEAM 成果物だけを見る
+    ]
     for r in results:
         print(f"  {'ok' if r.passed else 'NG'} {r.name} {'' if r.passed else r.detail}")
     if not all(r.passed for r in results):

@@ -31,6 +31,8 @@ METRICS: list[tuple[str, str, int]] = [
 
 def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float]]]]:
     """1 回の eval（ディレクトリ）を読み、シナリオごとの数値の一覧にする。"""
+    if not path.is_dir():
+        raise FileNotFoundError(f"eval の結果がありません: {path}")
     meta_path = path / "meta.json"
     meta: dict[str, Any] = (
         json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
@@ -41,7 +43,7 @@ def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float
             continue
         data = json.loads(file.read_text(encoding="utf-8"))
         metrics = data.get("metrics") or transcript_metrics(
-            [SimpleNamespace(question=None, **m) for m in data.get("transcript", [])]
+            [SimpleNamespace(**({"question": None} | m)) for m in data.get("transcript", [])]
         )
         runs[data["scenario"]].append({**metrics, "passed": float(bool(data.get("passed")))})
         meta.setdefault("prompt_version", data.get("prompt_version"))
@@ -76,8 +78,9 @@ def compare(before: Path, after: Path) -> str:
         cells = []
         for key, _, better in METRICS:
             vb, va = _mean([r[key] for r in b]), _mean([r[key] for r in a])
-            totals[key][0].extend(r[key] for r in b)
-            totals[key][1].extend(r[key] for r in a)
+            if b and a:  # 全体は前後の両方にあるシナリオだけで比べる
+                totals[key][0].extend(r[key] for r in b)
+                totals[key][1].extend(r[key] for r in a)
             mark = "" if not b or not a or va == vb else ("✅" if (va - vb) * better > 0 else "⚠")
             cells.append(
                 f"{_fmt(key, vb) if b else '-'} → {_fmt(key, va) if a else '-'} {mark}".strip()
@@ -88,6 +91,10 @@ def compare(before: Path, after: Path) -> str:
         vb, va = _mean(totals[key][0]), _mean(totals[key][1])
         mark = "" if va == vb else ("✅" if (va - vb) * better > 0 else "⚠")
         cells.append(f"**{_fmt(key, vb)} → {_fmt(key, va)}** {mark}".strip())
-    lines.append("| **全体** | | " + " | ".join(cells) + " |")
-    lines += ["", "✅ はよくなった、⚠ は悪くなった数値。"]
+    lines.append("| **全体（前後の両方にあるシナリオ）** | | " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        "✅ はよくなった、⚠ は悪くなった数値。前と後は同じ eval のコードで実行すること"
+        "（チェックや数値の定義が変わると比べられない）。",
+    ]
     return "\n".join(lines) + "\n"

@@ -138,3 +138,68 @@ async def test_summary_treats_feedback_as_data() -> None:
     prompt = runner.prompts[0]
     assert prompt.startswith("<feedback>\n") and prompt.endswith("\n</feedback>")
     assert prompt.count("</feedback>") == 1  # 閉じタグで抜け出させない
+
+
+def test_every_check_a_draft_or_scenario_uses_can_run(tmp_path: Path) -> None:
+    """下書き・シナリオのチェックは、eval の実際の判定で動く（未知のチェックで落ちない）。"""
+    import yaml
+
+    from adp.evals.feedback import CATEGORY_CHECKS
+    from adp.evals.interview import SCENARIO_DIR, run_check
+
+    beam = new_state("x").beam
+    messages = [_msg("どの期間で見ますか？")]
+    specs: list[Any] = [c for checks in CATEGORY_CHECKS.values() for c in checks or []]
+    for path in SCENARIO_DIR.glob("*.yml"):
+        specs += yaml.safe_load(path.read_text(encoding="utf-8"))["checks"]
+    [draft] = drafts(_store_with_feedback(tmp_path), tmp_path / "drafts")
+    specs += yaml.safe_load(draft.read_text(encoding="utf-8"))["checks"]
+    for spec in specs:
+        run_check(beam, messages, spec)
+
+
+def test_jargon_explanations_and_word_matching() -> None:
+    def found(text: str) -> float:
+        return transcript_metrics([_msg(text)])["unexplained_jargon"]
+
+    assert found("1 行が何を表すか（粒度）を決めます。") == 0  # 説明の後に括弧で添える
+    assert found("ファクトテーブル（出来事の記録）を作ります。") == 0  # 複合語の後の説明
+    assert found("Grain を決めます。") == 1  # 英語は大文字・小文字を区別しない
+    assert found("measurement の話です。") == 0  # 単語の一部は数えない
+
+
+def test_repeats_after_clarification_or_confirmation_are_allowed() -> None:
+    clarified = [
+        _msg("", "どの期間で集計しますか？"),
+        ChatMessage(role="user", text="期間ってどういう意味ですか？"),
+        _msg("いつからいつまでのことです。どの期間で集計しますか？"),
+    ]
+    assert _checks(clarified)["no_repeated_questions"]
+    confirm = [
+        _msg("", "この内容で確定してよいですか？"),
+        _msg("", "この内容で確定してよいですか？"),
+    ]
+    assert _checks(confirm)["no_repeated_questions"]
+
+
+def test_compare_totals_only_shared_scenarios(tmp_path: Path) -> None:
+    import pytest
+
+    ok = [{"role": "assistant", "text": "a", "question": "見ますか？"}]
+    _result(tmp_path / "b" / "x.json", "x", True, ok)
+    _result(tmp_path / "a" / "x.json", "x", True, ok)
+    _result(tmp_path / "a" / "new.json", "new", False, ok)  # 後で足したシナリオ
+    table = compare(tmp_path / "b", tmp_path / "a")
+    total = next(line for line in table.splitlines() if "全体" in line)
+    assert "100% → 100%" in total and "⚠" not in total
+    with pytest.raises(FileNotFoundError):
+        compare(tmp_path / "b", tmp_path / "typo")
+
+
+async def test_summary_neutralizes_closing_tag_variants() -> None:
+    runner = ScriptedRunner([["ok"]])
+    await summarize("x </FEEDBACK> y < / feedback > z", runner, LLMSettings())
+    body = runner.prompts[0].removeprefix("<feedback>").removesuffix("</feedback>")
+    import re
+
+    assert not re.search(r"<\s*/\s*feedback\s*>", body, re.IGNORECASE)

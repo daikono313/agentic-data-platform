@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,7 +217,8 @@ async def summarize(text: str, runner: AgentRunner, settings: LLMSettings) -> st
         purpose="feedback-summary",
         thinking=False,
     )
-    body = text.replace("</feedback>", "</ feedback>")
+    # 閉じタグ（大文字・空白入りも）で <feedback> から抜け出させない
+    body = re.sub(r"<\s*/\s*feedback\s*>", "</ feedback_>", text, flags=re.IGNORECASE)
     out = []
     async for event in runner.run(f"<feedback>\n{body}\n</feedback>", spec):
         if isinstance(event, TextDelta):
