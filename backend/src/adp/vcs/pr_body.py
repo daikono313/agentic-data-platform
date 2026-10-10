@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from adp.beam import BeamModel, W, build_event_matrix
@@ -32,8 +33,23 @@ class Verification:
     repair_attempts: list[str] = field(default_factory=list)
 
 
+_ABS_PATH = re.compile(r"(?:/Users|/home|/private|/tmp|[A-Z]:\\)[^\s`'\")]*")
+
+
+def _safe(text: str) -> str:
+    """LLM やユーザーの文章を、公開リポジトリの PR に載せても安全にする。
+
+    - `#123` や `@user` が issue の自動クローズやメンションにならないようにする
+    - ローカルの絶対パスを伏せる
+    - コードブロックを閉じられないようにする
+    """
+    text = _ABS_PATH.sub("<path>", text)
+    text = re.sub(r"(?<!\w)([#@])(?=\w)", "\\1\u200b", text)
+    return text.replace("```", "ˋˋˋ")
+
+
 def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")
+    return _safe(text).replace("|", "\\|").replace("\n", " ")
 
 
 def pr_title(beam: BeamModel) -> str:
@@ -50,17 +66,17 @@ def pr_body(
     lines: list[str] = []
     lines += ["## 要求", "", f"> {_cell(beam.request)}", ""]
     for m in beam.metrics:
-        lines.append(f"- **{m.label}**（`{m.name}`）: {m.framed_question}")
+        lines.append(f"- **{_cell(m.label)}**（`{m.name}`）: {_cell(m.framed_question)}")
         if m.group_by:
             lines.append(f"  - 切り口: {', '.join(f'`{g}`' for g in m.group_by)}")
         if m.filter:
-            lines.append(f"  - 条件: {m.filter}")
+            lines.append(f"  - 条件: {_cell(m.filter)}")
     lines.append("")
 
     for event in beam.events:
-        lines += [f"## BEAM Canvas: {event.label}（`{event.name}`）", ""]
-        lines.append(f"- 種類: {event.fact_type.value}　粒度: {event.grain or '-'}")
-        measures = ", ".join(f"{m.label}（{m.aggregation.value}）" for m in event.measures)
+        lines += [f"## BEAM Canvas: {_cell(event.label)}（`{event.name}`）", ""]
+        lines.append(f"- 種類: {event.fact_type.value}　粒度: {_cell(event.grain or '-')}")
+        measures = ", ".join(f"{_cell(m.label)}（{m.aggregation.value}）" for m in event.measures)
         lines += [f"- How many: {measures}", "", "| W | ディメンション | 属性 |", "|---|---|---|"]
         for d in event.dimensions:
             attrs = ", ".join(
@@ -94,19 +110,19 @@ def pr_body(
     lines += ["## 検証", ""]
     lines.append(f"- dbt build: {'✅ 成功' if verification.dbt_build_passed else '❌ 失敗'}")
     if verification.summary:
-        lines.append(f"  - {verification.summary}")
+        lines.append(f"  - {_cell(verification.summary)}")
     for desc, ok in verification.queries:
         lines.append(f"- 指標の取得 `{desc}`: {'✅' if ok else '❌'}")
     if verification.repair_attempts:
         lines.append(f"- 自己修復: {len(verification.repair_attempts)} 回")
-        lines += [f"  - {a}" for a in verification.repair_attempts]
+        lines += [f"  - {_cell(a)}" for a in verification.repair_attempts]
     lines.append("")
 
     unresolved = [f"{g.kind.value}: {g.description}" for g in beam.gaps]
     unresolved += [i.message for i in design.issues if i.severity == IssueSeverity.WARNING]
     unresolved += [f"要対応（{t.kind}）: {t.instruction}" for t in tasks or []]
     if unresolved:
-        lines += ["## 未解決事項", ""] + [f"- {u}" for u in unresolved] + [""]
+        lines += ["## 未解決事項", ""] + [f"- {_cell(u)}" for u in unresolved] + [""]
 
     lines += [
         "---",

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -64,35 +65,59 @@ class GitWorkspace:
         return self.run(["git", *args], cwd or self.repo_root, None).stdout.strip()
 
     def remote_owner(self) -> str | None:
-        url = self.git("remote", "get-url", "origin")
+        url = self.git("remote", "get-url", "origin").rstrip("/")
         m = re.search(r"[:/]([^/:]+)/[^/]+?(?:\.git)?$", url)
         return m.group(1) if m else None
 
-    def create_worktree(self, branch: str, base: str = "origin/main") -> Worktree:
-        """base から branch を作り、`.adp/worktrees/<branch>` に展開する。"""
+    def _branch_exists(self, branch: str) -> bool:
         if self.git("branch", "--list", branch):
-            raise GitError(f"ブランチ {branch} は既にあります")
-        path = self.worktrees_dir / branch.replace("/", "-")
-        if path.exists():
-            raise GitError(f"{path} は既にあります")
+            return True
+        return bool(self.git("ls-remote", "--heads", "origin", branch))
+
+    def available_branch(self, branch: str) -> str:
+        """ローカルにもリモートにも無いブランチ名にする（同じ日の再実行・同名イベントに備える）。"""
+        candidate, n = branch, 1
+        while (
+            self._branch_exists(candidate)
+            or (self.worktrees_dir / candidate.replace("/", "-")).exists()
+        ):
+            n += 1
+            candidate = f"{branch}-{n}"
+        return candidate
+
+    def create_worktree(self, branch: str, base: str = "origin/main") -> Worktree:
+        """base から branch（使用済みなら -2, -3 … を付ける）を作り、worktree に展開する。"""
         if base.startswith("origin/"):
             self.git("fetch", "origin", base.removeprefix("origin/"))
+        branch = self.available_branch(branch)
+        path = self.worktrees_dir / branch.replace("/", "-")
         self.git("worktree", "add", "-b", branch, str(path), base)
         return Worktree(path=path, branch=branch)
 
-    def commit(self, wt: Worktree, paths: Sequence[str], message: str) -> str:
-        """指定したパスだけを commit する。author は git の設定（includeIf）に従う。"""
-        if not paths:
-            raise GitError("commit するファイルがありません")
-        self.git("add", "--", *paths, cwd=wt.path)
+    def stage(self, wt: Worktree, pathspecs: Sequence[str]) -> list[str]:
+        """pathspecs の下の変更（追加・変更・削除）をすべて stage し、そのパスを返す。"""
+        existing = [p for p in pathspecs if (wt.path / p).exists()]
+        if existing:
+            self.git("add", "-A", "--", *existing, cwd=wt.path)
+        out = self.run(["git", "diff", "--cached", "--name-only", "-z"], wt.path, None).stdout
+        return sorted(p for p in out.split("\0") if p)
+
+    def commit(self, wt: Worktree, message: str) -> str:
+        """stage 済みの変更を commit する。author は git の設定（includeIf）に従う。"""
         self.git("commit", "-m", message, cwd=wt.path)
         return self.git("rev-parse", "HEAD", cwd=wt.path)
 
     def push(self, wt: Worktree) -> None:
         self.git("push", "-u", "origin", wt.branch, cwd=wt.path)
 
-    def remove_worktree(self, wt: Worktree) -> None:
+    def remove_worktree(self, wt: Worktree, delete_branch: bool = False) -> None:
         self.git("worktree", "remove", "--force", str(wt.path))
+        if delete_branch:
+            self.git("branch", "-D", wt.branch)
+
+
+MAX_BODY = 60000
+"""GitHub の PR 本文の上限（65536 文字）より少し小さく切る。"""
 
 
 class GitHub:
@@ -109,16 +134,26 @@ class GitHub:
         token = self.run(
             ["gh", "auth", "token", "-u", self.account], self.repo_root, None
         ).stdout.strip()
+        if not token:
+            raise GitError(f"{self.account} の gh トークンを取得できません")
         return {"GH_TOKEN": token}
+
+    def check(self) -> None:
+        """push する前に、PR を作れる状態か（アカウントとトークン）を確かめる。"""
+        self._env()
 
     def create_pr(
         self, wt: Worktree, title: str, body: str, base: str = "main", draft: bool = False
     ) -> str:
-        args = ["gh", "pr", "create", "--base", base, "--head", wt.branch, "--title", title]
-        args += ["--body", body] + (["--draft"] if draft else [])
-        result = self.run(
-            args,
-            wt.path,
-            self._env(),
-        )
+        if len(body) > MAX_BODY:
+            body = body[: MAX_BODY - 100] + "\n\n（本文が長すぎるため省略しました）\n"
+        with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False) as f:
+            f.write(body)
+            body_file = f.name
+        try:
+            args = ["gh", "pr", "create", "--base", base, "--head", wt.branch, "--title", title]
+            args += ["--body-file", body_file] + (["--draft"] if draft else [])
+            result = self.run(args, wt.path, self._env())
+        finally:
+            os.unlink(body_file)
         return result.stdout.strip().splitlines()[-1]

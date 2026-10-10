@@ -41,11 +41,14 @@ def repo(tmp_path: Path) -> Path:
 class FakeGh:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.bodies: list[str] = []
 
     def __call__(
         self, args: Sequence[str], cwd: Path, env: dict[str, str] | None
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(args))
+        if "--body-file" in args:
+            self.bodies.append(Path(list(args)[list(args).index("--body-file") + 1]).read_text())
         out = (
             "tok"
             if list(args)[:3] == ["gh", "auth", "token"]
@@ -91,7 +94,7 @@ async def test_pipeline_end_to_end(repo: Path) -> None:
     assert "dev.duckdb" not in pushed
     create = next(c for c in gh.calls if c[:3] == ["gh", "pr", "create"])
     assert "--draft" not in create
-    body = create[create.index("--body") + 1]
+    body = gh.bodies[-1]
     assert "## BEAM Canvas" in body and "✅ 成功" in body
 
 
@@ -103,3 +106,53 @@ async def test_pipeline_rejects_unfinalized_beam(repo: Path) -> None:
         beam, updates.append
     )
     assert not result.ok and "確定されていません" in (result.error or "")
+
+
+async def test_failed_run_cleans_up_and_can_rerun(repo: Path) -> None:
+    """設計の段階で止まっても作業ブランチが残らず、同じ BEAM で再実行できる。"""
+    from adp.beam import SourceRef
+
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    broken = beam.model_copy(deep=True)
+    broken.events[0].dimensions[0].fact_key = SourceRef(table="raw.unknown", column="x")
+    config = PipelineConfig(repo, DBT.parent, repo / "warehouse/data/dev.duckdb", "daikono313")
+    gh = GitHub(repo, "daikono313", FakeGh())
+    pipeline = GenerationPipeline(
+        config, FixingRunner(lambda n, s: None), LLMSettings(), GitWorkspace(repo), gh
+    )
+    failed = await pipeline.run(broken)
+    assert not failed.ok and "設計で確認が必要" in (failed.error or "")
+    assert git(repo, "branch", "--list", "beam/*") == ""
+    assert not any((repo / ".adp" / "worktrees").iterdir())
+    ok = await pipeline.run(beam)
+    assert ok.ok and ok.branch and ok.branch.endswith("-20261010") is not None
+
+
+async def test_missing_account_stops_before_any_work(repo: Path) -> None:
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    config = PipelineConfig(repo, DBT.parent, repo / "warehouse/data/dev.duckdb", None)
+    result = await GenerationPipeline(config, FixingRunner(lambda n, s: None), LLMSettings()).run(
+        beam
+    )
+    assert not result.ok and "アカウント" in (result.error or "")
+    assert git(repo, "branch", "--list", "beam/*") == ""
+
+
+def test_copy_database_includes_wal(tmp_path: Path) -> None:
+    import duckdb
+
+    from adp.pipeline import copy_database
+
+    src = tmp_path / "src.duckdb"
+    con = duckdb.connect(str(src))
+    con.execute("create table t as select 1 as x")
+    con.execute("checkpoint")
+    con.execute("pragma disable_checkpoint_on_shutdown")
+    con.execute("insert into t values (2)")
+    con.close()
+    dest = tmp_path / "dest.duckdb"
+    copy_database(src, dest)
+    row = duckdb.connect(str(dest), read_only=True).execute("select count(*) from t").fetchone()
+    assert row == (2,)

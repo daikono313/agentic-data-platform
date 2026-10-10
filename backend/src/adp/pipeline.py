@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+import duckdb
+
 from adp.beam import BeamModel, save
 from adp.catalog.catalog import Catalog
 from adp.design import DesignBuilder, PhysicalDesign
@@ -102,13 +104,18 @@ class GenerationPipeline:
             on_step(StepUpdate(name, labels[name], status, detail))
 
         result = PipelineResult(ok=False)
+        worktree: Worktree | None = None
+        pushed = False
         try:
             if beam.finalized_at is None:
                 raise PipelineError("BEAM 成果物が確定されていません")
+            # push してから PR を作れないと判明しないよう、先に確かめる
+            self.github.check()
 
             step("worktree", StepStatus.RUNNING)
             event = beam.events[0].name if beam.events else None
             wt = self.workspace.create_worktree(branch_name(beam.name, event), self.config.base)
+            worktree = wt
             result.branch = wt.branch
             warehouse = self._prepare_warehouse(wt)
             step("worktree", StepStatus.DONE, wt.branch)
@@ -151,12 +158,15 @@ class GenerationPipeline:
             )
 
             step("commit", StepStatus.RUNNING)
-            files = self._changed_files(wt)
+            files = self.workspace.stage(wt, ["warehouse", "beam"])
+            if not files:
+                raise PipelineError("commit するファイルがありません")
             result.files = files
             self.workspace.commit(
-                wt, files, f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成"
+                wt, f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成"
             )
             self.workspace.push(wt)
+            pushed = True
             step("commit", StepStatus.DONE, f"{len(files)} ファイル")
 
             step("pr", StepStatus.RUNNING)
@@ -184,6 +194,13 @@ class GenerationPipeline:
             result.error = str(e)
             if current:
                 step(current, StepStatus.FAILED, str(e))
+            # push 前の失敗なら作業ブランチを片付けて、同じ BEAM で再実行できるようにする
+            if worktree is not None and not pushed:
+                try:
+                    self.workspace.remove_worktree(worktree, delete_branch=True)
+                    result.branch = None
+                except Exception:
+                    pass
             return result
 
     def _prepare_warehouse(self, wt: Worktree) -> Path:
@@ -192,20 +209,29 @@ class GenerationPipeline:
         (warehouse / "data").mkdir(parents=True, exist_ok=True)
         if not self.config.source_db.exists():
             raise PipelineError(f"検証用の DuckDB がありません: {self.config.source_db}")
-        shutil.copy2(self.config.source_db, warehouse / "data" / "dev.duckdb")
+        copy_database(self.config.source_db, warehouse / "data" / "dev.duckdb")
         packages = self.config.repo_root / "warehouse" / "dbt_packages"
         if packages.exists() and not (warehouse / "dbt_packages").exists():
             shutil.copytree(packages, warehouse / "dbt_packages")
         return warehouse
 
-    def _changed_files(self, wt: Worktree) -> list[str]:
-        """生成・修正されたファイル（warehouse/ と beam/ のうち git で追跡されうるもの）。"""
-        out = self.workspace.git("status", "--porcelain", "--untracked-files=all", cwd=wt.path)
-        files = []
-        for line in out.splitlines():
-            path = line[3:].strip()
-            if path.startswith(("warehouse/", "beam/")):
-                files.append(path)
-        if not files:
-            raise PipelineError("commit するファイルがありません")
-        return sorted(files)
+
+def copy_database(source: Path, dest: Path) -> None:
+    """DuckDB を、WAL（未チェックポイントの変更）も含めて整合した状態でコピーする。
+
+    ファイルを直接コピーすると、書き込み中の変更（.wal）が抜けることがある。
+    書き込み中でロックされていれば、わかりやすいエラーにする。
+    """
+    if dest.exists():
+        dest.unlink()
+    con = duckdb.connect()
+    try:
+        con.execute(f"attach '{source}' as src (read_only)")
+        con.execute(f"attach '{dest}' as dst")
+        con.execute("copy from database src to dst")
+    except duckdb.IOException as e:
+        raise PipelineError(
+            f"検証用の DuckDB を読めません（dbt などが書き込み中の可能性があります）: {source}"
+        ) from e
+    finally:
+        con.close()

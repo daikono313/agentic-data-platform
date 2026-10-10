@@ -49,19 +49,29 @@ def test_branch_name() -> None:
 def test_worktree_commit_push(repo: Path) -> None:
     ws = GitWorkspace(repo)
     assert ws.remote_owner() == "daikono313"
+    (repo / "warehouse").mkdir()
+    (repo / "warehouse" / "dim.yml").write_text("old")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "dim")
+    git(repo, "push")
     wt = ws.create_worktree("beam/x-20261010")
     assert wt.path == repo / ".adp" / "worktrees" / "beam-x-20261010"
-    (wt.path / "warehouse").mkdir()
-    (wt.path / "warehouse" / "a.sql").write_text("select 1")
+    # 既存ファイルの変更（status の先頭行になる）・空白を含む新規ファイル・対象外のファイル
+    (wt.path / "warehouse" / "dim.yml").write_text("new")
+    (wt.path / "warehouse" / "new file.sql").write_text("select 1")
     (wt.path / "other.txt").write_text("not committed")
-    sha = ws.commit(wt, ["warehouse/a.sql"], "feat: a")
+    files = ws.stage(wt, ["warehouse", "beam"])
+    assert files == ["warehouse/dim.yml", "warehouse/new file.sql"]
+    sha = ws.commit(wt, "feat: a")
     ws.push(wt)
     assert git(repo, "ls-remote", "origin", "beam/x-20261010").startswith(sha)
     assert "other.txt" in git(wt.path, "status", "--porcelain")
-    with pytest.raises(GitError, match="既にあります"):
-        ws.create_worktree("beam/x-20261010")
-    ws.remove_worktree(wt)
+
+    # 同じ名前は -2 を付ける（ローカルの worktree を消しても、リモートにあれば避ける）
+    ws.remove_worktree(wt, delete_branch=True)
     assert not wt.path.exists()
+    again = ws.create_worktree("beam/x-20261010")
+    assert again.branch == "beam/x-20261010-2"
 
 
 def test_pr_uses_owner_token_not_active_account(repo: Path) -> None:
@@ -115,3 +125,31 @@ def test_pr_body_contains_review_material() -> None:
         "beam/sales_by_store.yml",
     ):
         assert expected in body, expected
+
+
+def test_pr_body_is_safe_for_public_repo() -> None:
+    from adp.vcs.pr_body import _safe
+
+    text = _safe("Closes #12 cc @someone /Users/me/secret/path.txt ```x```")
+    assert "#12" not in text and "@someone" not in text
+    assert "/Users/me" not in text and "<path>" in text
+    assert "```" not in text
+
+
+def test_long_body_uses_file_and_is_truncated(repo: Path) -> None:
+    seen: dict[str, str] = {}
+
+    def fake(
+        args: Sequence[str], cwd: Path, env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        args = list(args)
+        if "--body-file" in args:
+            seen["body"] = Path(args[args.index("--body-file") + 1]).read_text()
+        out = "tok" if args[:3] == ["gh", "auth", "token"] else "https://x/pull/1"
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    from adp.vcs import Worktree
+    from adp.vcs.git import MAX_BODY
+
+    GitHub(repo, "daikono313", fake).create_pr(Worktree(repo, "b"), "t", "x" * 100000)
+    assert len(seen["body"]) <= MAX_BODY and "省略" in seen["body"]
