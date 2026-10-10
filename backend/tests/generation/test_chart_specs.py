@@ -53,7 +53,7 @@ def _one(group_by: list[str], type: MetricType = MetricType.SIMPLE, label: str =
             {"group_by": ["metric_time__month", "store__channel"], "order": ["metric_time__month"]},
             {"type": "line", "x": "metric_time__month", "color": "store__channel"},
         ),
-        ([], MetricType.SIMPLE, {}, {"type": "kpi", "value": "revenue"}),
+        ([], MetricType.SIMPLE, {}, {"type": "kpi", "value": "revenue", "label": "売上金額"}),
         # 属性名が year でもカテゴリとして扱う
         (
             ["store__year"],

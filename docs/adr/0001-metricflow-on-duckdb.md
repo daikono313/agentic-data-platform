@@ -22,7 +22,7 @@ design-doc R12 で、Semantic Layer は OSS の MetricFlow を latest spec で�
 
 1. MetricFlow + latest spec + DuckDB を採用する（O1 は案 (a) で解決）。
 2. cumulative の `window` は上記のフラグで使う。dbt-core のパーサーが直ったらフラグを外す。cumulative には `period_agg: last` を付ける。
-3. backend からの指標取得は **`mf` CLI をサブプロセスで呼ぶ**（`mf query ... --csv`）。MetricFlow の Python API は内部 API で、バージョン間の互換性が保証されないため。
+3. backend からの指標取得は **`mf` CLI をサブプロセスで呼ぶ**（`mf query ... --csv`）。MetricFlow の Python API は内部 API で、バージョン間の互換性が保証されないため。（描画画面とデータ一覧の切り口は、速さのためにプロセス内で使う。[ADR 0003](0003-chart-view-in-process.md)）
 
 ## 検討した代替案
 

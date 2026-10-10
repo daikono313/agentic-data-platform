@@ -196,7 +196,8 @@ MVP の段階では手動で計測する。
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38） |
 | POST | `/sessions/{id}/feedback`（v2） | 発言ごとの評価・コメント、セッション全体の評価（#44） |
-| GET | `/charts/...`（v2） | 指標 × 切り口 × 期間の描画（#43。形は O5 で決める） |
+| GET | `/charts/options?job_id=`（v2） | 描画できる指標と切り口。`job_id` を渡すと、その生成 PR の内容（マージ前の worktree）で見る（#43） |
+| POST | `/charts/render?job_id=`（v2） | 指標・切り口・粒度・期間から SVG を描く（#43、ADR 0003） |
 
 ### ファイル形式
 
@@ -232,7 +233,7 @@ MVP の段階では手動で計測する。
 
 ### v2 で増える信頼の境界
 
-- **dbt Charts のサーバー（`dct serve`）**: 認証の無いサーバーで、任意の SQL を実行できる機能がある。ブラウザに直接公開しない。使う場合も 127.0.0.1 で起動し、画面には backend が結果だけを渡す（O5 の決定はこの制約の中で行う）。
+- **dbt Charts のサーバー（`dct serve`）**: 認証の無いサーバーで、任意の SQL を実行できる機能がある。使わない。描画画面は backend のプロセス内で SVG を描き、`<img>` で表示する（ADR 0003）。画面から受け取るのは指標名・切り口名・粒度・期間だけで、Semantic Layer の一覧と照らし合わせる。
 - **チャート定義の SQL**: dbt Charts の定義には SQL を書ける。生成するチャート定義には手書きの SQL を入れず、Semantic Layer の指標から作ったものだけにし、CI で確認する（O4）。
 - **生成エージェントのガード**: チャートの生成と描画（`dct render`）は、エージェントではなくパイプラインが決まった手順で行う（#42）。エージェントには `dct` を許可せず、`charts/` と `chart_specs/` にも書かせない。描画は dbt プロファイル経由なので、DuckDB の外部アクセス禁止が効く（#40）。
 - **フィードバックの文章**: ユーザーの自由記述は、Claude に要約させるときもデータとして扱い、指示として扱わない。
@@ -261,7 +262,6 @@ MVP の段階では手動で計測する。
 |---|---|---|---|
 | O2 | Agent SDK（CLI 起動）の応答速度が SLO を満たすか | (a) 満たす (b) インタビューだけ Messages API にする | #8 で計測する |
 | O3 | リポジトリのライセンス | MIT / Apache-2.0 / 指定なし | オーナーが判断する |
-| O5 | 描画画面での dbt Charts の表示方法 | 静的出力の表示 / 結果データを React で描画（dct のサーバーはブラウザに直接公開しない） | #40 の PoC と #43 で決める |
 | O7 | フィードバックの保持期限と削除の方法 | 期限なし / 一定期間で削除 | #44 で決める |
 | O8 | 描画の応答時間の目標と、MetricFlow の結果のキャッシュ | — | #41 / #43 で計測して SLO に追加する |
 
@@ -288,6 +288,7 @@ MVP の段階では手動で計測する。
 | R17 | 可視化は dbt Charts（0.9.x）を使う。接続は dbt のプロファイル経由（`warehouse/dbt_charts.yml`）で、DuckDB の SQL には外部アクセス禁止がそのまま効く。DuckDB の外の経路（独自の duckdb ソース、ボードの HTTP 取得）は、設定ファイルの保護とボードの検査で塞ぐ（O6・O9 を解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
 | R18 | チャートは指標と切り口だけで書き（`warehouse/chart_specs/*.yml`）、MetricFlow が作る SQL（`mf query --explain`、カタログ名は外す）を埋め込んだ dbt Charts のボードを `python -m adp.charts compile` で書き出す。手書きの SQL のボードと古いボードは `make dbt-build` で検出する（O4 を (a) で解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
 | R19 | 生成 PR には既定のチャート（指標ごとに 1 つ）を含め、本文に PNG を載せる。画像は PR のブランチで追加した直後の commit で消し、本文は画像のある commit の URL で参照する（main にバイナリを残さない。squash merge が前提） | #42、[modeling-conventions](modeling-conventions.md) |
+| R20 | 描画画面は MetricFlow（semantic manifest だけを読み、DB に接続しない）と dbt Charts を backend のプロセス内で使い、SVG を `<img>` で表示する。生成ジョブの worktree でマージ前の PR の内容も見られる（O5 を解決） | [ADR 0003](adr/0003-chart-view-in-process.md) |
 
 ## Alternatives considered
 

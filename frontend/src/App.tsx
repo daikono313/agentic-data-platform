@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
 import { errorText, type Datasets } from '@/api/datasets'
 import { BeamCanvas } from '@/components/BeamCanvas'
+import { ChartScreen } from '@/components/ChartScreen'
 import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
@@ -100,6 +101,13 @@ function demoSession(): SessionView {
 }
 
 export default function App() {
+  const params = new URLSearchParams(window.location.search)
+  const chart = params.get('chart')
+  if (chart) return <ChartScreen metric={chart} jobId={params.get('job')} />
+  return <InterviewApp />
+}
+
+function InterviewApp() {
   const isDemo = new URLSearchParams(window.location.search).has('demo')
   const [state, dispatch] = useReducer(reducer, {
     session: isDemo ? demoSession() : null,
@@ -255,7 +263,7 @@ export default function App() {
             <CardContent className="space-y-3 px-4">
               {session.job ? (
                 <>
-                  <JobProgress job={session.job} />
+                  <JobProgress job={session.job} metrics={session.beam.metrics ?? []} />
                   {!jobRunning && !isDemo && (
                     <Button variant="outline" size="sm" onClick={reopen}>
                       修正して確定し直す

@@ -24,7 +24,7 @@ _TIME = re.compile(r"^(metric_time|[a-z0-9_]+__[a-z0-9_]+)__(day|week|month|quar
 BAR_LIMIT = 20
 
 
-def _text(value: str) -> str:
+def safe_label(value: str) -> str:
     """タイトル・ラベルに使えない文字（テンプレートや HTML になりうる < > { }）を除く。"""
     return re.sub(r"[<>{}]", "", value).strip()
 
@@ -33,7 +33,11 @@ def _chart(m: MetricRequest, group_by: list[str]) -> tuple[dict[str, Any], dict[
     times = [g for g in group_by if _TIME.search(g)]
     categories = [g for g in group_by if g not in times]
     query: dict[str, Any] = {"metrics": [m.name]}
-    chart: dict[str, Any] = {"query": m.name, "title": _text(m.label), "y_label": _text(m.label)}
+    chart: dict[str, Any] = {
+        "query": m.name,
+        "title": safe_label(m.label),
+        "y_label": safe_label(m.label),
+    }
     if not times and m.type == MetricType.RATIO and categories:
         times = ["metric_time__month"]
     if times:
@@ -54,7 +58,7 @@ def _chart(m: MetricRequest, group_by: list[str]) -> tuple[dict[str, Any], dict[
             query["limit"] = BAR_LIMIT
             chart["sort"] = {"by": m.name, "order": "desc"}
     else:
-        chart = {"type": "kpi", "query": m.name, "title": _text(m.label), "value": m.name}
+        chart = {"type": "kpi", "query": m.name, "label": safe_label(m.label), "value": m.name}
     return query, chart
 
 
@@ -71,7 +75,7 @@ def chart_spec(beam: BeamModel, queries: list[MetricQuery]) -> dict[str, Any] | 
     if not charts:
         return None
     return {
-        "title": _text(beam.title) or beam.name,
+        "title": safe_label(beam.title) or beam.name,
         "metric_queries": metric_queries,
         "charts": charts,
         "rows": list(charts),

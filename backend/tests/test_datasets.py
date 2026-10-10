@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -44,7 +43,7 @@ def repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def test_datasets_lists_metrics_models_sources_beams(repo: Path) -> None:
     catalog = Catalog(repo / "warehouse/data/dev.duckdb", repo / "warehouse/target/manifest.json")
-    index = DatasetIndex(repo, catalog, DBT.parent / "mf")
+    index = DatasetIndex(repo, catalog)
     data = index.all()
     assert data.errors == []
     revenue = next(m for m in data.metrics if m.name == "revenue")
@@ -66,9 +65,12 @@ def test_datasets_lists_metrics_models_sources_beams(repo: Path) -> None:
     assert [b.name for b in data.beams] == ["sales_by_store"]
 
 
-def test_dimension_lookup_is_cached(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"), DBT.parent / "mf")
-    index.all()
+def test_dimensions_without_mf_process_or_db_lock(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """切り口はプロセス内の MetricFlow から取り、mf を起動せず DuckDB もロックしない（#43）。"""
+    import duckdb
+
     calls = []
     real = subprocess.run
 
@@ -77,15 +79,17 @@ def test_dimension_lookup_is_cached(repo: Path, monkeypatch: pytest.MonkeyPatch)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
-    index.all()
+    index = DatasetIndex(repo, None)
+    revenue = next(m for m in index.all().metrics if m.name == "revenue")
+    assert "store__store_name" in [d.name for d in revenue.dimensions]
     assert calls == []
+    # dbt build などが書き込めること
+    duckdb.connect(str(repo / "warehouse/data/dev.duckdb")).close()
 
 
 def test_missing_build_is_reported(tmp_path: Path) -> None:
     (tmp_path / "warehouse").mkdir()
-    index = DatasetIndex(
-        tmp_path, Catalog(tmp_path / "x.duckdb"), Path(sys.executable).parent / "mf"
-    )
+    index = DatasetIndex(tmp_path, Catalog(tmp_path / "x.duckdb"))
     data = index.all()
     assert data.metrics == [] and data.models == [] and data.sources == []
     assert any("make dbt-build" in e for e in data.errors)
@@ -98,7 +102,7 @@ def test_api_endpoint(repo: Path) -> None:
     service = SessionService(
         Store(repo / ".adp/app.db"), Interviewer(ScriptedRunner([]), LLMSettings()), noop
     )
-    index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"), DBT.parent / "mf")
+    index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"))
     client = TestClient(create_app(service, index))
     body = client.get("/datasets").json()
     assert {"metrics", "models", "sources", "beams", "errors"} <= set(body)
@@ -106,7 +110,7 @@ def test_api_endpoint(repo: Path) -> None:
 
 
 def test_primary_entity_at_model_level_gets_labels() -> None:
-    index = DatasetIndex(Path("."), None, Path("mf"))  # type: ignore[arg-type]
+    index = DatasetIndex(Path("."), None)
     manifest = {
         "semantic_models": [
             {
@@ -126,5 +130,5 @@ def test_broken_manifest_is_reported(tmp_path: Path) -> None:
     (tmp_path / "warehouse" / "target").mkdir(parents=True)
     (tmp_path / "warehouse" / "target" / "semantic_manifest.json").write_text("{broken")
     (tmp_path / "warehouse" / "target" / "manifest.json").write_text("{broken")
-    data = DatasetIndex(tmp_path, Catalog(tmp_path / "x.duckdb"), Path("mf")).all()
+    data = DatasetIndex(tmp_path, Catalog(tmp_path / "x.duckdb")).all()
     assert data.metrics == [] and data.models == [] and data.errors

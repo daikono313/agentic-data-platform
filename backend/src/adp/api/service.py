@@ -53,6 +53,7 @@ class Job:
     )
     pr_url: str | None = None
     error: str | None = None
+    branch: str | None = None
     subscribers: list[asyncio.Queue[SSEEvent | None]] = field(default_factory=list)
 
     def view(self) -> dict[str, Any]:
@@ -62,6 +63,7 @@ class Job:
             "steps": self.steps,
             "pr_url": self.pr_url,
             "error": self.error,
+            "branch": self.branch,
         }
 
 
@@ -189,6 +191,14 @@ class SessionService:
         self.store.save_session(session_id, state)
         return self.view(session_id)
 
+    def job_branch(self, job_id: str) -> str | None:
+        """PR を作った生成ジョブの作業ブランチ（描画画面のプレビュー用）。"""
+        job = self._jobs.get(job_id)
+        if job is not None:
+            return job.branch if job.pr_url else None
+        row = self.store.job(job_id)
+        return row.branch if row is not None and row.pr_url else None
+
     def has_job(self, job_id: str) -> bool:
         return job_id in self._jobs or self.store.job(job_id) is not None
 
@@ -207,12 +217,12 @@ class SessionService:
         try:
             result = await self.pipeline(beam, on_step)
             job.status = "succeeded" if result.ok else "failed"
-            job.pr_url, job.error = result.pr_url, result.error
+            job.pr_url, job.error, job.branch = result.pr_url, result.error, result.branch
         except Exception as e:
             job.status, job.error = "failed", str(e)
         try:
             self.store.save_job(
-                job.id, job.session_id, job.status, job.steps, job.pr_url, job.error
+                job.id, job.session_id, job.status, job.steps, job.pr_url, job.error, job.branch
             )
         finally:
             self._publish(job, _sse("done", job.view()))
@@ -236,6 +246,7 @@ class SessionService:
             "steps": json.loads(row.steps_json),
             "pr_url": row.pr_url,
             "error": row.error,
+            "branch": row.branch,
         }
 
     async def job_events(self, job_id: str) -> AsyncIterator[SSEEvent]:
@@ -252,6 +263,7 @@ class SessionService:
                     "steps": json.loads(row.steps_json),
                     "pr_url": row.pr_url,
                     "error": row.error,
+                    "branch": row.branch,
                 },
             )
             return

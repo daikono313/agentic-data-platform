@@ -15,6 +15,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from adp.api.service import Conflict, NotFound, SessionService, SSEEvent
 from adp.api.store import Store
+from adp.chart_view import ChartRequest, ChartView, ChartViews
+from adp.charts import ChartError
 from adp.datasets import DatasetIndex
 
 
@@ -26,7 +28,11 @@ class SendMessage(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
-def create_app(service: SessionService, datasets: DatasetIndex | None = None) -> FastAPI:
+def create_app(
+    service: SessionService,
+    datasets: DatasetIndex | None = None,
+    charts: ChartViews | None = None,
+) -> FastAPI:
     app = FastAPI(title="ADP")
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
     app.add_middleware(
@@ -44,6 +50,36 @@ def create_app(service: SessionService, datasets: DatasetIndex | None = None) ->
         if datasets is None:
             raise HTTPException(503, "データ一覧は利用できません")
         return datasets.all().model_dump(mode="json")
+
+    def _chart_view(job_id: str | None) -> ChartView:
+        if charts is None:
+            raise HTTPException(503, "描画画面は使えません")
+        if job_id is None:
+            return charts.main()
+        branch = service.job_branch(job_id)
+        if branch is None:
+            raise HTTPException(404, f"ジョブ {job_id} の PR がありません")
+        try:
+            return charts.for_branch(branch)
+        except ChartError as e:
+            raise HTTPException(404, str(e)) from e
+
+    @app.get("/charts/options")
+    def chart_options(job_id: str | None = None) -> dict[str, Any]:
+        """描画できる指標と切り口。job_id を渡すと、その生成 PR の内容（マージ前）で見る。"""
+        metrics, errors = _chart_view(job_id).metrics()
+        return {
+            "metrics": [m.model_dump(mode="json") for m in metrics],
+            "errors": errors,
+            "preview": job_id is not None,
+        }
+
+    @app.post("/charts/render")
+    def chart_render(req: ChartRequest, job_id: str | None = None) -> dict[str, Any]:
+        try:
+            return _chart_view(job_id).render(req).model_dump(mode="json")
+        except ChartError as e:
+            raise HTTPException(422, str(e)) from e
 
     @app.post("/sessions")
     def create_session(body: CreateSession) -> dict[str, Any]:
@@ -135,4 +171,4 @@ def build_default_app() -> FastAPI:
         settings,
     )
     service = SessionService(Store(REPO_ROOT / ".adp" / "app.db"), interviewer, pipeline.run)
-    return create_app(service, DatasetIndex(REPO_ROOT, catalog, Path(sys.executable).parent / "mf"))
+    return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT))
