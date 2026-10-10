@@ -28,6 +28,15 @@ v2 では、作った指標をその場でチャートで見られるように�
 - **`dct serve`**: 既定で localhost だけで待ち受けるが、Host ヘッダーを検証しない（DNS リバインディングで読める）。ブラウザから直接使わない（O5）。
 - **依存**: このリポジトリの固定バージョンのまま追加できた（backend の依存に `dbt-charts>=0.9.1,<0.10`）。
 
+## Semantic Layer の指標を使う方式（#41、O4 の決定）
+
+- チャートの元ファイル `warehouse/charts/metrics/<board>.yml` には `metric_queries`（指標・切り口・並び順・件数）だけを書き、SQL は書かない。
+- `python -m adp.charts compile` が各クエリを MetricFlow で SQL にし（`mf query --explain`）、カタログ名（DB ファイル名）を外して dbt Charts のボード `warehouse/charts/<board>.yml` に埋め込む。
+- `python -m adp.charts check`（`make dbt-build` で実行）は、ボードがすべてこの仕組みで作られ、最新であることを確かめる。手書きの SQL のボードは置けない。
+- 元ファイルに URL（地図の `geo_source` など）や `type: http` があれば拒否する。`dbt_charts.yml` のソースが dbt プロファイル経由の `warehouse` だけであることも確かめる（DuckDB の外の経路を塞ぐ）。
+- チャートの値は `mf query` と一致することをテストで確認した（`backend/tests/test_charts.py`）。
+- 案 (b)（結果をテーブルに書き出す）は、データが古くなり、切り口を変えるたびに書き出しが必要になるので採らない。案 (c) は upstream が PR を受け付けないので採らない。
+
 ## 検討した代替案
 
 - **Evidence / Rill**: コードで定義する BI。dbt プロジェクトとの一体感と、YAML による生成のしやすさで dbt Charts を優先する。dbt Charts の PoC で問題が出たら再検討する。

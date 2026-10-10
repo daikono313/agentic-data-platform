@@ -113,6 +113,11 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 - 累計（cumulative）の元になる simple metric は `<name>_input` という名前で自動で作る（この名前は予約）。
 - 粒度のキー（主 entity）で切る場合の参照名は entity 名そのもの（例: `order_line`）。
 
+### チャート（dbt Charts）
+
+- チャートは `warehouse/charts/metrics/<board>.yml` に、指標・切り口・並び順だけで書く（SQL を書かない）。`make charts` で dbt Charts のボードを書き出す（ADR 0002）。
+- ボードの x / y / color には MetricFlow の参照名（`store__store_name`、`metric_time__month`、指標名）を使う。
+
 ### BEAM の group_by → MetricFlow の参照名
 
 | BEAM | MetricFlow |

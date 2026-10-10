@@ -261,7 +261,6 @@ MVP の段階では手動で計測する。
 |---|---|---|---|
 | O2 | Agent SDK（CLI 起動）の応答速度が SLO を満たすか | (a) 満たす (b) インタビューだけ Messages API にする | #8 で計測する |
 | O3 | リポジトリのライセンス | MIT / Apache-2.0 / 指定なし | オーナーが判断する |
-| O4 | dbt Charts から Semantic Layer の指標をどう使うか | (a) MetricFlow で SQL にコンパイルして渡す (b) 結果をテーブルに書き出す (c) dbt Charts 本体に機能を足す | #41 で PoC して ADR に記録する |
 | O5 | 描画画面での dbt Charts の表示方法 | 静的出力の表示 / 結果データを React で描画（dct のサーバーはブラウザに直接公開しない） | #40 の PoC と #43 で決める |
 | O7 | フィードバックの保持期限と削除の方法 | 期限なし / 一定期間で削除 | #44 で決める |
 | O8 | 描画の応答時間の目標と、MetricFlow の結果のキャッシュ | — | #41 / #43 で計測して SLO に追加する |
@@ -287,6 +286,7 @@ MVP の段階では手動で計測する。
 | R15 | 細かい選定（Vite / shadcn / SSE / SQLite / uv / pnpm / dbt_utils / ハッシュのサロゲートキー / `beam/*.yml` / ブランチ名 `beam/<event>-<yyyymmdd>` / 既存 dim は再利用し、カラム追加のみ許可） | 後から戻せる項目のため推奨案で確定 |
 | R16 | MetricFlow は DuckDB + latest spec で動く（cumulative の window はフラグで対応）。backend からは `mf` CLI で呼ぶ | [ADR 0001](adr/0001-metricflow-on-duckdb.md) |
 | R17 | 可視化は dbt Charts（0.9.x）を使う。接続は dbt のプロファイル経由（`warehouse/dbt_charts.yml`）で、DuckDB の SQL には外部アクセス禁止がそのまま効く。DuckDB の外の経路（独自の duckdb ソース、ボードの HTTP 取得）は、設定ファイルの保護とボードの検査で塞ぐ（O6・O9 を解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
+| R18 | チャートは指標と切り口だけで書き（`warehouse/charts/metrics/*.yml`）、MetricFlow が作る SQL（`mf query --explain`、カタログ名は外す）を埋め込んだ dbt Charts のボードを `python -m adp.charts compile` で書き出す。手書きの SQL のボードと古いボードは `make dbt-build` で検出する（O4 を (a) で解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
 
 ## Alternatives considered
 
