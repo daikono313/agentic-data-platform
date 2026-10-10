@@ -125,6 +125,18 @@ events:
             source: {table: raw.promotions, column: promotion_name}
             availability: available
       - w: how
+        name: order_status
+        label: 注文ステータス
+        description: キャンセルを除くための条件に使う
+        business_key: {table: raw.orders, column: order_status}
+        fact_key: {table: raw.orders, column: order_status}
+        attributes:
+          - name: order_status
+            label: 注文ステータス
+            examples: [completed, cancelled, returned]
+            source: {table: raw.orders, column: order_status}
+            availability: available
+      - w: how
         name: payment_method
         label: 支払方法
         business_key: {table: raw.orders, column: payment_method}
@@ -152,7 +164,7 @@ metrics:
     type: simple
     event: customer_orders_product
     measure: sales_amount
-    filter: キャンセルされた注文を除く
+    filter: order_status.order_status が cancelled の注文を除く
     group_by: [date.day, store.store_name, store.channel]
     status: confirmed
 gaps:
