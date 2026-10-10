@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import duckdb
@@ -61,6 +62,9 @@ def fact_column_tests(fact: FactTable, info: WarehouseInfo) -> dict[str, list[An
         m = _COLUMN_REF.match(c.expr)
         if c.role != ColumnRole.DEGENERATE or c.name in fact.grain_columns or m is None:
             continue
+        types = dict(info.source_columns(tables[m.group(1)]))
+        if types.get(m.group(2), "").upper() != "VARCHAR":
+            continue
         test = accepted_values(info, tables[m.group(1)], m.group(2))
         if test:
             result[c.name] = [test]
@@ -94,8 +98,14 @@ def reconciliation_test(fact: FactTable) -> GeneratedFile:
     ]
     sums_src = "".join(f", sum({c.expr}) as {c.name}" for c in base_measures)
     sums_fct = "".join(f", sum({c.name}) as {c.name}" for c in base_measures)
+    # 浮動小数点の合計は足す順番で末尾が変わるので、相対誤差で比べる
     conds = " or ".join(
-        ["s.n <> f.n"] + [f"s.{c.name} is distinct from f.{c.name}" for c in base_measures]
+        ["s.n <> f.n"]
+        + [
+            f"abs(coalesce(s.{c.name}, 0) - coalesce(f.{c.name}, 0))"
+            f" > 1e-9 * greatest(1, abs(coalesce(s.{c.name}, 0)))"
+            for c in base_measures
+        ]
     )
     sql = f"""-- adp により生成。{fact.name} の件数と measure の合計が、ベースのソースと一致すること
 -- （結合による行の重複・欠落の検出）
@@ -193,9 +203,19 @@ def unit_test(
             if grain_col and (gm := _COLUMN_REF.match(grain_col.expr)):
                 result[gm.group(1)][gm.group(2)] = key
         if case == "example":
+            set_by_example: set[tuple[str, str]] = set()
             for k, (alias, col) in _example_targets(event, fact).items():
                 if k in example.values:
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
+                    set_by_example.add((alias, col))
+            # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
+            for j in fact.joins:
+                left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
+                if left in set_by_example:
+                    result[right[0]][right[1]] = result[left[0]][left[1]]
+                elif right in set_by_example:
+                    result[left[0]][left[1]] = result[right[0]][right[1]]
+            _solve_example_measures(event, fact, example, result, types, set_by_example)
         else:
             # 結合キー以外の外部キーの自然キーを NULL にする（不明メンバーになることを検証）
             join_keys = {(j.left_alias, j.left_column) for j in fact.joins}
@@ -267,6 +287,55 @@ def _expected(
     return out
 
 
+def _measure_alias(fact: FactTable, table: str) -> str | None:
+    if fact.base.table == table:
+        return fact.base.alias
+    return next((j.right.alias for j in fact.joins if j.right.table == table), None)
+
+
+def _solve_example_measures(
+    event: BusinessEvent,
+    fact: FactTable,
+    example: EventExample,
+    rows: dict[str, dict[str, object]],
+    types: dict[str, dict[str, str]],
+    fixed: set[tuple[str, str]],
+) -> None:
+    """具体例に式の measure の値があれば、その値になるように入力列を 1 つ決める。
+
+    式が未知の列について 1 次式（売上 = 数量 × 単価 − 値引 など）のときに限り、
+    2 点で評価して解く。解けなければ既定値のまま（期待値は定義から計算される）。
+    """
+    for m in event.measures:
+        if m.source is None or m.source.expr is None or m.name not in example.values:
+            continue
+        target = example.values[m.name]
+        alias = _measure_alias(fact, m.source.table)
+        if alias is None or not isinstance(target, int | float) or isinstance(target, bool):
+            continue
+        row = rows[alias]
+        unknowns = [
+            c
+            for c in re.findall(r"[A-Za-z_]\w*", m.source.expr)
+            if c in row and (alias, c) not in fixed
+        ]
+        # 規約: 具体例に無い入力は、テストが成り立つ最小の値（値引 0 など）で補う
+        for col in unknowns:
+            if _default(types[alias].get(col, "")) == 1:
+                row[col] = 0
+        for col in dict.fromkeys(unknowns):
+            f0 = _evaluate(m.source.expr, row | {col: 0}, types[alias])
+            f1 = _evaluate(m.source.expr, row | {col: 1}, types[alias])
+            if not isinstance(f0, int | float) or not isinstance(f1, int | float) or f1 == f0:
+                continue
+            x = (float(target) - f0) / (f1 - f0)
+            value: object = int(x) if float(x).is_integer() else x
+            if _evaluate(m.source.expr, row | {col: value}, types[alias]) == target:
+                row[col] = value
+                fixed.add((alias, col))
+                break
+
+
 def _evaluate(expr: str, values: dict[str, object], types: dict[str, str]) -> object:
     """BEAM の measure の式を、入力行の値で DuckDB に計算させる（生成 SQL とは独立）。"""
     cols = ", ".join(f'cast(? as {types.get(k) or "varchar"}) as "{k}"' for k in values)
@@ -277,4 +346,6 @@ def _evaluate(expr: str, values: dict[str, object], types: dict[str, str]) -> ob
         con.close()
     assert row is not None
     value = row[0]
-    return float(value) if isinstance(value, float) else value
+    if isinstance(value, Decimal):  # YAML に書けるようにする
+        return int(value) if value == value.to_integral_value() else float(value)
+    return value

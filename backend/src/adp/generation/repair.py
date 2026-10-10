@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,6 +22,8 @@ from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, TurnResult
 from adp.llm.settings import REPO_ROOT
 
 LOG_TAIL = 6000
+COMMAND_TIMEOUT_S = 600
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 REPAIR_PROMPT = """\
 あなたは dbt と MetricFlow（latest spec）に詳しいアナリティクスエンジニアです。
@@ -69,13 +73,88 @@ class RepairResult:
 
 
 def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    env = os.environ | {"DBT_PROFILES_DIR": str(cwd)}
-    return subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    env = os.environ | {"DBT_PROFILES_DIR": str(cwd), "NO_COLOR": "1"}
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+        return subprocess.CompletedProcess(
+            args, 124, out, f"{COMMAND_TIMEOUT_S} 秒で打ち切りました"
+        )
+
+
+def _clean_log(text: str) -> str:
+    """ログをエージェントに渡す前に、色のエスケープを除き、タグを閉じられないようにする。"""
+    return _ANSI.sub("", text).replace("</verification_log>", "<\\/verification_log>")
+
+
+def python_models(warehouse: Path) -> list[str]:
+    """Python モデル（任意のコードを実行できる）は生成物として認めない。"""
+    return sorted(str(p.relative_to(warehouse)) for p in (warehouse / "models").rglob("*.py"))
+
+
+def test_inventory(warehouse: Path, bin_dir: Path) -> dict[str, str] | None:
+    """プロジェクトのテストの一覧（名前 → severity）。
+
+    エージェントがテストを消したり弱めたりしていないかの確認に使う。
+    """
+    result = _run(
+        [
+            str(bin_dir / "dbt"),
+            "ls",
+            "--resource-type",
+            "test",
+            "--resource-type",
+            "unit_test",
+            "--output",
+            "json",
+            "--output-keys",
+            "name config",
+            "--quiet",
+        ],
+        warehouse,
+    )
+    if result.returncode != 0:
+        return None
+    inventory: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        item = json.loads(line)
+        if "name" not in item:
+            continue
+        config = item.get("config") or {}
+        if config.get("enabled", True):
+            inventory[item["name"]] = str(config.get("severity", "ERROR")).upper()
+    return inventory
+
+
+def weakened_tests(before: dict[str, str], after: dict[str, str] | None) -> list[str]:
+    if after is None:
+        return ["テストの一覧を取得できませんでした"]
+    problems = [f"テスト {n} が削除・無効化されました" for n in before if n not in after]
+    problems += [
+        f"テスト {n} の重大度が {before[n]} から {after[n]} に下がりました"
+        for n in before
+        if n in after and before[n] == "ERROR" and after[n] != "ERROR"
+    ]
+    return problems
 
 
 def verify(warehouse: Path, bin_dir: Path, queries: list[MetricQuery]) -> CheckResult:
     """dbt build → parse → mf validate-configs → 元の要求の mf query。最初の失敗で止める。"""
     dbt, mf = str(bin_dir / "dbt"), str(bin_dir / "mf")
+    if python_models(warehouse):
+        return CheckResult(False, "Python モデルは使えません", "\n".join(python_models(warehouse)))
     if not (warehouse / "dbt_packages").exists():
         deps = _run([dbt, "deps"], warehouse)
         if deps.returncode != 0:
@@ -95,7 +174,9 @@ def verify(warehouse: Path, bin_dir: Path, queries: list[MetricQuery]) -> CheckR
     for name, args in steps:
         result = _run(args, warehouse)
         if result.returncode != 0:
-            return CheckResult(False, f"{name} が失敗しました", (result.stdout + result.stderr))
+            return CheckResult(
+                False, f"{name} が失敗しました", _clean_log(result.stdout + result.stderr)
+            )
         passed.append(name)
     return CheckResult(True, "、".join(passed) + " が成功しました")
 
@@ -135,17 +216,29 @@ class Repairer:
             cwd=warehouse,
         )
         text: list[str] = []
-        async for event in self.runner.run(prompt, spec):
-            if isinstance(event, TextDelta):
-                text.append(event.text)
-            elif isinstance(event, TurnResult) and event.is_error:
-                text.append(f"\n（エージェントのエラー: {event.error}）")
+        try:
+            async for event in self.runner.run(prompt, spec):
+                if isinstance(event, TextDelta):
+                    text.append(event.text)
+                elif isinstance(event, TurnResult) and event.is_error:
+                    text.append(f"\n（エージェントのエラー: {event.error}）")
+        except Exception as e:  # CLI の異常終了など。修正の試行は失敗として続ける
+            text.append(f"\n（エージェントの実行に失敗しました: {e}）")
         return "".join(text).strip(), guard.denied
 
     async def run(
         self, warehouse: Path, queries: list[MetricQuery], tasks: list[AgentTask] | None = None
     ) -> RepairResult:
         attempts: list[Attempt] = []
+        baseline = test_inventory(warehouse, self.bin_dir) or {}
+
+        def check() -> CheckResult:
+            result = verify(warehouse, self.bin_dir, queries)
+            problems = weakened_tests(baseline, test_inventory(warehouse, self.bin_dir))
+            if problems:
+                return CheckResult(False, "テストが弱められました", "\n".join(problems))
+            return result
+
         if tasks:
             todo = "\n".join(f"- {t.instruction}" for t in tasks)
             self.log(f"エージェントに作業を依頼します（{len(tasks)} 件）")
@@ -154,18 +247,10 @@ class Repairer:
                 self.settings.default_model,
                 f"次の作業を行い、dbt build が通ることを確認してください。\n{todo}",
             )
-            attempts.append(
-                Attempt(
-                    self.settings.default_model,
-                    "tasks",
-                    verify(warehouse, self.bin_dir, queries),
-                    summary,
-                    denied,
-                )
-            )
+            attempts.append(Attempt(self.settings.default_model, "tasks", check(), summary, denied))
             result = attempts[-1].result
         else:
-            result = verify(warehouse, self.bin_dir, queries)
+            result = check()
         for model in self.plan:
             if result.ok:
                 break
@@ -176,6 +261,6 @@ class Repairer:
                 "原因を調べて直してください。直したら dbt build で確認してください。"
             )
             summary, denied = await self._agent(warehouse, model, prompt)
-            result = verify(warehouse, self.bin_dir, queries)
+            result = check()
             attempts.append(Attempt(model, "repair", result, summary, denied))
         return RepairResult(ok=result.ok, attempts=attempts, final=result)

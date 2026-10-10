@@ -5,3 +5,7 @@ adp:
       type: duckdb
       path: "{{ env_var('ADP_DUCKDB_PATH', 'data/dev.duckdb') }}"
       threads: 4
+      settings:
+        # DuckDB からファイルやネットワークに触れない（read_text / COPY TO / httpfs などを禁止）。
+        # 実行中に true へ戻すことは DuckDB が許さない（docs/guardrails.md）
+        enable_external_access: false
