@@ -108,7 +108,42 @@ class SourceRef(_Base):
     def _column_or_expr(self) -> SourceRef:
         if (self.column is None) == (self.expr is None):
             raise ValueError("column と expr のどちらか一方を指定してください")
+        if self.expr is not None:
+            _check_row_expr(self.expr)
         return self
+
+
+def _check_row_expr(expr: str) -> None:
+    """expr は、そのテーブルの列だけを使う 1 行ごとの式に限る（#46）。
+
+    サブクエリ・他のテーブル・集計・ウィンドウ関数は、生成する SQL を壊し、任意の SQL を
+    差し込める経路にもなるので受け付けない。他のテーブルの値は、別のイベントや結合で表す。
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    hint = (
+        "expr には、このテーブルの列だけを使った 1 行ごとの式を書いてください"
+        "（サブクエリ・集計・他のテーブルの参照は不可。他のテーブルの値は別のイベントや"
+        "ディメンションで表します）"
+    )
+    # dbt は SQL の中の Jinja を展開する（env_var・run_query で秘密情報の読み出しや任意の SQL）
+    # \ は Jinja の文字列（dim_key の引数）の中でエスケープとして解釈され、引用符などを作れる
+    if any(c in expr for c in "{}\\"):
+        raise ValueError("expr に { } \\ は使えません（Jinja やエスケープは書けません）")
+    # コメントは行の残り（as <列名> など）を消せる。#n は他のテーブルの列も指せる
+    if "--" in expr or "/*" in expr or "#" in expr:
+        raise ValueError("expr に -- /* # は使えません（コメントや位置での列の参照は書けません）")
+    try:
+        trees = sqlglot.parse(expr, read="duckdb")
+    except sqlglot.errors.SqlglotError as e:
+        raise ValueError(f"expr を SQL の式として読めません: {expr}") from e
+    if len(trees) != 1 or trees[0] is None or isinstance(trees[0], exp.Query):
+        raise ValueError(hint)
+    tree = trees[0]
+    forbidden = (exp.Query, exp.Subquery, exp.Table, exp.AggFunc, exp.Window, exp.Star)
+    if any(tree.find_all(*forbidden)) or any(c.table for c in tree.find_all(exp.Column)):
+        raise ValueError(hint)
 
 
 class Measure(_Base):

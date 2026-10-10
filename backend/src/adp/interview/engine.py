@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,9 @@ def new_state(request: str) -> InterviewState:
     return InterviewState(beam=BeamModel(name="draft", title="下書き", request=request))
 
 
+logger = logging.getLogger(__name__)
+
+
 class Interviewer:
     def __init__(
         self,
@@ -54,19 +58,34 @@ class Interviewer:
         settings: LLMSettings,
         extra_tools: dict[str, list[SdkMcpTool[Any]]] | None = None,
         max_turns: int = 30,
+        design_issues: Callable[[BeamModel], list[str]] | None = None,
     ) -> None:
         self.runner = runner
         self.settings = settings
         self.extra_tools = extra_tools or {}
         self.max_turns = max_turns
+        self.design_issues = design_issues
+        """確定前に、設計で止まる課題（結合の経路が無いなど）を見つける（#46）。"""
         self._locks: dict[int, asyncio.Lock] = {}
+
+    def issues(self, beam: BeamModel) -> list[str]:
+        """確定までに残っている課題。BEAM の条件がそろってから、設計の課題も確かめる。"""
+        issues = beam.finalize_issues()
+        if issues or self.design_issues is None:
+            return issues
+        try:
+            return [f"設計: {i}" for i in self.design_issues(beam)]
+        except Exception:  # 設計の確認自体の失敗で確定を止めない（生成時にも確かめる）
+            logger.exception("設計の確認に失敗しました（確定は止めません）")
+            return []
 
     def _spec(self, state: InterviewState) -> AgentSpec:
         return AgentSpec(
             purpose="interview",
             system_prompt=system_prompt(),
             model=self.settings.default_model,
-            tools={beam_tools.SERVER_NAME: beam_tools.build_tools(state)} | self.extra_tools,
+            tools={beam_tools.SERVER_NAME: beam_tools.build_tools(state, issues=self.issues)}
+            | self.extra_tools,
             max_turns=self.max_turns,
             thinking=False,
         )
@@ -90,7 +109,7 @@ class Interviewer:
         state.messages.append(ChatMessage(role="user", text=text))
         state.choices = []
         state.question = None
-        snapshot = _Snapshot.of(state)
+        snapshot = _Snapshot.of(state, self.issues)
 
         reply: list[str] = []
         result: TurnResult | None = None
@@ -169,6 +188,9 @@ class Interviewer:
 
     def finalize(self, state: InterviewState) -> BeamModel:
         """ユーザーの確定操作。確定条件を満たしていなければ ValueError。"""
+        issues = self.issues(state.beam)
+        if issues:
+            raise ValueError("確定できません: " + " / ".join(issues))
         beam = state.beam.model_copy(deep=True)
         beam.finalize()
         state.beam = beam
@@ -177,11 +199,13 @@ class Interviewer:
         return beam
 
 
-def snapshot_event(state: InterviewState) -> BeamUpdated:
+def snapshot_event(
+    state: InterviewState, issues: Callable[[BeamModel], list[str]] | None = None
+) -> BeamUpdated:
     return BeamUpdated(
         beam=state.beam,
         matrix=build_event_matrix(state.beam),
-        issues=state.beam.finalize_issues(),
+        issues=(issues or BeamModel.finalize_issues)(state.beam),
     )
 
 
@@ -191,17 +215,22 @@ class _Snapshot:
     phase: Phase
     choices: list[str]
     question: str | None
+    issues: Callable[[BeamModel], list[str]] | None = None
 
     @classmethod
-    def of(cls, state: InterviewState) -> _Snapshot:
-        return cls(state.beam.model_dump_json(), state.phase, list(state.choices), state.question)
+    def of(
+        cls, state: InterviewState, issues: Callable[[BeamModel], list[str]] | None = None
+    ) -> _Snapshot:
+        return cls(
+            state.beam.model_dump_json(), state.phase, list(state.choices), state.question, issues
+        )
 
     def diff(self, state: InterviewState) -> list[InterviewEvent]:
         changes: list[InterviewEvent] = []
         beam_json = state.beam.model_dump_json()
         if beam_json != self.beam_json:
             self.beam_json = beam_json
-            changes.append(snapshot_event(state))
+            changes.append(snapshot_event(state, self.issues))
         if state.phase != self.phase:
             self.phase = state.phase
             changes.append(PhaseChanged(state.phase))
