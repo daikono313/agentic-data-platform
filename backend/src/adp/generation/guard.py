@@ -93,11 +93,15 @@ class WorkspaceGuard:
                 return outside
         if tool in WRITE_TOOLS:
             target = self._resolve(str(data.get("file_path", "")))
-            if target.name in PROTECTED_FILES or target.suffix not in WRITABLE_SUFFIXES:
+            # macOS などのファイルシステムは大文字・小文字を区別しないので、小文字にして比べる
+            if (
+                target.name.lower() in PROTECTED_FILES
+                or target.suffix.lower() not in WRITABLE_SUFFIXES
+            ):
                 return (
                     f"{target.name} は書き換えられません（書けるのは SQL / YAML / Markdown だけ）"
                 )
-            if PROTECTED_DIRS & set(target.relative_to(self.root).parts[:1]):
+            if PROTECTED_DIRS & {p.lower() for p in target.relative_to(self.root).parts[:1]}:
                 return "チャート（charts/ と chart_specs/）は書き換えられません"
             if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
                 return "env_var などで環境変数を読む内容は書けません"

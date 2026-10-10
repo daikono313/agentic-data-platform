@@ -8,7 +8,6 @@ draft PR にして人に渡す。
 from __future__ import annotations
 
 import shutil
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -179,8 +178,12 @@ class GenerationPipeline:
             step("charts", StepStatus.RUNNING)
             chart = self._charts(beam, generation.queries, wt)
             result.chart = chart
-            if chart is None:
-                step("charts", StepStatus.DONE, "指標がありません")
+            if chart is None or chart.skipped:
+                step(
+                    "charts",
+                    StepStatus.DONE,
+                    (chart.skipped or "") if chart else "指標がありません",
+                )
             else:
                 step(
                     "charts",
@@ -196,7 +199,7 @@ class GenerationPipeline:
             self.workspace.commit(
                 wt, f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成"
             )
-            if chart is not None and not chart.error:
+            if chart is not None and not chart.error and not chart.skipped:
                 chart.image_url = self._commit_image(wt, beam)
             self.workspace.push(wt)
             pushed = True
@@ -254,6 +257,11 @@ class GenerationPipeline:
             spec=f"warehouse/{spec_rel}",
             charts=[(c.get("title", name), c["type"]) for name, c in spec["charts"].items()],
         )
+        if spec_path.exists() or board_path.exists():
+            # 既存のチャート（手で整えたものを含む）は上書きも削除もしない
+            preview.charts = []
+            preview.skipped = f"既にチャートがあるため作りませんでした（warehouse/{spec_rel}）"
+            return preview
         mf = self.config.bin_dir / "mf"
         try:
             spec_path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,7 +281,7 @@ class GenerationPipeline:
                 beam.name,
                 wt.path / ASSETS_DIR / f"{beam.name}.png",
             )
-        except (ChartError, OSError, subprocess.SubprocessError) as e:
+        except Exception as e:  # チャートの失敗で PR 全体を止めない
             spec_path.unlink(missing_ok=True)
             board_path.unlink(missing_ok=True)
             shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
@@ -286,12 +294,19 @@ class GenerationPipeline:
         repo = self.workspace.remote_repo()
         if repo is None or not (wt.path / image).exists():
             return None
-        self.workspace.stage(wt, [ASSETS_DIR])
-        sha = self.workspace.commit(
-            wt, "chore: PR 本文に載せるチャートの画像（次の commit で削除）"
-        )
-        self.workspace.remove(wt, ASSETS_DIR)
-        self.workspace.commit(wt, "chore: チャートの画像を削除（main には残さない）")
+        before = self.workspace.git("rev-parse", "HEAD", cwd=wt.path)
+        try:
+            self.workspace.stage(wt, [ASSETS_DIR])
+            sha = self.workspace.commit(
+                wt, "chore: PR 本文に載せるチャートの画像（次の commit で削除）"
+            )
+            self.workspace.remove(wt, ASSETS_DIR)
+            self.workspace.commit(wt, "chore: チャートの画像を削除（main には残さない）")
+        except Exception:
+            # 画像なしで PR を作る。画像の commit をブランチに残さない
+            self.workspace.git("reset", "-q", "--hard", before, cwd=wt.path)
+            shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
+            return None
         return f"https://github.com/{repo}/blob/{sha}/{image}?raw=true"
 
     def _prepare_warehouse(self, wt: Worktree) -> Path:

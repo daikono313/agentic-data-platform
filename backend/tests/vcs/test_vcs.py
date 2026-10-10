@@ -48,6 +48,24 @@ def repo(tmp_path: Path) -> Path:
     return work
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("git@github.com:daikono313/auto_data_platform.git", "daikono313/auto_data_platform"),
+        ("https://github.com/daikono313/auto_data_platform", "daikono313/auto_data_platform"),
+        ("https://gitlab.com/a/b.git", None),
+        ("/tmp/remote/daikono313/repo.git", None),
+    ],
+)
+def test_remote_repo_is_github_only(url: str, expected: str | None) -> None:
+    def runner(
+        args: Sequence[str], cwd: Path, env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, url + "\n", "")
+
+    assert GitWorkspace(Path("."), runner).remote_repo() == expected
+
+
 def test_branch_name() -> None:
     assert branch_name("sales", "customer_orders_product", date(2026, 10, 10)) == (
         "beam/customer_orders_product-20261010"

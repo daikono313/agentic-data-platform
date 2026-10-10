@@ -18,7 +18,9 @@ from typing import Any
 from adp.beam import BeamModel, MetricRequest, MetricType
 from adp.generation.semantic import MetricQuery
 
-_TIME = re.compile(r"__(day|week|month|quarter|year)$")
+# MetricFlow の時間の参照名は metric_time__<grain> か <entity>__<列>__<grain>。
+# store__year のようなカテゴリの属性と区別する
+_TIME = re.compile(r"^(metric_time|[a-z0-9_]+__[a-z0-9_]+)__(day|week|month|quarter|year)$")
 BAR_LIMIT = 20
 
 

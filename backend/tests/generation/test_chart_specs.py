@@ -54,6 +54,26 @@ def _one(group_by: list[str], type: MetricType = MetricType.SIMPLE, label: str =
             {"type": "line", "x": "metric_time__month", "color": "store__channel"},
         ),
         ([], MetricType.SIMPLE, {}, {"type": "kpi", "value": "revenue"}),
+        # 属性名が year でもカテゴリとして扱う
+        (
+            ["store__year"],
+            MetricType.SIMPLE,
+            {"group_by": ["store__year"], "order": ["-revenue"], "limit": 20},
+            {"type": "bar", "x": "store__year"},
+        ),
+        # 粒度のキー（entity 名だけ）や累計
+        (
+            ["order"],
+            MetricType.SIMPLE,
+            {"group_by": ["order"], "order": ["-revenue"], "limit": 20},
+            {"type": "bar", "x": "order"},
+        ),
+        (
+            ["metric_time__day"],
+            MetricType.CUMULATIVE,
+            {"group_by": ["metric_time__day"], "order": ["metric_time__day"]},
+            {"type": "line", "x": "metric_time__day"},
+        ),
     ],
 )
 def test_default_chart(

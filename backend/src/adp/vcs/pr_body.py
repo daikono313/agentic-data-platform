@@ -43,6 +43,8 @@ class ChartPreview:
     """(タイトル, 種類)"""
     image_url: str | None = None
     error: str | None = None
+    skipped: str | None = None
+    """作らなかった理由（既存のチャートがあるなど）。"""
 
 
 _TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
@@ -125,7 +127,9 @@ def pr_body(
 
     if chart is not None:
         lines += ["## チャート", ""]
-        if chart.error:
+        if chart.skipped:
+            lines += [f"- {_cell(chart.skipped)}", ""]
+        elif chart.error:
             lines += [f"- ❌ チャートを作れませんでした: {_cell(chart.error)}", ""]
         else:
             lines.append(f"元ファイル `{chart.spec}`（SQL は MetricFlow が作る）")

@@ -41,6 +41,11 @@ def test_guard(tmp_path: Path) -> None:
         # チャートは adp.charts が書き出す（#42）
         ("Write", {"file_path": "charts/x.yml", "content": "title: x"}),
         ("Write", {"file_path": "chart_specs/x.yml", "content": "title: x"}),
+        # 大文字・小文字を区別しないファイルシステムでの迂回
+        ("Write", {"file_path": "Charts/x.yml", "content": "title: x"}),
+        ("MultiEdit", {"file_path": "CHART_SPECS/x.yml", "content": "x"}),
+        ("Write", {"file_path": "DBT_CHARTS.yml", "content": "sources: {}"}),
+        ("Write", {"file_path": "models/a.SQL.py", "content": "x"}),
         ("Edit", {"file_path": str(tmp_path / "charts/.gitkeep/x.yml"), "new_string": "x"}),
         ("Write", {"file_path": "models/x.py", "content": "def model(dbt, s): ..."}),
         ("Edit", {"file_path": "dbt_project.yml", "new_string": "x"}),

@@ -57,7 +57,9 @@ class FakeGh:
         return subprocess.CompletedProcess(args, 0, out, "")
 
 
-async def test_pipeline_end_to_end(repo: Path) -> None:
+async def test_pipeline_end_to_end(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # テストの origin はローカルの bare リポジトリなので、GitHub の <owner>/<repo> を与える
+    monkeypatch.setattr(GitWorkspace, "remote_repo", lambda self: "daikono313/repo")
     beam = load(FIXTURES / "beam" / "sales_by_store.yml")
     beam.finalize()
     gh = FakeGh()
@@ -144,6 +146,39 @@ async def test_chart_failure_still_creates_pr(repo: Path, monkeypatch: pytest.Mo
     pushed = git(repo, "ls-tree", "-r", "--name-only", f"origin/{result.branch}")
     assert "chart_specs/sales_by_store.yml" not in pushed and "charts/sales_by_store" not in pushed
     assert "❌ チャートを作れませんでした" in gh.bodies[-1]
+
+
+async def test_existing_chart_is_not_overwritten(repo: Path) -> None:
+    """同じ BEAM の再実行で、既存（手で整えたものを含む）のチャートを上書き・削除しない。"""
+    spec = repo / "warehouse" / "chart_specs" / "sales_by_store.yml"
+    spec.parent.mkdir(exist_ok=True)
+    spec.write_text("# 手で整えたチャート\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "existing chart")
+    git(repo, "push", "origin", "main")
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    gh = FakeGh()
+    config = PipelineConfig(
+        repo_root=repo,
+        bin_dir=DBT.parent,
+        source_db=repo / "warehouse" / "data" / "dev.duckdb",
+        github_account="daikono313",
+    )
+    pipeline = GenerationPipeline(
+        config,
+        FixingRunner(lambda n, spec: None),
+        LLMSettings(),
+        GitWorkspace(repo),
+        GitHub(repo, "daikono313", gh),
+    )
+    result = await pipeline.run(beam)
+    assert result.ok, result.error
+    assert result.chart is not None and result.chart.skipped
+    assert not any("chart" in f for f in result.files), result.files
+    shown = git(repo, "show", f"origin/{result.branch}:warehouse/chart_specs/sales_by_store.yml")
+    assert shown.strip() == "# 手で整えたチャート"
+    assert "既にチャートがある" in gh.bodies[-1]
 
 
 async def test_pipeline_rejects_unfinalized_beam(repo: Path) -> None:
