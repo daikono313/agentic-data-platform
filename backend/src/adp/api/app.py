@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -18,6 +19,7 @@ from adp.api.store import Store
 from adp.chart_view import ChartRequest, ChartView, ChartViews
 from adp.charts import ChartError
 from adp.datasets import DatasetIndex
+from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
 
 
 class CreateSession(BaseModel):
@@ -114,6 +116,20 @@ def create_app(
 
         return EventSourceResponse(stream())
 
+    @app.post("/sessions/{session_id}/feedback")
+    def send_feedback(session_id: str, body: FeedbackIn) -> dict[str, Any]:
+        """発言ごとの評価・コメント、セッション全体の評価（#44）。"""
+        try:
+            return service.feedback(session_id, body)
+        except NotFound as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
+    @app.get("/feedback/categories")
+    def feedback_categories() -> dict[str, str]:
+        return CATEGORIES
+
     @app.post("/sessions/{session_id}/finalize")
     async def finalize(session_id: str) -> dict[str, Any]:
         try:
@@ -170,5 +186,19 @@ def build_default_app() -> FastAPI:
         runner,
         settings,
     )
-    service = SessionService(Store(REPO_ROOT / ".adp" / "app.db"), interviewer, pipeline.run)
+    env = read_dotenv(REPO_ROOT / ".env")
+    retention = env.get("ADP_FEEDBACK_RETENTION_DAYS") or os.environ.get(
+        "ADP_FEEDBACK_RETENTION_DAYS"
+    )
+    try:
+        retention_days = int(retention) if retention else RETENTION_DAYS
+    except ValueError:
+        print(
+            f"ADP_FEEDBACK_RETENTION_DAYS は日数（整数）で指定してください: {retention!r}。"
+            f"{RETENTION_DAYS} 日にします",
+            file=sys.stderr,
+        )
+        retention_days = RETENTION_DAYS
+    store = Store(REPO_ROOT / ".adp" / "app.db", feedback_retention_days=retention_days)
+    service = SessionService(store, interviewer, pipeline.run)
     return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT))

@@ -3,11 +3,13 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
 import { errorText, type Datasets } from '@/api/datasets'
+import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
 import { ChartScreen } from '@/components/ChartScreen'
 import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
+import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { Button } from '@/components/ui/button'
@@ -28,6 +30,7 @@ export type Action =
   | { type: 'user'; text: string }
   | { type: 'event'; event: InterviewEvent }
   | { type: 'job'; job: JobView }
+  | { type: 'feedback'; item: FeedbackView }
   | { type: 'error'; error: string }
   | { type: 'idle' }
 
@@ -42,6 +45,8 @@ export function reducer(state: State, action: Action): State {
       return state.busy ? { ...state, busy: false, draft: '' } : state
     case 'job':
       return s ? { ...state, session: { ...s, job: action.job } } : state
+    case 'feedback':
+      return s ? { ...state, session: { ...s, feedback: mergeFeedback(s.feedback, action.item) } } : state
     case 'user':
       if (!s) return state
       return {
@@ -127,6 +132,11 @@ function InterviewApp() {
       } finally {
         // done が届かずにストリームが終わっても、入力できる状態に戻す
         dispatch({ type: 'idle' })
+        // 会話を backend と合わせる（発言の番号でフィードバックを送るため。空の発言や中断でずれない）
+        api
+          .getSession(id)
+          .then((s) => dispatch({ type: 'session', session: s }))
+          .catch(() => {})
       }
     },
     [],
@@ -197,6 +207,17 @@ function InterviewApp() {
 
   // 開始画面とインタビュー中の参照で 1 回だけ読み込んで共有する
   const sharedDatasets = useDatasets(!isDemo)
+  const categories = useFeedbackCategories(!isDemo)
+
+  const sendFeedback = useCallback(
+    async (body: FeedbackIn) => {
+      if (!session) throw new Error('セッションがありません')
+      const item = await api.sendFeedback(session.id, body)
+      dispatch({ type: 'feedback', item })
+      return item
+    },
+    [session],
+  )
 
   if (!session)
     return (
@@ -233,6 +254,7 @@ function InterviewApp() {
             busy={state.busy}
             disabled={finalized || isDemo}
             onSend={(t) => send(session.id, t)}
+            feedback={categories && !isDemo ? { items: session.feedback, categories, send: sendFeedback } : undefined}
           />
         </Card>
         <div className="min-w-0 space-y-4">
@@ -264,6 +286,7 @@ function InterviewApp() {
               {session.job ? (
                 <>
                   <JobProgress job={session.job} metrics={session.beam.metrics ?? []} />
+                  {!isDemo && <SessionRating current={findFeedback(session.feedback, 'session')} send={sendFeedback} />}
                   {!jobRunning && !isDemo && (
                     <Button variant="outline" size="sm" onClick={reopen}>
                       修正して確定し直す
@@ -293,6 +316,18 @@ function InterviewApp() {
       </main>
     </div>
   )
+}
+
+function useFeedbackCategories(enabled: boolean) {
+  const [categories, setCategories] = useState<FeedbackCategories | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    api
+      .feedbackCategories()
+      .then(setCategories)
+      .catch(() => setCategories(null)) // 取れなければ評価ボタンを出さない
+  }, [enabled])
+  return categories
 }
 
 function useDatasets(enabled: boolean) {

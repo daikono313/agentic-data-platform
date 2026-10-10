@@ -1,5 +1,6 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
 import type { Datasets } from './datasets'
+import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
 import type { InterviewEvent, JobEvent, SessionView } from './types'
 
 const BASE = '/api'
@@ -82,6 +83,18 @@ export const api = {
         signal,
       }),
     )
+  },
+  async sendFeedback(sessionId: string, body: FeedbackIn): Promise<FeedbackView> {
+    return json(
+      await fetch(`${BASE}/sessions/${sessionId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    )
+  },
+  async feedbackCategories(): Promise<FeedbackCategories> {
+    return json(await fetch(`${BASE}/feedback/categories`))
   },
   async *jobEvents(jobId: string): AsyncGenerator<JobEvent> {
     yield* readSSE<JobEvent>(await fetch(`${BASE}/jobs/${jobId}/events`))

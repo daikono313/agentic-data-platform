@@ -1,5 +1,7 @@
 import type { BeamModel, EventMatrix } from '@/generated/beam'
 
+import type { FeedbackView } from './feedback'
+
 export type Phase =
   | 'framing'
   | 'event_discovery'
@@ -28,6 +30,10 @@ export interface ChatMessage {
   question?: string | null
   choices?: string[]
   at?: string
+  /** アシスタントの発言を作ったときの段階・プロンプトのバージョン・モデル（#44） */
+  phase?: string | null
+  prompt_version?: string | null
+  model?: string | null
 }
 
 export interface JobStep {
@@ -57,6 +63,7 @@ export interface SessionView {
   question?: string | null
   messages: ChatMessage[]
   job?: JobView | null
+  feedback?: FeedbackView[]
 }
 
 /** POST /sessions/{id}/messages の SSE イベント */

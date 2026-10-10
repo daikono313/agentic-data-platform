@@ -50,6 +50,12 @@ class ChatMessage(BaseModel):
     """選択肢つきの質問文。本文とは分けて持ち、画面ではボタンの上に出す。"""
     choices: list[str] = Field(default_factory=list)
     at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    phase: str | None = None
+    """アシスタントの発言を作ったときの段階（フィードバックの集計用。#44）。"""
+    prompt_version: str | None = None
+    """アシスタントの発言を作ったときのプロンプトのバージョン。"""
+    model: str | None = None
+    """アシスタントの発言を作ったモデル。"""
 
 
 class InterviewState(BaseModel):

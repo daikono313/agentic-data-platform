@@ -9,10 +9,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from adp.api.store import Store
+from adp.api.store import FeedbackRow, Store
 from adp.beam import BeamModel, build_event_matrix
+from adp.feedback import FeedbackIn
 from adp.interview import (
     BeamUpdated,
+    ChatMessage,
     ChoicesPresented,
     Interviewer,
     InterviewState,
@@ -20,6 +22,7 @@ from adp.interview import (
     TurnDone,
     new_state,
 )
+from adp.interview.prompts import prompt_version
 from adp.llm import TextDelta, ToolCall
 from adp.pipeline import STEPS, PipelineResult, StepUpdate
 
@@ -67,6 +70,23 @@ class Job:
         }
 
 
+EXCERPT = 2000
+"""フィードバックに残す発言の抜粋の長さ。"""
+
+
+def feedback_view(row: FeedbackRow) -> dict[str, Any]:
+    return {
+        "kind": row.kind,
+        "message_index": row.message_index,
+        "thumb": row.thumb,
+        "score": row.score,
+        "categories": json.loads(row.categories_json),
+        "comment": row.comment,
+        "prompt_version": row.prompt_version,
+        "model": row.model,
+    }
+
+
 class SessionService:
     def __init__(self, store: Store, interviewer: Interviewer, pipeline: PipelineRunner) -> None:
         self.store = store
@@ -108,7 +128,54 @@ class SessionService:
             "messages": [m.model_dump(mode="json") for m in state.messages],
             "job": job,
             "versions": [v.version for v in self.store.versions(session_id)],
+            "feedback": [feedback_view(f) for f in self.store.feedback(session_id)],
         }
+
+    def feedback(self, session_id: str, body: FeedbackIn) -> dict[str, Any]:
+        """発言ごと・セッション全体のフィードバックを保存する（#44）。
+
+        その発言を作ったときの段階・質問・選択肢・プロンプトのバージョン・モデルを一緒に残す。
+        """
+        state = self._state(session_id)
+        assistant = [m for m in state.messages if m.role == "assistant"]
+        message: ChatMessage | None
+        if body.kind == "message":
+            i = body.message_index
+            if i is None or i >= len(state.messages) or state.messages[i].role != "assistant":
+                raise ValueError("その発言はアシスタントの発言ではありません")
+            message = state.messages[i]
+            user = next((m.text for m in reversed(state.messages[:i]) if m.role == "user"), "")
+            phase = message.phase
+        else:
+            message = assistant[-1] if assistant else None
+            user = ""
+            phase = state.phase.value
+        row = FeedbackRow(
+            session_id=session_id,
+            kind=body.kind,
+            message_index=body.message_index,
+            thumb=body.thumb,
+            score=body.score,
+            categories_json=json.dumps(body.categories),
+            comment=body.comment,
+            phase=phase,
+            question=message.question if message and body.kind == "message" else None,
+            choices_json=json.dumps(
+                message.choices if message and body.kind == "message" else [],
+                ensure_ascii=False,
+            ),
+            message_text=(message.text if message and body.kind == "message" else "")[:EXCERPT],
+            user_text=user[:EXCERPT],
+            prompt_version=message.prompt_version if message else prompt_version(),
+            model=message.model if message else None,
+        )
+        # 送られてこなかった分類・コメントは既存の値を残す
+        keep = {
+            column
+            for field, column in (("categories", "categories_json"), ("comment", "comment"))
+            if field not in body.model_fields_set
+        }
+        return feedback_view(self.store.save_feedback(row, keep))
 
     async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
         state = self._state(session_id)
