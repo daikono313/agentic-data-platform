@@ -195,7 +195,8 @@ MVP の段階では手動で計測する。
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38） |
-| POST | `/sessions/{id}/feedback`（v2） | 発言ごとの評価・コメント、セッション全体の評価（#44） |
+| POST | `/sessions/{id}/feedback`（v2） | 発言ごとの評価（👍 / 👎・分類・コメント）、セッション全体の評価（5 段階・コメント）。同じ発言への送り直しは上書き（#44） |
+| GET | `/feedback/categories`（v2） | フィードバックの分類（質問が重複している、専門用語がわからない など） |
 | GET | `/charts/options?job_id=`（v2） | 描画できる指標と切り口。`job_id` を渡すと、その生成 PR の内容（マージ前の worktree）で見る（#43） |
 | POST | `/charts/render?job_id=`（v2） | 指標・切り口・粒度・期間から SVG を描く（#43、ADR 0003） |
 
@@ -242,7 +243,7 @@ MVP の段階では手動で計測する。
 
 - MVP は合成データのみなので個人情報は扱わない。
 - 会話ログは `.adp/app.db` にローカル保存する。保持期限は設けないが、git では追跡しない。
-- （v2）フィードバック（コメント、その時点のプロンプトのバージョン、会話の抜粋）は `.adp/app.db` にだけ保存する。フィードバックから eval のケースを作るときは、会話をそのままコミットせず、合成した内容に書き換えてから公開リポジトリに入れる（実データの会話を入れない）。保持期限は O7。
+- （v2）フィードバック（コメント、その時点のプロンプトのバージョン、会話の抜粋）は `.adp/app.db` にだけ保存する。フィードバックから eval のケースを作るときは、会話をそのままコミットせず、合成した内容に書き換えてから公開リポジトリに入れる（実データの会話を入れない）。保持期限は 180 日（R21）。
 
 ## Legal considerations
 
@@ -262,7 +263,6 @@ MVP の段階では手動で計測する。
 |---|---|---|---|
 | O2 | Agent SDK（CLI 起動）の応答速度が SLO を満たすか | (a) 満たす (b) インタビューだけ Messages API にする | #8 で計測する |
 | O3 | リポジトリのライセンス | MIT / Apache-2.0 / 指定なし | オーナーが判断する |
-| O7 | フィードバックの保持期限と削除の方法 | 期限なし / 一定期間で削除 | #44 で決める |
 | O8 | 描画の応答時間の目標と、MetricFlow の結果のキャッシュ | — | #41 / #43 で計測して SLO に追加する |
 
 ## Resolved issues
@@ -289,6 +289,7 @@ MVP の段階では手動で計測する。
 | R18 | チャートは指標と切り口だけで書き（`warehouse/chart_specs/*.yml`）、MetricFlow が作る SQL（`mf query --explain`、カタログ名は外す）を埋め込んだ dbt Charts のボードを `python -m adp.charts compile` で書き出す。手書きの SQL のボードと古いボードは `make dbt-build` で検出する（O4 を (a) で解決） | [ADR 0002](adr/0002-visualization-dbt-charts.md) |
 | R19 | 生成 PR には既定のチャート（指標ごとに 1 つ）を含め、本文に PNG を載せる。画像は PR のブランチで追加した直後の commit で消し、本文は画像のある commit の URL で参照する（main にバイナリを残さない。squash merge が前提） | #42、[modeling-conventions](modeling-conventions.md) |
 | R20 | 描画画面は MetricFlow（semantic manifest だけを読み、DB に接続しない）と dbt Charts を backend のプロセス内で使い、SVG を `<img>` で表示する。生成ジョブの worktree でマージ前の PR の内容も見られる（O5 を解決） | [ADR 0003](adr/0003-chart-view-in-process.md) |
+| R21 | フィードバックは `.adp/app.db` に、その発言を作ったときの段階・質問・選択肢・プロンプトのバージョン（`interview-v<N>+<内容のハッシュ>`）・モデルと一緒に保存する。保持期限は 180 日で、backend の起動時に古いものを削除する（`ADP_FEEDBACK_RETENTION_DAYS` で変更、0 で無期限）。個別に消すときは app.db から削除する（O7 を解決） | #44 |
 
 ## Alternatives considered
 

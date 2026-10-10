@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from adp.beam import BeamModel, to_yaml
+from adp.feedback import RETENTION_DAYS
 from adp.interview import InterviewState
 
 
@@ -50,12 +51,40 @@ class JobRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class FeedbackRow(SQLModel, table=True):
+    """インタビューへのフィードバック（#44）。保持期限は feedback.RETENTION_DAYS（O7）。"""
+
+    __tablename__ = "feedback"
+    id: int | None = Field(default=None, primary_key=True)
+    session_id: str = Field(index=True)
+    kind: str
+    """message / session"""
+    message_index: int | None = None
+    thumb: str | None = None
+    score: int | None = None
+    categories_json: str = "[]"
+    comment: str = ""
+    phase: str | None = None
+    """その発言を作ったときの段階（session の場合は評価したときの段階）。"""
+    question: str | None = None
+    choices_json: str = "[]"
+    message_text: str = ""
+    """評価した発言（抜粋）。"""
+    user_text: str = ""
+    """その直前のユーザーの発言（抜粋）。"""
+    prompt_version: str | None = None
+    model: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class Store:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, feedback_retention_days: int = RETENTION_DAYS) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(self.engine)
         self._add_missing_columns()
+        self.prune_feedback(feedback_retention_days)
 
     def _add_missing_columns(self) -> None:
         """後から足した列を、既存の DB にも追加する（create_all は既存のテーブルを変えない）。"""
@@ -147,3 +176,46 @@ class Store:
     def job(self, job_id: str) -> JobRow | None:
         with Session(self.engine) as db:
             return db.get(JobRow, job_id)
+
+    # --- feedback（#44） ---
+    def save_feedback(self, row: FeedbackRow) -> FeedbackRow:
+        """同じ発言（セッション全体の評価はセッションごとに 1 つ）への送り直しは上書きする。"""
+        with Session(self.engine) as db:
+            existing = db.exec(
+                select(FeedbackRow).where(
+                    FeedbackRow.session_id == row.session_id,
+                    FeedbackRow.kind == row.kind,
+                    FeedbackRow.message_index == row.message_index
+                    if row.message_index is not None
+                    else FeedbackRow.message_index.is_(None),  # type: ignore[union-attr]
+                )
+            ).first()
+            if existing is not None:
+                data = row.model_dump(exclude={"id", "created_at"})
+                for key, value in data.items():
+                    setattr(existing, key, value)
+                existing.updated_at = _now()
+                row = existing
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return row
+
+    def feedback(self, session_id: str | None = None) -> list[FeedbackRow]:
+        with Session(self.engine) as db:
+            query = select(FeedbackRow)
+            if session_id is not None:
+                query = query.where(FeedbackRow.session_id == session_id)
+            return list(db.exec(query.order_by(FeedbackRow.id)).all())  # type: ignore[arg-type]
+
+    def prune_feedback(self, days: int) -> int:
+        """保持期限（O7）を過ぎたフィードバックを削除する。0 以下なら削除しない。"""
+        if days <= 0:
+            return 0
+        cutoff = _now() - timedelta(days=days)
+        with Session(self.engine) as db:
+            rows = db.exec(select(FeedbackRow).where(FeedbackRow.updated_at < cutoff)).all()
+            for row in rows:
+                db.delete(row)
+            db.commit()
+            return len(rows)

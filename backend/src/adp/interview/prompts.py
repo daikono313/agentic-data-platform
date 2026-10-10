@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from adp.llm.settings import REPO_ROOT
+
+PROMPT_VERSION = "interview-v1"
+"""プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
 
@@ -82,3 +87,9 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 def system_prompt() -> str:
     knowledge = KNOWLEDGE_PATH.read_text(encoding="utf-8") if KNOWLEDGE_PATH.exists() else ""
     return SYSTEM_PROMPT.format(knowledge=knowledge)
+
+
+def prompt_version() -> str:
+    """`<版>+<内容のハッシュ>`。版を上げ忘れても、知識ファイルなどの変更を区別できる。"""
+    digest = hashlib.sha256(system_prompt().encode("utf-8")).hexdigest()[:8]
+    return f"{PROMPT_VERSION}+{digest}"

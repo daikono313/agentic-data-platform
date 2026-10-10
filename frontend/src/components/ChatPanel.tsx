@@ -1,7 +1,9 @@
 import { Send } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { findFeedback, type FeedbackCategories, type FeedbackView } from '@/api/feedback'
 import type { ChatMessage } from '@/api/types'
+import { MessageFeedback, type SendFeedback } from '@/components/Feedback'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -14,9 +16,11 @@ interface Props {
   busy: boolean
   disabled?: boolean
   onSend: (text: string) => void
+  /** 発言ごとのフィードバック（#44）。無ければ評価ボタンを出さない（デモなど） */
+  feedback?: { items?: FeedbackView[]; categories: FeedbackCategories; send: SendFeedback }
 }
 
-export function ChatPanel({ messages, draft, question, choices, busy, disabled, onSend }: Props) {
+export function ChatPanel({ messages, draft, question, choices, busy, disabled, onSend, feedback }: Props) {
   const [text, setText] = useState('')
   const bottom = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -47,6 +51,14 @@ export function ChatPanel({ messages, draft, question, choices, busy, disabled, 
               >
                 {m.text && <p>{m.text}</p>}
                 {showQuestion && <p className="font-medium">{m.question}</p>}
+                {feedback && m.role === 'assistant' && (
+                  <MessageFeedback
+                    index={i}
+                    current={findFeedback(feedback.items, 'message', i)}
+                    categories={feedback.categories}
+                    send={feedback.send}
+                  />
+                )}
               </div>
             </div>
           )

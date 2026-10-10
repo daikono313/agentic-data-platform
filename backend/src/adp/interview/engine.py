@@ -11,7 +11,7 @@ from claude_agent_sdk import SdkMcpTool
 
 from adp.beam import BeamModel, EventMatrix, build_event_matrix
 from adp.interview import tools as beam_tools
-from adp.interview.prompts import system_prompt
+from adp.interview.prompts import prompt_version, system_prompt
 from adp.interview.state import ChatMessage, InterviewState, Phase
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 
@@ -143,7 +143,13 @@ class Interviewer:
             text = "（応答を作れませんでした。もう一度送ってください）"
         # 質問文は本文に混ぜずに別に持つ（画面ではボタンの上に 1 回だけ出す。#36）
         message = ChatMessage(
-            role="assistant", text=text, question=state.question, choices=list(state.choices)
+            role="assistant",
+            text=text,
+            question=state.question,
+            choices=list(state.choices),
+            phase=state.phase.value,
+            prompt_version=prompt_version(),
+            model=result.model,
         )
         state.messages.append(message)
         yield TurnDone(result=result, message=message)
