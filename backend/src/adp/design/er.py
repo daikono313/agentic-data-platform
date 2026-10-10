@@ -14,7 +14,7 @@ _TYPE = {
 
 
 def _label(text: str) -> str:
-    return text.replace('"', "'")
+    return text.replace('"', "'").replace("`", "'").replace("\n", " ")
 
 
 def er_diagram(design: PhysicalDesign) -> str:

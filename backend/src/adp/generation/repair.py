@@ -150,15 +150,23 @@ def weakened_tests(before: dict[str, str], after: dict[str, str] | None) -> list
     return problems
 
 
+def ensure_deps(warehouse: Path, bin_dir: Path) -> CheckResult | None:
+    if (warehouse / "dbt_packages").exists():
+        return None
+    deps = _run([str(bin_dir / "dbt"), "deps"], warehouse)
+    if deps.returncode != 0:
+        return CheckResult(False, "dbt deps が失敗しました", _clean_log(deps.stdout + deps.stderr))
+    return None
+
+
 def verify(warehouse: Path, bin_dir: Path, queries: list[MetricQuery]) -> CheckResult:
     """dbt build → parse → mf validate-configs → 元の要求の mf query。最初の失敗で止める。"""
     dbt, mf = str(bin_dir / "dbt"), str(bin_dir / "mf")
     if python_models(warehouse):
         return CheckResult(False, "Python モデルは使えません", "\n".join(python_models(warehouse)))
-    if not (warehouse / "dbt_packages").exists():
-        deps = _run([dbt, "deps"], warehouse)
-        if deps.returncode != 0:
-            return CheckResult(False, "dbt deps が失敗しました", deps.stdout + deps.stderr)
+    deps = ensure_deps(warehouse, bin_dir)
+    if deps is not None:
+        return deps
     steps: list[tuple[str, list[str]]] = [
         ("dbt build", [dbt, "build"]),
         ("dbt parse", [dbt, "parse"]),
@@ -230,9 +238,12 @@ class Repairer:
         self, warehouse: Path, queries: list[MetricQuery], tasks: list[AgentTask] | None = None
     ) -> RepairResult:
         attempts: list[Attempt] = []
-        baseline = test_inventory(warehouse, self.bin_dir) or {}
+        ensure_deps(warehouse, self.bin_dir)
+        baseline = test_inventory(warehouse, self.bin_dir)
 
         def check() -> CheckResult:
+            if baseline is None:
+                return CheckResult(False, "テストの一覧を取得できませんでした（dbt ls が失敗）")
             result = verify(warehouse, self.bin_dir, queries)
             problems = weakened_tests(baseline, test_inventory(warehouse, self.bin_dir))
             if problems:
