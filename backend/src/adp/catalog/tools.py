@@ -6,15 +6,17 @@ tool の結果に含まれる説明文やサンプル値はソースデータ由
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
+import duckdb
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 from pydantic import BaseModel
 
-from adp.catalog.catalog import Catalog
+from adp.catalog.catalog import Catalog, CatalogUnavailable
 
 SERVER_NAME = "source_catalog"
 
@@ -35,14 +37,29 @@ def _result(payload: BaseModel | Sequence[BaseModel]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}]}
 
 
-def _error(e: Exception) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": f"エラー: {e}"}], "is_error": True}
+def _error(message: str) -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": f"エラー: {message}"}], "is_error": True}
+
+
+async def _call(fn: Callable[[], BaseModel | Sequence[BaseModel]]) -> dict[str, Any]:
+    """DB アクセスはイベントループを止めないようスレッドで実行し、例外は短い文に変える。
+
+    DuckDB の例外メッセージにはソース由来の名前や SQL が含まれうるので、そのまま返さない。
+    """
+    try:
+        return _result(await asyncio.to_thread(fn))
+    except ValueError as e:  # 入力の検証エラー（メッセージは自前で作ったもの）
+        return _error(str(e))
+    except CatalogUnavailable as e:
+        return _error(str(e))
+    except duckdb.Error:
+        return _error("データベースの読み取りに失敗しました。")
 
 
 def build_tools(catalog: Catalog) -> list[SdkMcpTool[Any]]:
     @tool("list_sources", "ソーステーブルの一覧（説明・行数）を返す", {})
     async def list_sources(args: dict[str, Any]) -> dict[str, Any]:
-        return _result(catalog.list_sources())
+        return await _call(catalog.list_sources)
 
     @tool(
         "describe_table",
@@ -50,10 +67,7 @@ def build_tools(catalog: Catalog) -> list[SdkMcpTool[Any]]:
         {"table": str},
     )
     async def describe_table(args: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return _result(catalog.describe_table(args["table"]))
-        except ValueError as e:
-            return _error(e)
+        return await _call(lambda: catalog.describe_table(str(args["table"])))
 
     @tool(
         "profile_column",
@@ -62,10 +76,7 @@ def build_tools(catalog: Catalog) -> list[SdkMcpTool[Any]]:
         {"table": str, "column": str},
     )
     async def profile_column(args: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return _result(catalog.profile_column(args["table"], args["column"]))
-        except ValueError as e:
-            return _error(e)
+        return await _call(lambda: catalog.profile_column(str(args["table"]), str(args["column"])))
 
     @tool(
         "search_columns",
@@ -74,7 +85,7 @@ def build_tools(catalog: Catalog) -> list[SdkMcpTool[Any]]:
         {"query": str},
     )
     async def search_columns(args: dict[str, Any]) -> dict[str, Any]:
-        return _result(catalog.search_columns(args["query"]))
+        return await _call(lambda: catalog.search_columns(str(args["query"])))
 
     return [list_sources, describe_table, profile_column, search_columns]
 
