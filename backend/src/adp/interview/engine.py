@@ -106,6 +106,14 @@ class Interviewer:
                     yield event
                 else:
                     result = event
+        except asyncio.CancelledError:
+            # クライアントの切断など。途中までの応答を残してから中断する
+            state.messages.append(
+                ChatMessage(
+                    role="assistant", text=("".join(reply) + "\n（中断されました）").strip()
+                )
+            )
+            raise
         except Exception as e:  # CLI の異常終了など。会話は続けられるように記録して返す
             result = TurnResult(
                 session_id=None,
@@ -138,6 +146,19 @@ class Interviewer:
         message = ChatMessage(role="assistant", text=text)
         state.messages.append(message)
         yield TurnDone(result=result, message=message)
+
+    def is_busy(self, state: InterviewState) -> bool:
+        lock = self._locks.get(id(state))
+        return lock is not None and lock.locked()
+
+    def reopen(self, state: InterviewState) -> None:
+        """確定を取り消して確認の段階に戻す（修正して確定し直すため）。"""
+        if state.phase != Phase.FINALIZED:
+            raise ValueError("確定していないセッションです")
+        beam = state.beam.model_copy(deep=True)
+        beam.finalized_at = None
+        state.beam = beam
+        state.phase = Phase.REVIEW
 
     def finalize(self, state: InterviewState) -> BeamModel:
         """ユーザーの確定操作。確定条件を満たしていなければ ValueError。"""

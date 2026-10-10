@@ -60,6 +60,9 @@ export const api = {
   async finalize(id: string): Promise<SessionView> {
     return json(await fetch(`${BASE}/sessions/${id}/finalize`, { method: 'POST' }))
   },
+  async reopen(id: string): Promise<SessionView> {
+    return json(await fetch(`${BASE}/sessions/${id}/reopen`, { method: 'POST' }))
+  },
   async *jobEvents(jobId: string): AsyncGenerator<JobEvent> {
     yield* readSSE<JobEvent>(await fetch(`${BASE}/jobs/${jobId}/events`))
   },

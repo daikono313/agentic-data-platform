@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -55,7 +56,10 @@ def create_app(service: SessionService) -> FastAPI:
             except Conflict as e:
                 yield {
                     "event": "done",
-                    "data": f'{{"message": {{"role": "assistant", "text": ""}}, "error": "{e}"}}',
+                    "data": json.dumps(
+                        {"message": {"role": "assistant", "text": ""}, "error": str(e)},
+                        ensure_ascii=False,
+                    ),
                 }
 
         return EventSourceResponse(stream())
@@ -69,8 +73,19 @@ def create_app(service: SessionService) -> FastAPI:
         except Conflict as e:
             raise HTTPException(409, str(e)) from e
 
+    @app.post("/sessions/{session_id}/reopen")
+    async def reopen(session_id: str) -> dict[str, Any]:
+        try:
+            return service.reopen(session_id)
+        except NotFound as e:
+            raise HTTPException(404, str(e)) from e
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from e
+
     @app.get("/jobs/{job_id}/events")
     async def job_events(job_id: str) -> EventSourceResponse:
+        if not service.has_job(job_id):
+            raise HTTPException(404, f"ジョブ {job_id} がありません")
         return EventSourceResponse(service.job_events(job_id))
 
     return app

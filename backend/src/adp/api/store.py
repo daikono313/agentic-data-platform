@@ -113,6 +113,17 @@ class Store:
             db.add(row)
             db.commit()
 
+    def fail_stale_jobs(self) -> int:
+        """前回の起動で実行中のまま終わったジョブを失敗にする（ジョブはメモリ上で動くため）。"""
+        with Session(self.engine) as db:
+            rows = db.exec(select(JobRow).where(JobRow.status == "running")).all()
+            for row in rows:
+                row.status = "failed"
+                row.error = "サーバーの再起動で中断されました。再開して確定し直してください"
+                db.add(row)
+            db.commit()
+            return len(rows)
+
     def latest_job(self, session_id: str) -> JobRow | None:
         with Session(self.engine) as db:
             return db.exec(

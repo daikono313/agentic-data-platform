@@ -73,6 +73,7 @@ class SessionService:
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        store.fail_stale_jobs()
 
     # --- セッション ------------------------------------------------------------------------
 
@@ -109,6 +110,15 @@ class SessionService:
 
     async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
         state = self._state(session_id)
+        try:
+            async for event in self._send(session_id, state, text):
+                yield event
+        finally:  # 切断で中断されても、ここまでの会話と成果物を残す
+            self.store.save_session(session_id, state)
+
+    async def _send(
+        self, session_id: str, state: InterviewState, text: str
+    ) -> AsyncIterator[SSEEvent]:
         try:
             async for event in self.interviewer.send(state, text):
                 if isinstance(event, TextDelta):
@@ -147,6 +157,8 @@ class SessionService:
         state = self._state(session_id)
         if state.phase.value == "finalized":
             raise Conflict("確定済みのセッションです")
+        if self.interviewer.is_busy(state):
+            raise Conflict("応答の途中です。応答が終わってから確定してください")
         running = self._job_view(session_id)
         if running and running["status"] == "running":
             raise Conflict("生成ジョブを実行中です")
@@ -163,6 +175,22 @@ class SessionService:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return self.view(session_id)
+
+    def reopen(self, session_id: str) -> dict[str, Any]:
+        """確定を取り消して修正できるようにする。生成ジョブの実行中はできない。"""
+        state = self._state(session_id)
+        running = self._job_view(session_id)
+        if running and running["status"] == "running":
+            raise Conflict("生成ジョブを実行中です")
+        try:
+            self.interviewer.reopen(state)
+        except ValueError as e:
+            raise Conflict(str(e)) from e
+        self.store.save_session(session_id, state)
+        return self.view(session_id)
+
+    def has_job(self, job_id: str) -> bool:
+        return job_id in self._jobs or self.store.job(job_id) is not None
 
     async def _run_job(self, job: Job, beam: BeamModel) -> None:
         def on_step(update: StepUpdate) -> None:
@@ -182,10 +210,14 @@ class SessionService:
             job.pr_url, job.error = result.pr_url, result.error
         except Exception as e:
             job.status, job.error = "failed", str(e)
-        self.store.save_job(job.id, job.session_id, job.status, job.steps, job.pr_url, job.error)
-        self._publish(job, _sse("done", job.view()))
-        for q in job.subscribers:
-            q.put_nowait(None)
+        try:
+            self.store.save_job(
+                job.id, job.session_id, job.status, job.steps, job.pr_url, job.error
+            )
+        finally:
+            self._publish(job, _sse("done", job.view()))
+            for q in job.subscribers:
+                q.put_nowait(None)
 
     def _publish(self, job: Job, event: SSEEvent) -> None:
         for q in job.subscribers:
@@ -212,7 +244,16 @@ class SessionService:
             row = self.store.job(job_id)
             if row is None:
                 raise NotFound(f"ジョブ {job_id} がありません")
-            yield _sse("done", self._job_view(row.session_id))
+            yield _sse(
+                "done",
+                {
+                    "id": row.id,
+                    "status": row.status,
+                    "steps": json.loads(row.steps_json),
+                    "pr_url": row.pr_url,
+                    "error": row.error,
+                },
+            )
             return
         for step in job.steps:
             yield _sse("step", step)

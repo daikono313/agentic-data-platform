@@ -13,27 +13,30 @@ import { Input } from '@/components/ui/input'
 import demo from '@/demo/sales_by_store.json'
 import type { BeamModel, EventMatrix } from '@/generated/beam'
 
-interface State {
+export interface State {
   session: SessionView | null
   draft: string
   busy: boolean
   error: string | null
 }
 
-type Action =
+export type Action =
   | { type: 'session'; session: SessionView }
   | { type: 'user'; text: string }
   | { type: 'event'; event: InterviewEvent }
   | { type: 'job'; job: JobView }
   | { type: 'error'; error: string }
+  | { type: 'idle' }
 
-function reducer(state: State, action: Action): State {
+export function reducer(state: State, action: Action): State {
   const s = state.session
   switch (action.type) {
     case 'session':
       return { ...state, session: action.session, error: null }
     case 'error':
       return { ...state, busy: false, error: action.error }
+    case 'idle':
+      return state.busy ? { ...state, busy: false, draft: '' } : state
     case 'job':
       return s ? { ...state, session: { ...s, job: action.job } } : state
     case 'user':
@@ -101,6 +104,9 @@ export default function App() {
         for await (const event of api.send(id, text)) dispatch({ type: 'event', event })
       } catch (e) {
         dispatch({ type: 'error', error: String(e) })
+      } finally {
+        // done が届かずにストリームが終わっても、入力できる状態に戻す
+        dispatch({ type: 'idle' })
       }
     },
     [],
@@ -117,22 +123,37 @@ export default function App() {
     }
   }
 
+  const followJob = useCallback(async (initial: JobView) => {
+    let job = initial
+    for await (const ev of api.jobEvents(job.id)) {
+      if (ev.event === 'step') {
+        const step = ev.data
+        job = { ...job, steps: job.steps.map((x) => (x.step === step.step ? step : x)) }
+      } else {
+        job = ev.data
+      }
+      dispatch({ type: 'job', job })
+    }
+    if (job.status === 'running') {
+      dispatch({ type: 'job', job: { ...job, status: 'failed', error: '進捗の受信が途切れました。再読み込みしてください' } })
+    }
+  }, [])
+
   const finalize = async () => {
     if (!session) return
     try {
       const s = await api.finalize(session.id)
       dispatch({ type: 'session', session: s })
-      let job: JobView | null | undefined = s.job
-      if (!job) return
-      for await (const ev of api.jobEvents(job.id)) {
-        if (ev.event === 'step') {
-          const step = ev.data
-          job = { ...job, steps: job.steps.map((x) => (x.step === step.step ? step : x)) }
-        } else {
-          job = ev.data
-        }
-        dispatch({ type: 'job', job })
-      }
+      if (s.job) await followJob(s.job)
+    } catch (e) {
+      dispatch({ type: 'error', error: String(e) })
+    }
+  }
+
+  const reopen = async () => {
+    if (!session) return
+    try {
+      dispatch({ type: 'session', session: { ...(await api.reopen(session.id)), job: null } })
     } catch (e) {
       dispatch({ type: 'error', error: String(e) })
     }
@@ -140,14 +161,27 @@ export default function App() {
 
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('session')
-    if (id && !isDemo) api.getSession(id).then((s) => dispatch({ type: 'session', session: s })).catch(() => undefined)
-  }, [isDemo])
+    if (!id || isDemo) return
+    api
+      .getSession(id)
+      .then((s) => {
+        dispatch({ type: 'session', session: s })
+        // 生成ジョブの実行中に再読み込みした場合は、進捗の受信を再開する
+        if (s.job?.status === 'running') followJob(s.job).catch((e) => dispatch({ type: 'error', error: String(e) }))
+      })
+      .catch((e) => {
+        window.history.replaceState(null, '', '/')
+        dispatch({ type: 'error', error: `セッションを読み込めませんでした: ${String(e)}` })
+      })
+  }, [isDemo, followJob])
 
   if (!session) return <StartScreen onStart={start} error={state.error} />
 
   const event = session.beam.events?.[0]
   const finalized = session.phase === 'finalized'
-  const canFinalize = !finalized && session.issues.length === 0 && (session.beam.events?.length ?? 0) > 0
+  const canFinalize =
+    !finalized && !state.busy && session.issues.length === 0 && (session.beam.events?.length ?? 0) > 0
+  const jobRunning = session.job?.status === 'running'
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -189,7 +223,14 @@ export default function App() {
             </CardHeader>
             <CardContent className="space-y-3 px-4">
               {session.job ? (
-                <JobProgress job={session.job} />
+                <>
+                  <JobProgress job={session.job} />
+                  {!jobRunning && !isDemo && (
+                    <Button variant="outline" size="sm" onClick={reopen}>
+                      修正して確定し直す
+                    </Button>
+                  )}
+                </>
               ) : (
                 <>
                   {session.issues.length > 0 && (

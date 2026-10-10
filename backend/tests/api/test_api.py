@@ -109,3 +109,70 @@ def test_errors(setup) -> None:  # type: ignore[no-untyped-def]
     res = client.post(f"/sessions/{sid}/finalize")
     assert res.status_code == 409 and "確定できません" in res.json()["detail"]
     assert client.post("/sessions", json={"request": ""}).status_code == 422
+
+
+def test_reopen_and_refinalize_creates_new_version(setup) -> None:  # type: ignore[no-untyped-def]
+    client, store, calls, _ = setup
+    sid = client.post("/sessions", json={"request": "店舗ごとの売上を見たい"}).json()["id"]
+    client.post(f"/sessions/{sid}/messages", json={"text": "a"})
+    client.post(f"/sessions/{sid}/messages", json={"text": "b"})
+    first = client.post(f"/sessions/{sid}/finalize").json()
+    parse_sse(client.get(f"/jobs/{first['job']['id']}/events").text)
+    reopened = client.post(f"/sessions/{sid}/reopen").json()
+    assert reopened["phase"] == "review" and reopened["beam"]["finalized_at"] is None
+    second = client.post(f"/sessions/{sid}/finalize").json()
+    assert second["versions"] == [1, 2]
+    assert client.post("/sessions/nope/reopen").status_code == 404
+
+
+def test_unknown_job_is_404(setup) -> None:  # type: ignore[no-untyped-def]
+    client, *_ = setup
+    assert client.get("/jobs/nope/events").status_code == 404
+
+
+def test_stale_running_jobs_are_failed_on_startup(tmp_path: Path) -> None:
+    store = Store(tmp_path / "app.db")
+    store.save_job("j1", "s1", "running", [])
+    from adp.api.service import SessionService
+
+    SessionService(store, Interviewer(ScriptedRunner([]), LLMSettings()), None)  # type: ignore[arg-type]
+    row = store.job("j1")
+    assert row is not None and row.status == "failed" and "再起動" in (row.error or "")
+
+
+async def test_finalize_is_rejected_while_turn_is_running(tmp_path: Path) -> None:
+    import asyncio
+
+    from adp.api.service import Conflict, SessionService
+
+    gate = asyncio.Event()
+
+    class SlowRunner:
+        async def run(self, prompt, spec, resume=None):  # type: ignore[no-untyped-def]
+            await gate.wait()
+            from adp.llm import TurnResult
+
+            yield TurnResult("s", "m", False, 0.0, 0.0)
+
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        return PipelineResult(ok=True)
+
+    service = SessionService(
+        Store(tmp_path / "a.db"), Interviewer(SlowRunner(), LLMSettings()), pipeline
+    )
+    sid = service.create("売上")
+    state = service._state(sid)
+    state.beam = load(FIXTURE)
+    stream = service.send(sid, "x")
+
+    async def first() -> object:
+        return await anext(stream)
+
+    task = asyncio.create_task(first())
+    await asyncio.sleep(0.05)
+    with pytest.raises(Conflict, match="応答の途中"):
+        service.finalize(sid)
+    gate.set()
+    await task
+    async for _ in stream:
+        pass
