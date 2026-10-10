@@ -9,34 +9,24 @@ permissions:
   contents: read
 
 jobs:
-  backend:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.11.2"
-      - run: uv python install 3.12
-      - run: cd backend && uv sync --locked
-      - run: ./scripts/check_secrets.sh
-      - run: cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
-      - run: cd backend && uv run pytest
-      - name: dbt build
-        run: make dbt-build
-
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: cd frontend && pnpm install --frozen-lockfile
-      - run: cd frontend && pnpm lint && pnpm typecheck
-      - run: cd frontend && pnpm test
+      - run: uv python install 3.12
+      - run: make setup
+      - run: make lint
+      - run: make test
+      - run: make dbt-build
       - run: cd frontend && pnpm build

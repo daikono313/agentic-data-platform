@@ -1,16 +1,15 @@
 .PHONY: setup lint test dbt-build dev dev-backend dev-frontend check-secrets
 
-UV := uv run --project backend
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
 
 setup:
-	cd backend && uv sync
-	cd frontend && pnpm install
+	cd backend && uv sync --locked
+	cd frontend && pnpm install --frozen-lockfile
 	$(DBT) deps
 
 lint: check-secrets
-	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
+	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy src tests
 	cd frontend && pnpm lint && pnpm typecheck
 
 test:
@@ -18,10 +17,11 @@ test:
 	cd frontend && pnpm test
 
 dbt-build:
+	mkdir -p warehouse/data
 	$(DBT) deps
 	$(DBT) build
 	$(DBT) parse
-	@if grep -rqs 'semantic_model:' warehouse/models; then $(MF) validate-configs; else echo 'mf validate-configs: semantic model が無いためスキップ'; fi
+	@if grep -rqsE 'semantic_models?:' warehouse/models; then $(MF) validate-configs; else echo 'mf validate-configs: semantic model が無いためスキップ'; fi
 
 dev-backend:
 	cd backend && uv run uvicorn adp.api.app:app --reload --port 8000
