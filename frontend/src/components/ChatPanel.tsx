@@ -33,18 +33,24 @@ export function ChatPanel({ messages, draft, question, choices, busy, disabled, 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" role="log" aria-label="会話">
-        {messages.map((m, i) => (
-          <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-            <p
-              className={cn(
-                'max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm',
-                m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted',
-              )}
-            >
-              {m.text}
-            </p>
-          </div>
-        ))}
+        {messages.map((m, i) => {
+          // 今出ている選択肢の質問はボタンの上にだけ出し、吹き出しには出さない（二重表示を防ぐ）
+          const activeQuestion = i === messages.length - 1 && !busy && choices.length > 0
+          const showQuestion = m.role === 'assistant' && m.question && !activeQuestion
+          return (
+            <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+              <div
+                className={cn(
+                  'max-w-[85%] space-y-2 whitespace-pre-wrap rounded-lg px-3 py-2 text-sm',
+                  m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted',
+                )}
+              >
+                {m.text && <p>{m.text}</p>}
+                {showQuestion && <p className="font-medium">{m.question}</p>}
+              </div>
+            </div>
+          )
+        })}
         {busy && (
           <div className="flex justify-start">
             <p className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-muted px-3 py-2 text-sm">

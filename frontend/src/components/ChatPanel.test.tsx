@@ -1,0 +1,36 @@
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+
+import { ChatPanel } from './ChatPanel'
+
+const base = { draft: '', busy: false, onSend: () => undefined }
+
+describe('ChatPanel', () => {
+  it('今出ている質問は、ボタンの上にだけ 1 回表示する', () => {
+    render(
+      <ChatPanel
+        {...base}
+        messages={[{ role: 'assistant', text: '支払方法は4種類です。', question: '支払方法別に見たいですか？' }]}
+        question="支払方法別に見たいですか？"
+        choices={['見たい', '見ない']}
+      />,
+    )
+    expect(screen.getAllByText('支払方法別に見たいですか？')).toHaveLength(1)
+    expect(screen.getByText('支払方法は4種類です。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '見たい' })).toBeInTheDocument()
+  })
+
+  it('過去の質問は吹き出しの中に表示する', () => {
+    render(
+      <ChatPanel
+        {...base}
+        messages={[
+          { role: 'assistant', text: '前置き', question: '前の質問？' },
+          { role: 'user', text: '見たい' },
+        ]}
+        choices={[]}
+      />,
+    )
+    expect(screen.getAllByText('前の質問？')).toHaveLength(1)
+  })
+})

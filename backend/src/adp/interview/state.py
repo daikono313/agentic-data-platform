@@ -46,6 +46,9 @@ class ChatMessage(BaseModel):
     role: str
     """user / assistant"""
     text: str
+    question: str | None = None
+    """選択肢つきの質問文。本文とは分けて持ち、画面ではボタンの上に出す。"""
+    choices: list[str] = Field(default_factory=list)
     at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

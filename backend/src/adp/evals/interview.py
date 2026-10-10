@@ -136,6 +136,22 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
     return CheckResult(label, passed, detail)
 
 
+_POSITION_WORDS = ("上の選択肢", "下の選択肢", "上のボタン", "下のボタン", "ボタンから選")
+
+
+def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
+    """会話の質のチェック（#36）。"""
+    assistant = [m for m in messages if m.role == "assistant"]
+    position = [m.text[:60] for m in assistant if any(w in m.text for w in _POSITION_WORDS)]
+    repeated = [
+        m.text[:60] for m in assistant if m.question and m.question.strip() and m.question in m.text
+    ]
+    return [
+        CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
+        CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
+    ]
+
+
 class SimulatedUser:
     def __init__(self, runner: AgentRunner, settings: LLMSettings, persona: str) -> None:
         self.runner = runner
@@ -194,6 +210,9 @@ async def run_scenario(
                 if event.result.is_error:
                     error = event.result.error
         log(f"[{scenario.name}] agent ({state.phase}): {reply}")
+        # 画面と同じく、ユーザー役には本文の後ろに質問文が見える
+        if state.messages and state.messages[-1].question:
+            reply = f"{reply}\n\n{state.messages[-1].question}".strip()
         if error:
             break
         if state.phase == Phase.REVIEW and not state.beam.finalize_issues():
@@ -207,6 +226,7 @@ async def run_scenario(
         message = await user.reply(reply, choices)
 
     checks = [_check(state.beam, c) for c in scenario.checks]
+    checks += _transcript_checks(state.messages)
     return EvalResult(
         scenario=scenario.name,
         passed=error is None and all(c.passed for c in checks),
