@@ -160,3 +160,100 @@ def test_with_real_catalog(beam: BeamModel, tmp_path: Path) -> None:
     design = DesignBuilder(CatalogSchema(Catalog(db))).build(beam)
     assert design.blockers == []
     assert [j.right.model for j in design.facts[0].joins] == ["stg_orders"]
+
+
+def test_order_status_is_available_for_filters(design: PhysicalDesign) -> None:
+    cols = {c.name: c for c in design.facts[0].columns}
+    assert cols["order_status"].expr == "t1.order_status"
+
+
+class MultiPath(FakeSchema):
+    COLUMNS = {
+        **FakeSchema.COLUMNS,
+        "raw.customers": [*FakeSchema.COLUMNS["raw.customers"], "region_id"],
+        "raw.stores": [*FakeSchema.COLUMNS["raw.stores"], "region_id"],
+        "raw.regions": ["region_id", "region_name"],
+    }
+    FKS = {
+        **FakeSchema.FKS,
+        "raw.customers": [ForeignKey("region_id", "raw.regions", "region_id")],
+        "raw.stores": [ForeignKey("region_id", "raw.regions", "region_id")],
+    }
+
+
+def test_ambiguous_join_path_is_a_blocker(beam: BeamModel) -> None:
+    from adp.beam import DegenerateDimension, SourceRef
+
+    beam.events[0].degenerate_dimensions.append(
+        DegenerateDimension(
+            name="region_name",
+            label="地域",
+            source=SourceRef(table="raw.regions", column="region_name"),
+        )
+    )
+    design = DesignBuilder(MultiPath()).build(beam)
+    assert any("経路が複数" in i.message for i in design.blockers)
+
+
+def test_expr_qualification_edge_cases() -> None:
+    from adp.beam import SourceRef
+    from adp.design.builder import JoinError, _Sources
+
+    src = _Sources("raw.orders", FakeSchema())
+    assert (
+        src.expr(
+            SourceRef(table="raw.orders", expr="case when order_status = 'order_status' then 1 end")
+        )
+        == "case when t0.order_status = 'order_status' then 1 end"
+    )
+    assert src.expr(SourceRef(table="raw.orders", expr="cast(ordered_at as date)")) == (
+        "cast(t0.ordered_at as date)"
+    )
+    src.alias("raw.customers")
+    with pytest.raises(JoinError, match="以外の列"):
+        src.expr(SourceRef(table="raw.orders", expr="order_id + membership_rank"))
+
+
+def test_dim_key_with_quotes() -> None:
+    from adp.design.builder import dim_key_expr
+
+    assert dim_key_expr("coalesce(t0.store_id, 'web')") == (
+        "{{ dim_key(\"coalesce(t0.store_id, 'web')\") }}"
+    )
+
+
+def test_base_table_is_the_finest_regardless_of_order(beam: BeamModel) -> None:
+    from adp.beam import DegenerateDimension, SourceRef
+
+    event = beam.events[0]
+    event.degenerate_dimensions = [
+        DegenerateDimension(
+            name="order_id",
+            label="注文番号",
+            source=SourceRef(table="raw.orders", column="order_id"),
+        ),
+        *[d for d in event.degenerate_dimensions if d.name != "order_id"],
+    ]
+    event.grain_keys = ["order_id", "order_line_id"]
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert design.blockers == []
+    assert design.facts[0].base.table == "raw.order_items"
+
+
+def test_duplicate_columns_and_periodic_snapshot_are_blockers(beam: BeamModel) -> None:
+    from adp.beam import StoryType
+
+    event = beam.events[0]
+    event.measures[0] = event.measures[0].model_copy(update={"name": "order_id"})
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("order_id が重複" in i.message for i in design.blockers)
+
+    event.story_type = StoryType.RECURRING
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("定期スナップショット" in i.message for i in design.blockers)
+
+
+def test_metric_group_by_must_exist_in_design(beam: BeamModel) -> None:
+    beam.metrics[0].group_by = ["customer.annual_income"]
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("customer.annual_income" in (i.ref or "") for i in design.blockers)

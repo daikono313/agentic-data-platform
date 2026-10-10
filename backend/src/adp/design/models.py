@@ -36,7 +36,10 @@ class SourceTable(BaseModel):
 
 
 class Join(BaseModel):
-    """多対一の結合。`left.left_column = right.right_column`。"""
+    """多対一の結合。`left.left_column = right.right_column`。
+
+    常に LEFT JOIN で生成する（外部キーが NULL の行や、参照先が無い行を落とさないため）。
+    """
 
     left_alias: str
     left_column: str

@@ -161,6 +161,7 @@ def test_conformance_and_matrix(model: BeamModel) -> None:
         "date": True,
         "store": False,
         "promotion": False,
+        "order_status": False,
         "payment_method": False,
     }
     assert matrix.rows[1].dimensions == {
