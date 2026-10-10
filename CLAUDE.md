@@ -23,14 +23,12 @@
 
 ## コマンド
 
-（#2 で `Makefile` を用意する。それまでは各ディレクトリで直接実行する）
-
 ```
-make setup      # uv sync / pnpm install / dbt deps / サンプルデータ生成
+make setup      # uv sync / pnpm install / dbt deps（前提: uv, pnpm@9, Python 3.12）
 make lint       # ruff, mypy, eslint, tsc
 make test       # pytest, vitest
-make dbt-build  # dbt build + dbt parse + mf validate-configs
-make eval       # インタビュー / 生成の eval
+make dbt-build  # dbt build + dbt parse + mf validate-configs（dbt/mf は backend/.venv のものを使う）
+make eval       # インタビュー / 生成の eval（#8 で追加）
 make dev        # backend と frontend を起動
 ```
 

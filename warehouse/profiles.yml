@@ -1,0 +1,7 @@
+adp:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('ADP_DUCKDB_PATH', 'data/dev.duckdb') }}"
+      threads: 4
