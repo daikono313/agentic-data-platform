@@ -11,22 +11,19 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 
-
-def _snake(v: str) -> str:
-    if not SNAKE_CASE.match(v):
-        raise ValueError(f"snake_case の英小文字で指定してください: {v!r}")
-    return v
-
-
-Identifier = Annotated[str, AfterValidator(_snake)]
+Identifier = Annotated[str, StringConstraints(pattern=SNAKE_CASE.pattern)]
+"""snake_case の英小文字。JSON Schema にも pattern として出る。"""
 
 
 class _Base(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    # validate_assignment は使わない。フィールド代入やリストの直接編集は検証されないので、
+    # 編集は「コピー → 編集 → BeamModel.model_validate で再検証 → 差し替え」で行う。
+    # finalize_issues() も最初に再検証する。
+    model_config = ConfigDict(extra="forbid")
 
 
 class W(StrEnum):
@@ -123,8 +120,20 @@ class Measure(_Base):
     aggregation: Aggregation = Aggregation.SUM
     additivity: Additivity = Additivity.ADDITIVE
     unit: str | None = Field(default=None, description="単位（円、個 など）")
+    non_additive_dimension: Identifier | None = Field(
+        default=None,
+        description="semi_additive のとき、足し上げできない When の ref（例: 残高の date）",
+    )
     source: SourceRef | None = None
     availability: Availability = Availability.UNKNOWN
+
+
+class DegenerateDimension(_Base):
+    """dim テーブルを持たない、fct に直接置く識別子（例: 注文番号）。"""
+
+    name: Identifier
+    label: str
+    source: SourceRef
 
 
 class Attribute(_Base):
@@ -156,7 +165,15 @@ class Dimension(_Base):
         default_factory=list, description="粗い→細かいの順の属性名（例: region, prefecture）"
     )
     time_grain: TimeGrain | None = Field(default=None, description="When の最小粒度")
-    business_key: SourceRef | None = Field(default=None, description="ソース上の自然キー")
+    business_key: SourceRef | None = Field(
+        default=None,
+        description="ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）",
+    )
+    fact_key: SourceRef | None = Field(
+        default=None,
+        description="イベント側のソースで、このディメンションを指すカラム"
+        "（例: raw.orders.customer_id、When なら raw.orders.ordered_at）。役割ごとに異なる",
+    )
 
     @property
     def ref(self) -> str:
@@ -164,6 +181,8 @@ class Dimension(_Base):
 
     @model_validator(mode="after")
     def _check(self) -> Dimension:
+        if self.time_grain is not None and self.w != W.WHEN:
+            raise ValueError(f"{self.name}: time_grain は When のディメンションにだけ指定できます")
         names = [a.name for a in self.attributes]
         if len(names) != len(set(names)):
             raise ValueError(f"{self.name}: 属性名が重複しています")
@@ -176,8 +195,9 @@ class Dimension(_Base):
 class EventExample(_Base):
     """インタビューで集めた具体例（event story）。unit test の期待値になる。"""
 
-    values: dict[str, str | int | float | None] = Field(
-        description="キーは `<dimension ref>.<attribute>` または measure 名"
+    values: dict[str, str | int | float | bool | None] = Field(
+        description="キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、"
+        "または When の dimension ref（値は日付・日時の文字列）"
     )
 
 
@@ -191,11 +211,17 @@ class BusinessEvent(_Base):
     object: str = Field(description="What（目的語）")
     story_type: StoryType = StoryType.DISCRETE
     grain: str | None = Field(default=None, description="1 行が何を表すか（日本語）")
-    grain_keys: list[str] = Field(
-        default_factory=list, description="粒度を一意にするキー（dimension ref またはソースカラム）"
+    grain_keys: list[Identifier] = Field(
+        default_factory=list,
+        description="粒度を一意にするキー。縮退ディメンション名または dimension ref",
     )
     measures: list[Measure] = Field(default_factory=list)
     dimensions: list[Dimension] = Field(default_factory=list)
+    degenerate_dimensions: list[DegenerateDimension] = Field(default_factory=list)
+    agg_time_dimension: Identifier | None = Field(
+        default=None,
+        description="指標を時間で集計するときの When の ref。When が複数あるときは必須",
+    )
     examples: list[EventExample] = Field(default_factory=list)
     priority: Level | None = None
     impact: Level | None = None
@@ -212,11 +238,28 @@ class BusinessEvent(_Base):
     def measure(self, name: str) -> Measure | None:
         return next((m for m in self.measures if m.name == name), None)
 
+    def degenerate(self, name: str) -> DegenerateDimension | None:
+        return next((d for d in self.degenerate_dimensions if d.name == name), None)
+
+    @property
+    def time_dimension(self) -> Dimension | None:
+        """指標の時間軸に使う When のディメンション。"""
+        if self.agg_time_dimension:
+            return self.dimension(self.agg_time_dimension)
+        when = [d for d in self.dimensions if d.w == W.WHEN]
+        return when[0] if len(when) == 1 else None
+
     @model_validator(mode="after")
     def _unique(self) -> BusinessEvent:
         for kind, names in (
             ("measure", [m.name for m in self.measures]),
-            ("dimension", [d.ref for d in self.dimensions]),
+            # measure・dimension・縮退ディメンションは同じ名前空間（具体例のキーで区別するため）
+            (
+                "名前",
+                [m.name for m in self.measures]
+                + [d.ref for d in self.dimensions]
+                + [d.name for d in self.degenerate_dimensions],
+            ),
         ):
             if len(names) != len(set(names)):
                 raise ValueError(f"{self.name}: {kind} が重複しています")
@@ -248,9 +291,20 @@ class MetricRequest(_Base):
     measure: Identifier | None = Field(default=None, description="simple / cumulative のとき")
     numerator: Identifier | None = Field(default=None, description="ratio のとき（metric 名）")
     denominator: Identifier | None = Field(default=None, description="ratio のとき（metric 名）")
-    expr: str | None = Field(default=None, description="derived のとき")
+    expr: str | None = Field(
+        default=None, description="derived のとき。他の metric 名を使った四則演算のみ"
+    )
+    window: str | None = Field(
+        default=None, description="cumulative のとき（例: '7 days'）。無ければ全期間の累計"
+    )
+    filter: str | None = Field(
+        default=None,
+        description="絞り込み条件（例: `store.channel = 'store'`）。日本語の説明でもよい",
+    )
     group_by: list[str] = Field(
-        default_factory=list, description="`<dimension ref>.<attribute>` の一覧"
+        default_factory=list,
+        description="`<dimension ref>.<attribute>`、縮退ディメンション名、または時間軸 "
+        "`<When ref>.<day|week|month|quarter|year>` の一覧",
     )
     status: MetricStatus = MetricStatus.DRAFT
 
@@ -259,6 +313,8 @@ class GapKind(StrEnum):
     DATA_UNAVAILABLE = "data_unavailable"
     UNANSWERED = "unanswered"
     CONFLICT = "conflict"
+    DEFERRED = "deferred"
+    """ユーザーが回答を後回しにしたもの。確定は妨げず、PR に未解決事項として書く。"""
 
 
 class Gap(_Base):
@@ -297,7 +353,10 @@ class BeamModel(_Base):
         return self
 
     def finalize_issues(self) -> list[str]:
-        """確定前に満たすべき条件のうち、満たしていないものを返す。空なら確定できる。"""
+        """満たしていない確定条件を返す。空なら確定できる。
+
+        最初に全体を再検証するので、直接編集で壊れた状態（重複など）も検出する。
+        """
         from adp.beam.validation import finalize_issues
 
         return finalize_issues(self)

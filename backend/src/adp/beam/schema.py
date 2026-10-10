@@ -18,7 +18,7 @@ from adp.beam.models import BeamModel
 
 def json_schema() -> dict[str, Any]:
     _, schema = models_json_schema(
-        [(BeamModel, "validation"), (EventMatrix, "validation")], title="BEAM"
+        [(BeamModel, "serialization"), (EventMatrix, "serialization")], title="BEAM"
     )
     return schema
 

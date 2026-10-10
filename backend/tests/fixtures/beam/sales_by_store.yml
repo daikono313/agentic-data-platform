@@ -11,6 +11,13 @@ events:
     story_type: discrete
     grain: 注文明細 1 行（1 注文の中の 1 商品）
     grain_keys: [order_line_id]
+    degenerate_dimensions:
+      - name: order_line_id
+        label: 注文明細番号
+        source: {table: raw.order_items, column: order_item_id}
+      - name: order_id
+        label: 注文番号
+        source: {table: raw.orders, column: order_id}
     source_tables: [raw.orders, raw.order_items]
     priority: high
     impact: high
@@ -45,6 +52,7 @@ events:
         name: customer
         label: 顧客
         business_key: {table: raw.customers, column: customer_id}
+        fact_key: {table: raw.orders, column: customer_id}
         hierarchy: [region, prefecture]
         attributes:
           - name: membership_rank
@@ -70,6 +78,7 @@ events:
         name: product
         label: 商品
         business_key: {table: raw.products, column: product_id}
+        fact_key: {table: raw.order_items, column: product_id}
         hierarchy: [category, subcategory]
         attributes:
           - name: category
@@ -86,11 +95,12 @@ events:
         name: date
         label: 注文日
         time_grain: day
-        business_key: {table: raw.orders, expr: "cast(ordered_at as date)"}
+        fact_key: {table: raw.orders, column: ordered_at}
       - w: where
         name: store
         label: 店舗
         business_key: {table: raw.stores, column: store_id}
+        fact_key: {table: raw.orders, column: store_id}
         attributes:
           - name: store_name
             label: 店舗名
@@ -106,6 +116,7 @@ events:
         name: promotion
         label: プロモーション
         business_key: {table: raw.promotions, column: promotion_id}
+        fact_key: {table: raw.orders, column: promotion_id}
         attributes:
           - name: promotion_name
             label: プロモーション名
@@ -116,6 +127,7 @@ events:
         name: payment_method
         label: 支払方法
         business_key: {table: raw.orders, column: payment_method}
+        fact_key: {table: raw.orders, column: payment_method}
         attributes:
           - name: payment_method_name
             label: 支払方法
@@ -124,6 +136,7 @@ events:
             availability: available
     examples:
       - values:
+          order_line_id: 1
           customer.membership_rank: gold
           product.category: 食品
           date: "2024-03-01"
@@ -138,7 +151,7 @@ metrics:
     type: simple
     event: customer_orders_product
     measure: sales_amount
-    group_by: [store.store_name, store.channel]
+    group_by: [date.day, store.store_name, store.channel]
     status: confirmed
 gaps:
   - kind: data_unavailable

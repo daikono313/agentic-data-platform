@@ -138,7 +138,7 @@ def test_metric_references(model: BeamModel) -> None:
     assert any("gross_margin はデータなし" in i for i in issues)
     assert any("customer.annual_income はデータなし" in i for i in issues)
     assert any("store.nope" in i for i in issues)
-    assert any("missing が metric に存在しません" in i for i in issues)
+    assert any("missing が他の metric に存在しません" in i for i in issues)
 
 
 def test_conformance_and_matrix(model: BeamModel) -> None:
@@ -181,3 +181,122 @@ def test_json_schema_exports() -> None:
 def test_example_keys_must_resolve(model: BeamModel) -> None:
     model.events[0].examples[0].values["store.unknown"] = "x"
     assert any("store.unknown" in i for i in model.finalize_issues())
+
+
+def test_direct_edit_breaking_structure_is_caught(model: BeamModel) -> None:
+    # リストの直接編集は検証されないが、確定時の再検証で検出する
+    event = model.events[0]
+    event.measures.append(event.measures[0].model_copy())
+    issues = model.finalize_issues()
+    assert issues and all(i.startswith("構造エラー") for i in issues)
+    with pytest.raises(ValueError):
+        model.finalize()
+
+
+def test_time_group_by(model: BeamModel) -> None:
+    metric = model.metrics[0]
+    for ok in (["date"], ["date.month"], ["order_id"]):
+        metric.group_by = ok
+        assert model.finalize_issues() == [], ok
+    metric.group_by = ["date.hour"]
+    assert any("date.hour" in i for i in model.finalize_issues())
+
+
+def test_role_playing_needs_distinct_fact_keys(model: BeamModel) -> None:
+    event = model.events[0]
+    customer = event.dimensions[0]
+    ship_to = customer.model_copy(update={"role": "ship_to", "label": "配送先顧客"})
+    event.dimensions.append(ship_to)
+    model.gaps.append(
+        Gap(kind=GapKind.DATA_UNAVAILABLE, description="x", related="ship_to.annual_income")
+    )
+    assert any("fact_key が同じ" in i for i in model.finalize_issues())
+    ship_to.fact_key = SourceRef(table="raw.shipments", column="customer_id")
+    assert model.finalize_issues() == []
+
+
+def test_grain_keys_must_resolve(model: BeamModel) -> None:
+    model.events[0].grain_keys = ["typo_col"]
+    assert any("typo_col" in i for i in model.finalize_issues())
+
+
+def test_multiple_when_requires_agg_time_dimension(model: BeamModel) -> None:
+    event = model.events[0]
+    date = event.dimensions[2]
+    event.dimensions.append(
+        date.model_copy(
+            update={
+                "role": "paid_on",
+                "label": "支払日",
+                "fact_key": SourceRef(table="raw.payments", column="paid_at"),
+            }
+        )
+    )
+    assert any("agg_time_dimension" in i for i in model.finalize_issues())
+    event.agg_time_dimension = "date"
+    assert model.finalize_issues() == []
+    assert event.time_dimension is date
+
+
+def test_additivity_rules(model: BeamModel) -> None:
+    from adp.beam import Additivity, Aggregation
+
+    m = model.events[0].measures[0]
+    m.aggregation = Aggregation.COUNT_DISTINCT
+    assert any("count_distinct なので additive" in i for i in model.finalize_issues())
+    m.aggregation = Aggregation.SUM
+    m.additivity = Additivity.SEMI_ADDITIVE
+    assert any("non_additive_dimension" in i for i in model.finalize_issues())
+    m.non_additive_dimension = "date"
+    assert model.finalize_issues() == []
+
+
+def test_derived_and_ratio_rules(model: BeamModel) -> None:
+    base = {
+        "label": "x",
+        "question": "q",
+        "framed_question": "q",
+        "event": "customer_orders_product",
+    }
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {**base, "name": "r", "type": "ratio", "numerator": "r", "denominator": "revenue"}
+        )
+    )
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {**base, "name": "d", "type": "derived", "expr": "revenue; drop table x"}
+        )
+    )
+    issues = model.finalize_issues()
+    assert any("[metric r] ratio" in i for i in issues)
+    assert any("[metric d] derived" in i for i in issues)
+
+
+def test_gap_is_scoped_to_event(model: BeamModel) -> None:
+    other = model.events[0].model_copy(deep=True, update={"name": "other_event"})
+    model.events.append(other)
+    issues = model.finalize_issues()
+    assert any("[other_event] measure gross_margin はデータなし" in i for i in issues)
+
+
+def test_deferred_gap_does_not_block(model: BeamModel) -> None:
+    model.gaps.append(Gap(kind=GapKind.DEFERRED, description="返品を引くかは後で決める"))
+    assert model.finalize_issues() == []
+
+
+def test_conformed_business_key_must_match(model: BeamModel) -> None:
+    other = model.events[0].model_copy(deep=True, update={"name": "other_event"})
+    other.dimensions[0].business_key = SourceRef(table="raw.customers", column="customer_name")
+    model.events.append(other)
+    model.gaps += [g.model_copy(update={"event": "other_event"}) for g in model.gaps]
+    assert any("自然キーが" in i for i in model.finalize_issues())
+
+
+def test_time_grain_only_on_when() -> None:
+    from adp.beam import Dimension, W
+
+    with pytest.raises(ValidationError, match="time_grain"):
+        Dimension.model_validate(
+            {"w": W.WHO, "name": "customer", "label": "顧客", "time_grain": "day"}
+        )
