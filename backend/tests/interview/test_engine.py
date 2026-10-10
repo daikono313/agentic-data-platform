@@ -1,0 +1,181 @@
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from adp.beam import load
+from adp.interview import (
+    BeamUpdated,
+    ChoicesPresented,
+    Interviewer,
+    InterviewEvent,
+    Phase,
+    PhaseChanged,
+    TurnDone,
+    new_state,
+)
+from adp.llm import LLMSettings, ScriptedRunner, TextDelta
+
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml"
+
+
+async def collect(interviewer: Interviewer, state: Any, text: str) -> list[InterviewEvent]:
+    return [e async for e in interviewer.send(state, text)]
+
+
+@pytest.fixture
+def expected() -> dict[str, Any]:
+    return load(FIXTURE).model_dump(mode="json")
+
+
+async def test_full_interview_with_scripted_agent(expected: dict[str, Any]) -> None:
+    event = expected["events"][0]
+    metric = expected["metrics"][0]
+    runner = ScriptedRunner(
+        [
+            [
+                ("set_overview", {"name": "sales_by_store", "title": "店舗別の売上"}),
+                ("set_phase", {"phase": "framing"}),
+                "「日別・店舗別の売上金額」という理解で合っていますか？",
+                (
+                    "present_choices",
+                    {"question": "日別・店舗別でよいですか？", "options": ["はい", "いいえ"]},
+                ),
+            ],
+            [
+                ("set_phase", {"phase": "seven_ws"}),
+                ("upsert_event", {"data": event}),
+                ("upsert_metric", {"data": metric}),
+                *[("add_gap", {"data": g}) for g in expected["gaps"]],
+                ("set_phase", {"phase": "review"}),
+                "内容をまとめました。問題なければ確定してください。",
+            ],
+        ]
+    )
+    interviewer = Interviewer(runner, LLMSettings())
+    state = new_state("店舗ごとの売上を見たい")
+
+    first = await collect(interviewer, state, state.beam.request)
+    assert [e.phase for e in first if isinstance(e, PhaseChanged)] == []  # framing は初期値
+    assert any(isinstance(e, ChoicesPresented) and e.options == ["はい", "いいえ"] for e in first)
+    assert state.beam.name == "sales_by_store"
+    done = first[-1]
+    assert isinstance(done, TurnDone) and "理解で合っていますか" in done.message.text
+    assert state.agent_session_id == "scripted"
+
+    second = await collect(interviewer, state, "はい")
+    assert state.choices == []  # 新しい発言で選択肢は消える
+    updates = [e for e in second if isinstance(e, BeamUpdated)]
+    assert updates and updates[-1].issues == []
+    assert updates[-1].matrix.rows[0].event == "customer_orders_product"
+    assert [e.phase for e in second if isinstance(e, PhaseChanged)] == [
+        Phase.SEVEN_WS,
+        Phase.REVIEW,
+    ]
+    assert runner.prompts == ["店舗ごとの売上を見たい", "はい"]
+    assert [m.role for m in state.messages] == ["user", "assistant", "user", "assistant"]
+
+    beam = interviewer.finalize(state)
+    assert beam.finalized_at is not None and state.phase == Phase.FINALIZED
+    with pytest.raises(ValueError, match="確定済み"):
+        await collect(interviewer, state, "追加で")
+
+
+async def test_invalid_tool_input_is_rejected_without_changing_state() -> None:
+    runner = ScriptedRunner(
+        [
+            [
+                ("set_overview", {"name": "Bad Name", "title": "x"}),
+                ("upsert_event", {"data": {"name": "e"}}),
+                ("set_phase", {"phase": "finalized"}),
+                ("set_phase", {"phase": "nope"}),
+            ]
+        ]
+    )
+    state = new_state("売上")
+    events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    assert not any(isinstance(e, BeamUpdated | PhaseChanged) for e in events)
+    assert state.beam.name == "draft"
+    assert all(r.get("is_error") for r in runner.tool_results)
+
+
+async def test_successful_edit_reports_remaining_issues() -> None:
+    runner = ScriptedRunner([[("set_overview", {"name": "sales", "title": "売上"}), "ok"]])
+    state = new_state("売上")
+    events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    text = runner.tool_results[0]["content"][0]["text"]
+    assert "確定までに残っている課題" in text and "ビジネスイベントがありません" in text
+    assert any(isinstance(e, TextDelta) for e in events)
+
+
+async def test_finalize_requires_complete_beam() -> None:
+    runner = ScriptedRunner([])
+    interviewer = Interviewer(runner, LLMSettings())
+    state = new_state("売上")
+    with pytest.raises(ValueError, match="確定できません"):
+        interviewer.finalize(state)
+    assert state.phase == Phase.FRAMING
+
+
+async def test_edit_after_review_clears_finalized_at(expected: dict[str, Any]) -> None:
+    state = new_state("売上")
+    state.beam = load(FIXTURE)
+    state.beam.finalize()
+    runner = ScriptedRunner([[("upsert_metric", {"data": expected["metrics"][0]})]])
+    await collect(Interviewer(runner, LLMSettings()), state, "修正")
+    assert state.beam.finalized_at is None
+
+
+def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:
+    """SDK は input_schema で入力を検証する。$ref が解決できないと全ての呼び出しが失敗する。"""
+    import jsonschema
+
+    from adp.interview.tools import build_tools
+
+    tools = {t.name: t for t in build_tools(new_state("x"))}
+    samples = {
+        "upsert_event": expected["events"][0],
+        "upsert_metric": expected["metrics"][0],
+        "add_gap": expected["gaps"][0],
+    }
+    for name, data in samples.items():
+        schema = tools[name].input_schema
+        assert isinstance(schema, dict)
+        jsonschema.validate({"data": data}, schema)
+
+
+async def test_question_from_present_choices_is_shown() -> None:
+    runner = ScriptedRunner(
+        [
+            [
+                ("present_choices", {"question": "売上は何を指しますか？", "options": ["a", "b"]}),
+                "上のボタンから選んでください。",
+            ]
+        ]
+    )
+    state = new_state("売上")
+    events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    done = events[-1]
+    assert isinstance(done, TurnDone)
+    assert done.message.text == "上のボタンから選んでください。\n\n売上は何を指しますか？"
+
+
+async def test_runner_exception_is_recorded_as_error_turn() -> None:
+    class Broken:
+        async def run(self, prompt, spec, resume=None):  # type: ignore[no-untyped-def]
+            raise RuntimeError("CLI crashed")
+            yield  # pragma: no cover
+
+    state = new_state("売上")
+    events = await collect(Interviewer(Broken(), LLMSettings()), state, "売上")
+    done = events[-1]
+    assert isinstance(done, TurnDone) and done.result.is_error
+    assert "CLI crashed" in (done.result.error or "")
+    assert [m.role for m in state.messages] == ["user", "assistant"]
+
+
+async def test_remove_gap_rejects_bad_index() -> None:
+    runner = ScriptedRunner([[("remove_gap", {"index": -1})]])
+    state = new_state("売上")
+    await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    assert runner.tool_results[0].get("is_error")
