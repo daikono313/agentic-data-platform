@@ -28,6 +28,8 @@ PROTECTED_FILES = {
     # dbt Charts の接続設定。独自の duckdb ソースで外部アクセスを戻せるため（ADR 0002）
     "dbt_charts.yml",
 }
+# チャートは生成後に adp.charts が書き出す。エージェントには書かせない（手書きの SQL を入れない）
+PROTECTED_DIRS = {"charts", "chart_specs"}
 _DBT = {"parse", "build", "compile", "test", "ls", "list"}
 _MF = {"validate-configs", "query", "list"}
 # 値を取るオプション（値にパスを渡せないものだけ）
@@ -65,7 +67,10 @@ class WorkspaceGuard:
         return resolved == self.root or self.root in resolved.parents
 
     def __call__(self, tool: str, data: dict[str, Any]) -> str | None:
-        reason = self._check(tool, data)
+        try:
+            reason = self._check(tool, data)
+        except Exception as e:  # 判定できない入力（NUL を含むパスなど）は拒否する
+            reason = f"入力を判定できません: {type(e).__name__}"
         if reason:
             self.denied.append(f"{tool}: {reason}")
         return reason
@@ -91,10 +96,19 @@ class WorkspaceGuard:
                 return outside
         if tool in WRITE_TOOLS:
             target = self._resolve(str(data.get("file_path", "")))
-            if target.name in PROTECTED_FILES or target.suffix not in WRITABLE_SUFFIXES:
+            # macOS などのファイルシステムは大文字・小文字（Unicode の case folding。ſ → s など）を
+            # 区別しない。書けるパスを ASCII に限り、小文字にして比べる
+            if not all(p.isascii() for p in target.relative_to(self.root).parts):
+                return "パスには英数字（ASCII）だけを使ってください"
+            if (
+                target.name.lower() in PROTECTED_FILES
+                or target.suffix.lower() not in WRITABLE_SUFFIXES
+            ):
                 return (
                     f"{target.name} は書き換えられません（書けるのは SQL / YAML / Markdown だけ）"
                 )
+            if PROTECTED_DIRS & {p.lower() for p in target.relative_to(self.root).parts[:1]}:
+                return "チャート（charts/ と chart_specs/）は書き換えられません"
             if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
                 return "env_var などで環境変数を読む内容は書けません"
         return None

@@ -49,11 +49,12 @@ class FakeGh:
         self.calls.append(list(args))
         if "--body-file" in args:
             self.bodies.append(Path(list(args)[list(args).index("--body-file") + 1]).read_text())
-        out = (
-            "tok"
-            if list(args)[:3] == ["gh", "auth", "token"]
-            else "https://github.com/o/r/pull/1\n"
-        )
+        if list(args)[:3] == ["gh", "auth", "token"]:
+            out = "tok"
+        elif list(args)[:3] == ["gh", "repo", "view"]:
+            out = "daikono313/repo\n"
+        else:
+            out = "https://github.com/o/r/pull/1\n"
         return subprocess.CompletedProcess(args, 0, out, "")
 
 
@@ -83,6 +84,7 @@ async def test_pipeline_end_to_end(repo: Path) -> None:
         "design",
         "generate",
         "verify",
+        "charts",
         "commit",
         "pr",
     ]
@@ -92,10 +94,90 @@ async def test_pipeline_end_to_end(repo: Path) -> None:
     assert "warehouse/models/marts/fct_order_lines.sql" in pushed
     assert "warehouse/tests/assert_fct_order_lines_reconciles_with_source.sql" in pushed
     assert "dev.duckdb" not in pushed
+    # チャート（#42）: 元ファイルとボードは残し、PR 本文の画像は main に残さない
+    assert "warehouse/chart_specs/sales_by_store.yml" in pushed
+    assert "warehouse/charts/sales_by_store.yml" in pushed
+    assert "pr_assets" not in pushed
+    assert result.chart is not None and result.chart.error is None, result.chart
+    assert result.chart.charts == [("売上金額", "line")]
+    url = result.chart.image_url
+    assert url is not None and url.startswith("https://github.com/daikono313/repo/blob/")
+    sha = url.split("/blob/")[1].split("/")[0]
+    image = subprocess.run(
+        ["git", "show", f"{sha}:pr_assets/sales_by_store.png"], cwd=repo, capture_output=True
+    ).stdout
+    assert image.startswith(b"\x89PNG")
     create = next(c for c in gh.calls if c[:3] == ["gh", "pr", "create"])
     assert "--draft" not in create
     body = gh.bodies[-1]
     assert "## BEAM Canvas" in body and "✅ 成功" in body
+    assert f"![チャート]({url})" in body
+
+
+async def test_chart_failure_still_creates_pr(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """チャートを描画できなくても、モデルと指標の PR は作る（チャートは含めず理由を書く）。"""
+    from adp import pipeline as module
+    from adp.charts import ChartError
+
+    def broken(*_: object) -> None:
+        raise ChartError("描画できませんでした")
+
+    monkeypatch.setattr(module, "render_png", broken)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    gh = FakeGh()
+    config = PipelineConfig(
+        repo_root=repo,
+        bin_dir=DBT.parent,
+        source_db=repo / "warehouse" / "data" / "dev.duckdb",
+        github_account="daikono313",
+    )
+    pipeline = GenerationPipeline(
+        config,
+        FixingRunner(lambda n, spec: None),
+        LLMSettings(),
+        GitWorkspace(repo),
+        GitHub(repo, "daikono313", gh),
+    )
+    result = await pipeline.run(beam)
+    assert result.ok, result.error
+    assert result.chart is not None and result.chart.error == "描画できませんでした"
+    pushed = git(repo, "ls-tree", "-r", "--name-only", f"origin/{result.branch}")
+    assert "chart_specs/sales_by_store.yml" not in pushed and "charts/sales_by_store" not in pushed
+    assert "❌ チャートを作れませんでした" in gh.bodies[-1]
+
+
+async def test_existing_chart_is_not_overwritten(repo: Path) -> None:
+    """同じ BEAM の再実行で、既存（手で整えたものを含む）のチャートを上書き・削除しない。"""
+    spec = repo / "warehouse" / "chart_specs" / "sales_by_store.yml"
+    spec.parent.mkdir(exist_ok=True)
+    spec.write_text("# 手で整えたチャート\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "existing chart")
+    git(repo, "push", "origin", "main")
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    gh = FakeGh()
+    config = PipelineConfig(
+        repo_root=repo,
+        bin_dir=DBT.parent,
+        source_db=repo / "warehouse" / "data" / "dev.duckdb",
+        github_account="daikono313",
+    )
+    pipeline = GenerationPipeline(
+        config,
+        FixingRunner(lambda n, spec: None),
+        LLMSettings(),
+        GitWorkspace(repo),
+        GitHub(repo, "daikono313", gh),
+    )
+    result = await pipeline.run(beam)
+    assert result.ok, result.error
+    assert result.chart is not None and result.chart.skipped
+    assert not any("chart" in f for f in result.files), result.files
+    shown = git(repo, "show", f"origin/{result.branch}:warehouse/chart_specs/sales_by_store.yml")
+    assert shown.strip() == "# 手で整えたチャート"
+    assert "既にチャートがある" in gh.bodies[-1]
 
 
 async def test_pipeline_rejects_unfinalized_beam(repo: Path) -> None:

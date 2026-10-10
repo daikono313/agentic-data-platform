@@ -8,8 +8,16 @@ import pytest
 from adp.beam import load
 from adp.design import DesignBuilder
 from adp.generation import AgentTask
-from adp.vcs import GitHub, GitWorkspace, Verification, branch_name, pr_body, pr_title
-from adp.vcs.git import GitError
+from adp.vcs import (
+    ChartPreview,
+    GitHub,
+    GitWorkspace,
+    Verification,
+    branch_name,
+    pr_body,
+    pr_title,
+)
+from adp.vcs.git import GitError, Worktree
 from tests.design.test_builder import FakeSchema
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml"
@@ -38,6 +46,23 @@ def repo(tmp_path: Path) -> Path:
     git(work, "remote", "add", "origin", str(remote))
     git(work, "push", "-u", "origin", "main")
     return work
+
+
+@pytest.mark.parametrize(
+    ("out", "expected"),
+    [
+        ("daikono313/auto_data_platform\n", "daikono313/auto_data_platform"),
+        ("", None),
+        ("a/b)](https://evil", None),
+    ],
+)
+def test_repo_name_from_gh(out: str, expected: str | None) -> None:
+    def runner(
+        args: Sequence[str], cwd: Path, env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, "tok" if "auth" in args else out, "")
+
+    assert GitHub(Path("."), "daikono313", runner).repo_name(Worktree(Path("."), "b")) == expected
 
 
 def test_branch_name() -> None:
@@ -125,6 +150,25 @@ def test_pr_body_contains_review_material() -> None:
         "beam/sales_by_store.yml",
     ):
         assert expected in body, expected
+    assert "## チャート" not in body
+
+
+def test_pr_body_shows_charts() -> None:
+    beam = load(FIXTURE)
+    design = DesignBuilder(FakeSchema()).build(beam)
+    preview = ChartPreview(
+        "warehouse/chart_specs/sales_by_store.yml",
+        [("売上金額 #1", "line")],
+        image_url="https://github.com/o/r/blob/abc/pr_assets/sales_by_store.png?raw=true",
+    )
+    body = pr_body(beam, design, [], Verification(True), chart=preview)
+    assert "## チャート" in body and "（折れ線）" in body and "#1" not in body
+    assert (
+        "![チャート](https://github.com/o/r/blob/abc/pr_assets/sales_by_store.png?raw=true)" in body
+    )
+    failed = ChartPreview("warehouse/chart_specs/x.yml", error="描画できませんでした")
+    body = pr_body(beam, design, [], Verification(True), chart=failed)
+    assert "❌ チャートを作れませんでした: 描画できませんでした" in body and "![" not in body
 
 
 def test_pr_body_is_safe_for_public_repo() -> None:
