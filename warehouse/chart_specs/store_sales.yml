@@ -1,0 +1,33 @@
+# 店舗別の売上（beam/store_sales.yml の指標）。SQL は書かない（python -m adp.charts compile で生成）
+title: 店舗別の売上
+metric_queries:
+  by_store:
+    metrics: [sales_amount_total]
+    group_by: [store__store_name]
+    order: [-sales_amount_total]
+    limit: 10
+  by_month:
+    metrics: [sales_amount_total]
+    group_by: [metric_time__month, store__channel]
+    order: [metric_time__month]
+charts:
+  stores:
+    type: bar
+    query: by_store
+    title: 店舗別の売上（上位 10 店舗）
+    x: store__store_name
+    y: sales_amount_total
+    x_label: 店舗
+    y_label: 売上金額（円・税抜）
+    sort: {by: sales_amount_total, order: desc}
+  monthly:
+    type: line
+    query: by_month
+    title: 月別・チャネル別の売上
+    x: metric_time__month
+    y: sales_amount_total
+    color: store__channel
+    y_label: 売上金額（円・税抜）
+rows:
+  - stores
+  - monthly

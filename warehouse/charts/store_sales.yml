@@ -1,0 +1,44 @@
+# adp により生成（chart_specs/store_sales.yml から `python -m adp.charts compile`）。編集しない
+title: 店舗別の売上
+source: warehouse
+queries:
+  by_store:
+    sql: "SELECT\n  store__store_name,\n  SUM(sales_amount_total) AS sales_amount_total\nFROM (\n  SELECT\n\
+      \    fct_order_lines_src_10000.order_status AS order_line__order_status,\n    dim_store_src_10000.store_name\
+      \ AS store__store_name,\n    fct_order_lines_src_10000.sales_amount AS sales_amount_total\n  FROM\
+      \ \"main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n  LEFT OUTER JOIN \"main\".\"dim_store\"\
+      \ AS dim_store_src_10000\n    ON fct_order_lines_src_10000.store_key = dim_store_src_10000.store_key\n\
+      ) AS subq_5\nWHERE\n  order_line__order_status <> 'cancelled'\nGROUP BY\n  store__store_name\nORDER\
+      \ BY\n  sales_amount_total DESC\nLIMIT 10"
+  by_month:
+    sql: "SELECT\n  metric_time__month,\n  store__channel,\n  SUM(sales_amount_total) AS sales_amount_total\n\
+      FROM (\n  SELECT\n    DATE_TRUNC('MONTH', fct_order_lines_src_10000.ordered_on) AS metric_time__month,\n\
+      \    fct_order_lines_src_10000.order_status AS order_line__order_status,\n    dim_store_src_10000.channel\
+      \ AS store__channel,\n    fct_order_lines_src_10000.sales_amount AS sales_amount_total\n  FROM \"\
+      main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n  LEFT OUTER JOIN \"main\".\"dim_store\"\
+      \ AS dim_store_src_10000\n    ON fct_order_lines_src_10000.store_key = dim_store_src_10000.store_key\n\
+      ) AS subq_5\nWHERE\n  order_line__order_status <> 'cancelled'\nGROUP BY\n  metric_time__month,\n\
+      \  store__channel\nORDER BY\n  metric_time__month"
+charts:
+  stores:
+    type: bar
+    query: by_store
+    title: 店舗別の売上（上位 10 店舗）
+    x: store__store_name
+    y: sales_amount_total
+    x_label: 店舗
+    y_label: 売上金額（円・税抜）
+    sort:
+      by: sales_amount_total
+      order: desc
+  monthly:
+    type: line
+    query: by_month
+    title: 月別・チャネル別の売上
+    x: metric_time__month
+    y: sales_amount_total
+    color: store__channel
+    y_label: 売上金額（円・税抜）
+rows:
+- stores
+- monthly

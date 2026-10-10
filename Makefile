@@ -1,6 +1,6 @@
 SAMPLE_ORDERS ?= 30000
 
-.PHONY: sample-data setup lint test dbt-build eval dev dev-backend dev-frontend check-secrets
+.PHONY: sample-data setup lint test dbt-build charts eval dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -29,6 +29,11 @@ dbt-build:
 	$(DBT) parse
 	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) validate-configs; else echo 'mf validate-configs: metric が無いためスキップ'; fi
 	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) list metrics; fi
+	cd backend && uv run python -m adp.charts check
+
+# チャートの元ファイル（warehouse/chart_specs/）から dbt Charts のボードを書き出す
+charts:
+	cd backend && uv run python -m adp.charts compile
 
 # 実際の LLM（既定は Claude Code のログイン認証）でインタビューの eval を回す
 eval:
