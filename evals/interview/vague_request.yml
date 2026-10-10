@@ -1,0 +1,14 @@
+# 曖昧な要求を「How many」に言い換えられるか
+name: vague_request
+request: お客さんの動きをもっと知りたい
+persona: |
+  あなたは EC 企業のマーケティング担当です。データの専門家ではありません。
+  最初は何を見たいかうまく言えませんが、具体的に聞かれたら次のように答えます:
+  - 本当に知りたいのは「月ごとに、何人のお客さんが買ってくれたか」。
+  - 会員ランク別と地方別に見たい。
+  - 注文した時点で数える。キャンセルは除く。
+  - 優先度は高い。
+checks:
+  - finalizable
+  - metric_aggregation: count_distinct
+  - metric_group_by_w: who

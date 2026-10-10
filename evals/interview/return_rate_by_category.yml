@@ -1,0 +1,16 @@
+# design-doc S2
+name: return_rate_by_category
+request: 商品カテゴリ別の返品率を知りたい
+persona: |
+  あなたは EC 企業の品質管理担当です。データの専門家ではありません。
+  知っていること・望んでいること:
+  - 商品カテゴリごとの返品率を月別に見たい。
+  - 返品率は「返品された数量 ÷ 販売した数量」で考えている（聞かれたら答える）。
+  - 返品理由別にも見たい。
+  - 販売はキャンセルされた注文を除く。
+  - 優先度は中くらい。
+checks:
+  - finalizable
+  - has_w: [what, when]
+  - metric_type: ratio
+  - min_events: 1

@@ -1,0 +1,1651 @@
+{
+ "scenario": "sales_by_store",
+ "passed": true,
+ "checks": [
+  {
+   "name": "finalizable",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "has_w: ['who', 'what', 'when', 'where']",
+   "passed": true,
+   "detail": "['how', 'what', 'when', 'where', 'who', 'why']"
+  },
+  {
+   "name": "metric_group_by_w: where",
+   "passed": true,
+   "detail": "[['ordered_at.day', 'store.store_name', 'store.channel', 'product.category', 'customer.membership_rank', 'promotion.promotion_name']]"
+  },
+  {
+   "name": "has_gap: data_unavailable",
+   "passed": true,
+   "detail": "['data_unavailable', 'deferred', 'deferred']"
+  },
+  {
+   "name": "metric_has_filter",
+   "passed": true,
+   "detail": "[[{'ref': 'order_status.order_status', 'operator': '!=', 'values': ['cancelled']}]]"
+  },
+  {
+   "name": "has_examples",
+   "passed": true,
+   "detail": "[1]"
+  }
+ ],
+ "turns": 11,
+ "tool_calls": [
+  [
+   {
+    "name": "mcp__beam__get_beam",
+    "input": {}
+   },
+   {
+    "name": "mcp__source_catalog__list_sources",
+    "input": {}
+   },
+   {
+    "name": "mcp__beam__set_overview",
+    "input": {
+     "name": "store_sales",
+     "title": "店舗別売上"
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "framing"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.orders"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.order_items"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "「店舗ごとの売上」は「店舗別の売上金額（数量×単価−値引額の合計、税抜）はいくらか？」という問いでよろしいですか？",
+     "options": [
+      "はい、それでOK",
+      "売上金額ではなく注文件数が見たい",
+      "値引き前の金額で見たい",
+      "別の意味で考えている"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "event_discovery"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.stores"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.orders",
+     "column": "order_status"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "返品があった注文（returned）は、売上に含めますか？",
+     "options": [
+      "含める（キャンセルだけ除く）",
+      "除く（completed のみ）",
+      "おまかせ",
+      "あとで決める"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "seven_ws"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.stores",
+     "column": "store_name"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.stores",
+     "column": "channel"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.stores",
+     "column": "region"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "店舗の切り口として、どれを使いたいですか？ ほかに見たい切り口があれば教えてください。",
+     "options": [
+      "店舗名だけ",
+      "店舗名・チャネル",
+      "店舗名・チャネル・都道府県・地方",
+      "すべて（開店日も含む）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.products"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.customers"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.products",
+     "column": "category"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.customers",
+     "column": "membership_rank"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.orders",
+       "raw.order_items"
+      ],
+      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       },
+       {
+        "name": "order_id",
+        "label": "注文ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "description": "数量×販売単価−値引額(税抜)",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "unit": "円",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "チャネル",
+          "description": "store / online / app",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "description": "bronze / silver / gold / platinum",
+          "availability": "available",
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "description": "completed / cancelled / returned",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "store_daily_sales",
+      "label": "店舗別日次売上金額",
+      "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
+      "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
+      "event": "customer_orders_product",
+      "type": "simple",
+      "measure": "sales_amount",
+      "filter": "キャンセルされた注文を除く(返品ありは含む)",
+      "filters": [
+       {
+        "ref": "order_status.order_status",
+        "operator": "!=",
+        "values": [
+         "cancelled"
+        ]
+       }
+      ],
+      "group_by": [
+       "ordered_at.day",
+       "store.store_name",
+       "store.channel"
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "顧客の会員ランクは途中で変わることがあります。過去の売上は、注文した当時のランクで見たいですか？ それとも現在のランクで見たいですか？",
+     "options": [
+      "注文当時のランクで見たい",
+      "現在のランクで見たい",
+      "おまかせ",
+      "あとで決める"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "ここまでの切り口（日付・店舗・チャネル・商品カテゴリ・会員ランク）のほかに、見たいものはありますか？",
+     "options": [
+      "今のだけでよい",
+      "プロモーションも見たい",
+      "支払方法も見たい",
+      "その他（自由入力）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.promotions"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__search_columns",
+    "input": {
+     "query": "年収 income 収入 salary"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.promotions",
+     "column": "promotion_name"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.promotions",
+     "column": "promotion_type"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.orders",
+     "column": "promotion_id"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.orders",
+       "raw.order_items"
+      ],
+      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       },
+       {
+        "name": "order_id",
+        "label": "注文ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "description": "数量×販売単価−値引額(税抜)",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "unit": "円",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "チャネル",
+          "description": "store / online / app",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "description": "bronze / silver / gold / platinum",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "annual_income",
+          "label": "年収",
+          "description": "ソースに列がない",
+          "availability": "unavailable"
+         }
+        ]
+       },
+       {
+        "w": "why",
+        "name": "promotion",
+        "label": "プロモーション",
+        "description": "適用なしの注文は promotion_id が NULL",
+        "business_key": {
+         "table": "raw.promotions",
+         "column": "promotion_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "promotion_id"
+        },
+        "attributes": [
+         {
+          "name": "promotion_name",
+          "label": "プロモーション名",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_name"
+          }
+         },
+         {
+          "name": "promotion_type",
+          "label": "プロモーション種類",
+          "description": "percent_off / point_up / bundle",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_type"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "description": "completed / cancelled / returned",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__add_gap",
+    "input": {
+     "data": {
+      "kind": "data_unavailable",
+      "description": "顧客の年収別の切り口を希望されたが、ソースに年収の列がない",
+      "w": "who",
+      "event": "customer_orders_product",
+      "related": "customer.annual_income"
+     }
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.order_items",
+     "column": "discount_amount"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.products",
+     "column": "product_name"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この例の店舗は、どのように記録しましょうか？",
+     "options": [
+      "ONLINEストア17に差し替える",
+      "店舗を実在の店舗名にして自分で直す",
+      "渋谷店のまま記録する",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.orders",
+       "raw.order_items"
+      ],
+      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       },
+       {
+        "name": "order_id",
+        "label": "注文ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "description": "数量×販売単価−値引額(税抜)",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "unit": "円",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "チャネル",
+          "description": "store / online / app",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "description": "bronze / silver / gold / platinum",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "annual_income",
+          "label": "年収",
+          "description": "ソースに列がない",
+          "availability": "unavailable"
+         }
+        ]
+       },
+       {
+        "w": "why",
+        "name": "promotion",
+        "label": "プロモーション",
+        "description": "適用なしの注文は promotion_id が NULL",
+        "business_key": {
+         "table": "raw.promotions",
+         "column": "promotion_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "promotion_id"
+        },
+        "attributes": [
+         {
+          "name": "promotion_name",
+          "label": "プロモーション名",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_name"
+          }
+         },
+         {
+          "name": "promotion_type",
+          "label": "プロモーション種類",
+          "description": "percent_off / point_up / bundle",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_type"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "description": "completed / cancelled / returned",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2026-10-03",
+         "store.store_name": "ONLINEストア17",
+         "store.channel": "online",
+         "product.category": "家電",
+         "customer.membership_rank": "gold",
+         "sales_amount": 9000
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__add_gap",
+    "input": {
+     "data": {
+      "kind": "deferred",
+      "description": "具体例の店舗はモデラーの見積もり（「渋谷店」はソースに無いため実在の ONLINEストア17 に差し替え、商品名「ワイヤレスイヤホン」は記録していない）",
+      "w": "where",
+      "event": "customer_orders_product",
+      "related": "store.store_name"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "grain"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この「店舗別の日次売上」の優先度は、どのくらいですか？",
+     "options": [
+      "高い",
+      "中くらい",
+      "低い",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "prioritization"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この指標が見られるようになったときの、ビジネスへのインパクト（効果の大きさ）はどのくらいですか？",
+     "options": [
+      "高い",
+      "中くらい",
+      "低い",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "データを整える作業量（工数）は、どのくらいを想定しますか？",
+     "options": [
+      "少ない（low）",
+      "中くらい",
+      "多い",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.orders",
+       "raw.order_items"
+      ],
+      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "priority": "high",
+      "impact": "high",
+      "effort": "medium",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       },
+       {
+        "name": "order_id",
+        "label": "注文ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "description": "数量×販売単価−値引額(税抜)",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "unit": "円",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "チャネル",
+          "description": "store / online / app",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "description": "bronze / silver / gold / platinum",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "annual_income",
+          "label": "年収",
+          "description": "ソースに列がない",
+          "availability": "unavailable"
+         }
+        ]
+       },
+       {
+        "w": "why",
+        "name": "promotion",
+        "label": "プロモーション",
+        "description": "適用なしの注文は promotion_id が NULL",
+        "business_key": {
+         "table": "raw.promotions",
+         "column": "promotion_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "promotion_id"
+        },
+        "attributes": [
+         {
+          "name": "promotion_name",
+          "label": "プロモーション名",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_name"
+          }
+         },
+         {
+          "name": "promotion_type",
+          "label": "プロモーション種類",
+          "description": "percent_off / point_up / bundle",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_type"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "description": "completed / cancelled / returned",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2026-10-03",
+         "store.store_name": "ONLINEストア17",
+         "store.channel": "online",
+         "product.category": "家電",
+         "customer.membership_rank": "gold",
+         "sales_amount": 9000
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__add_gap",
+    "input": {
+     "data": {
+      "kind": "deferred",
+      "description": "工数（medium）はモデラーの見積もり",
+      "event": "customer_orders_product"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "store_daily_sales",
+      "label": "店舗別日次売上金額",
+      "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
+      "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
+      "event": "customer_orders_product",
+      "type": "simple",
+      "measure": "sales_amount",
+      "filter": "キャンセルされた注文を除く(返品ありは含む)",
+      "filters": [
+       {
+        "ref": "order_status.order_status",
+        "operator": "!=",
+        "values": [
+         "cancelled"
+        ]
+       }
+      ],
+      "group_by": [
+       "ordered_at.day",
+       "store.store_name",
+       "store.channel",
+       "product.category",
+       "customer.membership_rank",
+       "promotion.promotion_name"
+      ],
+      "status": "confirmed"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "review"
+    }
+   }
+  ]
+ ],
+ "beam": {
+  "schema_version": 1,
+  "name": "store_sales",
+  "title": "店舗別売上",
+  "request": "店舗ごとの売上を見たい",
+  "events": [
+   {
+    "name": "customer_orders_product",
+    "table_name": "order_lines",
+    "label": "顧客が商品を注文する",
+    "subject": "顧客",
+    "verb": "注文する",
+    "object": "商品",
+    "story_type": "discrete",
+    "grain": "注文明細1行(注文の中の商品1つ)",
+    "grain_keys": [
+     "order_item_id"
+    ],
+    "measures": [
+     {
+      "name": "sales_amount",
+      "label": "売上金額(税抜)",
+      "description": "数量×販売単価−値引額(税抜)",
+      "aggregation": "sum",
+      "additivity": "additive",
+      "unit": "円",
+      "non_additive_dimension": null,
+      "source": {
+       "table": "raw.order_items",
+       "column": null,
+       "expr": "quantity * unit_price - discount_amount"
+      },
+      "availability": "available"
+     }
+    ],
+    "dimensions": [
+     {
+      "w": "when",
+      "name": "ordered_at",
+      "label": "注文日",
+      "description": "",
+      "role": null,
+      "attributes": [],
+      "hierarchy": [],
+      "time_grain": "day",
+      "business_key": null,
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "ordered_at",
+       "expr": null
+      }
+     },
+     {
+      "w": "where",
+      "name": "store",
+      "label": "店舗",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "store_name",
+        "label": "店舗名",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.stores",
+         "column": "store_name",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       },
+       {
+        "name": "channel",
+        "label": "チャネル",
+        "description": "store / online / app",
+        "examples": [],
+        "source": {
+         "table": "raw.stores",
+         "column": "channel",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.stores",
+       "column": "store_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "store_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "what",
+      "name": "product",
+      "label": "商品",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "category",
+        "label": "商品カテゴリ",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.products",
+         "column": "category",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.products",
+       "column": "product_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.order_items",
+       "column": "product_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "who",
+      "name": "customer",
+      "label": "顧客",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "membership_rank",
+        "label": "会員ランク",
+        "description": "bronze / silver / gold / platinum",
+        "examples": [],
+        "source": {
+         "table": "raw.customers",
+         "column": "membership_rank",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       },
+       {
+        "name": "annual_income",
+        "label": "年収",
+        "description": "ソースに列がない",
+        "examples": [],
+        "source": null,
+        "availability": "unavailable",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.customers",
+       "column": "customer_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "customer_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "why",
+      "name": "promotion",
+      "label": "プロモーション",
+      "description": "適用なしの注文は promotion_id が NULL",
+      "role": null,
+      "attributes": [
+       {
+        "name": "promotion_name",
+        "label": "プロモーション名",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.promotions",
+         "column": "promotion_name",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       },
+       {
+        "name": "promotion_type",
+        "label": "プロモーション種類",
+        "description": "percent_off / point_up / bundle",
+        "examples": [],
+        "source": {
+         "table": "raw.promotions",
+         "column": "promotion_type",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.promotions",
+       "column": "promotion_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "promotion_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "how",
+      "name": "order_status",
+      "label": "注文ステータス",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "order_status",
+        "label": "注文ステータス",
+        "description": "completed / cancelled / returned",
+        "examples": [],
+        "source": {
+         "table": "raw.orders",
+         "column": "order_status",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.orders",
+       "column": "order_status",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "order_status",
+       "expr": null
+      }
+     }
+    ],
+    "degenerate_dimensions": [
+     {
+      "name": "order_item_id",
+      "label": "注文明細ID",
+      "source": {
+       "table": "raw.order_items",
+       "column": "order_item_id",
+       "expr": null
+      }
+     },
+     {
+      "name": "order_id",
+      "label": "注文ID",
+      "source": {
+       "table": "raw.order_items",
+       "column": "order_id",
+       "expr": null
+      }
+     }
+    ],
+    "agg_time_dimension": "ordered_at",
+    "examples": [
+     {
+      "values": {
+       "ordered_at": "2026-10-03",
+       "store.store_name": "ONLINEストア17",
+       "store.channel": "online",
+       "product.category": "家電",
+       "customer.membership_rank": "gold",
+       "sales_amount": 9000
+      }
+     }
+    ],
+    "priority": "high",
+    "impact": "high",
+    "effort": "medium",
+    "source_tables": [
+     "raw.orders",
+     "raw.order_items"
+    ]
+   }
+  ],
+  "metrics": [
+   {
+    "name": "store_daily_sales",
+    "label": "店舗別日次売上金額",
+    "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
+    "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
+    "type": "simple",
+    "event": "customer_orders_product",
+    "measure": "sales_amount",
+    "numerator": null,
+    "denominator": null,
+    "expr": null,
+    "window": null,
+    "filter": "キャンセルされた注文を除く(返品ありは含む)",
+    "filters": [
+     {
+      "ref": "order_status.order_status",
+      "operator": "!=",
+      "values": [
+       "cancelled"
+      ]
+     }
+    ],
+    "group_by": [
+     "ordered_at.day",
+     "store.store_name",
+     "store.channel",
+     "product.category",
+     "customer.membership_rank",
+     "promotion.promotion_name"
+    ],
+    "status": "confirmed"
+   }
+  ],
+  "gaps": [
+   {
+    "kind": "data_unavailable",
+    "description": "顧客の年収別の切り口を希望されたが、ソースに年収の列がない",
+    "event": "customer_orders_product",
+    "w": "who",
+    "related": "customer.annual_income"
+   },
+   {
+    "kind": "deferred",
+    "description": "具体例の店舗はモデラーの見積もり（「渋谷店」はソースに無いため実在の ONLINEストア17 に差し替え、商品名「ワイヤレスイヤホン」は記録していない）",
+    "event": "customer_orders_product",
+    "w": "where",
+    "related": "store.store_name"
+   },
+   {
+    "kind": "deferred",
+    "description": "工数（medium）はモデラーの見積もり",
+    "event": "customer_orders_product",
+    "w": null,
+    "related": null
+   }
+  ],
+  "finalized_at": "2026-10-10T10:56:52.208937Z"
+ }
+}
