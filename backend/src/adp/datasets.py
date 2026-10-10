@@ -16,15 +16,18 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 
-from adp.catalog.catalog import Catalog
+from adp.catalog.catalog import Catalog, CatalogUnavailable
 
 MF_TIMEOUT_S = 120
+MF_PARALLEL = 4
 
 
 class Dimension(BaseModel):
@@ -32,6 +35,10 @@ class Dimension(BaseModel):
     """MetricFlow の参照名（例: store__channel、metric_time）。"""
     label: str
     description: str = ""
+    kind: str = "categorical"
+    """time / categorical"""
+    entity: str | None = None
+    """切り口が属する entity（例: store）。UI でまとめて表示するため。"""
 
 
 class MetricInfo(BaseModel):
@@ -49,6 +56,7 @@ class MetricInfo(BaseModel):
 class ColumnInfo(BaseModel):
     name: str
     description: str = ""
+    data_type: str = ""
 
 
 class ModelInfo(BaseModel):
@@ -89,14 +97,17 @@ class DatasetIndex:
         self.catalog = catalog
         self.mf = mf
         self._dims_cache: dict[str, tuple[float, list[str]]] = {}
+        self._lock = threading.Lock()
+        """同時に来た要求で mf を二重に起動しない。"""
 
     # --- 指標 ------------------------------------------------------------------------------
 
     def _semantic_manifest(self) -> dict[str, Any] | None:
         path = self.warehouse / "target" / "semantic_manifest.json"
-        if not path.exists():
+        try:
+            data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # 無い、または dbt parse が書き換え中
             return None
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return data
 
     def _dimension_labels(self, manifest: dict[str, Any]) -> dict[str, tuple[str, str]]:
@@ -105,6 +116,8 @@ class DatasetIndex:
         for sm in manifest.get("semantic_models", []):
             entities = [e["name"] for e in sm.get("entities", []) if e.get("type") == "primary"]
             entities += [e["name"] for e in sm.get("entities", []) if e.get("type") == "unique"]
+            if sm.get("primary_entity"):  # モデル単位の主 entity（複合粒度の fct など）
+                entities.append(sm["primary_entity"])
             for d in sm.get("dimensions", []):
                 text = d.get("description") or ""
                 label = d.get("label") or text.split("（")[0] or d["name"]
@@ -112,9 +125,7 @@ class DatasetIndex:
                     labels[f"{entity}__{d['name']}"] = (label, text)
         return labels
 
-    def _dimensions_for(self, metric: str) -> list[str]:
-        path = self.warehouse / "target" / "semantic_manifest.json"
-        mtime = path.stat().st_mtime
+    def _dimensions_for(self, metric: str, mtime: float) -> list[str]:
         cached = self._dims_cache.get(metric)
         if cached and cached[0] == mtime:
             return cached[1]
@@ -141,38 +152,79 @@ class DatasetIndex:
             errors.append("Semantic Layer の定義がありません（make dbt-build を実行してください）")
             return []
         labels = self._dimension_labels(manifest)
+        time_dims = {
+            f"{e}__{d['name']}"
+            for sm in manifest.get("semantic_models", [])
+            for d in sm.get("dimensions", [])
+            if d.get("type") == "time"
+            for e in [x["name"] for x in sm.get("entities", [])] + [sm.get("primary_entity") or ""]
+        }
+        by_name = {m["name"]: m for m in manifest.get("metrics", [])}
         by_metric = {m: b.name for b in beams for m in b.metrics}
         model_of_measure = {
             measure["name"]: sm["name"]
             for sm in manifest.get("semantic_models", [])
             for measure in sm.get("measures", [])
         }
-        result = []
-        for m in manifest.get("metrics", []):
+
+        def source_model(m: dict[str, Any], depth: int = 0) -> str | None:
+            """指標の元になる fct。ratio / derived / cumulative は元の指標から辿る。"""
             params = m.get("type_params") or {}
             # latest spec の simple metric は measure を持たず、集計の元を直接持つ
             agg = params.get("metric_aggregation_params") or {}
             measure = params.get("measure") or {}
             model = agg.get("semantic_model") or model_of_measure.get(measure.get("name", ""))
+            if model or depth > 5:
+                return model
+            inputs = [params.get("numerator"), params.get("denominator")]
+            inputs += params.get("metrics") or []
+            inputs.append((params.get("cumulative_type_params") or {}).get("metric"))
+            for ref in inputs:
+                name = ref.get("name") if isinstance(ref, dict) else ref
+                if name in by_name and (found := source_model(by_name[name], depth + 1)):
+                    return found
+            return None
+
+        try:
+            mtime = (self.warehouse / "target" / "semantic_manifest.json").stat().st_mtime
+        except OSError:
+            errors.append(
+                "Semantic Layer の定義を読めませんでした（make dbt-build を実行してください）"
+            )
+            return []
+        names = [m["name"] for m in manifest.get("metrics", [])]
+        dims: dict[str, list[str] | Exception] = {}
+        with self._lock, ThreadPoolExecutor(MF_PARALLEL) as pool:
+            for name, future in [(n, pool.submit(self._dimensions_for, n, mtime)) for n in names]:
+                try:
+                    dims[name] = future.result()
+                except (RuntimeError, subprocess.TimeoutExpired) as e:
+                    dims[name] = e
+
+        result = []
+        for m in manifest.get("metrics", []):
             info = MetricInfo(
                 name=m["name"],
                 label=m.get("label") or m["name"],
                 description=m.get("description") or "",
                 type=m.get("type", ""),
-                model=model,
+                model=source_model(m),
                 beam=by_metric.get(m["name"]),
             )
-            try:
-                info.dimensions = [
-                    Dimension(
-                        name=d,
-                        label=labels.get(d, (_time_label(d), ""))[0],
-                        description=labels.get(d, ("", ""))[1],
-                    )
-                    for d in self._dimensions_for(m["name"])
-                ]
-            except (RuntimeError, subprocess.TimeoutExpired) as e:
-                errors.append(str(e))
+            found = dims.get(m["name"], [])
+            if isinstance(found, Exception):
+                errors.append(str(found))
+                found = []
+            info.dimensions = [
+                Dimension(
+                    name=d,
+                    label=labels.get(d, (_time_label(d), ""))[0],
+                    description=labels.get(d, ("", ""))[1],
+                    kind="time" if d == "metric_time" or d in time_dims else "categorical",
+                    entity=d.split("__", 1)[0] if "__" in d else None,
+                )
+                for d in found
+            ]
             result.append(info)
         return result
 
@@ -183,7 +235,11 @@ class DatasetIndex:
         if not path.exists():
             errors.append("dbt の manifest がありません（make dbt-build を実行してください）")
             return []
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            errors.append("dbt の manifest を読めませんでした（make dbt-build を実行してください）")
+            return []
         result = []
         for node in manifest.get("nodes", {}).values():
             name = node.get("name", "")
@@ -211,15 +267,17 @@ class DatasetIndex:
                     description=t.description,
                     row_count=t.row_count,
                     columns=[
-                        ColumnInfo(name=c.name, description=c.description)
-                        for c in self.catalog.describe_table(t.qualified).columns
+                        ColumnInfo(name=c.name, description=c.description, data_type=c.data_type)
+                        for c in self.catalog.columns(t.qualified)
                     ],
                 )
                 for t in tables
             ]
-        except Exception as e:  # DB が使用中など。一覧の他の部分は返す
+        except CatalogUnavailable as e:  # DB が使用中など。一覧の他の部分は返す
+            errors.append(f"元データの一覧を取得できませんでした: {e}")
+        except Exception as e:
             errors.append(f"元データの一覧を取得できませんでした: {type(e).__name__}")
-            return []
+        return []
 
     def beams(self, errors: list[str]) -> list[BeamInfo]:
         result = []

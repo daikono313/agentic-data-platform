@@ -168,6 +168,12 @@ class Catalog:
             for c, t in rows
         ]
 
+    def columns(self, table: str) -> list[ColumnInfo]:
+        """列の名前・型・説明だけを返す（プロファイリングをしない軽い版）。"""
+        schema, name = self._resolve(table)
+        with self._connect() as con:
+            return self._columns(con, schema, name)
+
     def describe_table(self, table: str) -> TableDetail:
         schema, name = self._resolve(table)
         with self._connect() as con:

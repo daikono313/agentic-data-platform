@@ -51,16 +51,22 @@ def test_datasets_lists_metrics_models_sources_beams(repo: Path) -> None:
     assert revenue.label == "売上金額" and revenue.model == "fct_order_lines"
     assert revenue.beam == "sales_by_store"
     names = {d.name: d.label for d in revenue.dimensions}
+    kinds = {d.name: d.kind for d in revenue.dimensions}
+    assert kinds["metric_time"] == "time" and kinds["store__channel"] == "categorical"
+    assert next(d for d in revenue.dimensions if d.name == "store__channel").entity == "store"
     assert "metric_time" in names and "store__channel" in names
     assert names["store__channel"] != "store__channel"  # 日本語の表示名が付く
     assert {"fct_order_lines", "dim_customer", "dim_store"} <= {m.name for m in data.models}
     assert data.models[0].kind == "fct"
     orders = next(s for s in data.sources if s.name == "raw.orders")
     assert orders.row_count > 0 and orders.description
+    assert (
+        {c.name: c.data_type for c in orders.columns}["ordered_at"].upper().startswith("TIMESTAMP")
+    )
     assert [b.name for b in data.beams] == ["sales_by_store"]
 
 
-def test_dimension_lookup_is_cached(repo: Path) -> None:
+def test_dimension_lookup_is_cached(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"), DBT.parent / "mf")
     index.all()
     calls = []
@@ -70,7 +76,7 @@ def test_dimension_lookup_is_cached(repo: Path) -> None:
         calls.append(args)
         return real(*args, **kwargs)
 
-    pytest.MonkeyPatch().setattr(subprocess, "run", spy)
+    monkeypatch.setattr(subprocess, "run", spy)
     index.all()
     assert calls == []
 
@@ -97,3 +103,28 @@ def test_api_endpoint(repo: Path) -> None:
     body = client.get("/datasets").json()
     assert {"metrics", "models", "sources", "beams", "errors"} <= set(body)
     assert TestClient(create_app(service)).get("/datasets").status_code == 503
+
+
+def test_primary_entity_at_model_level_gets_labels() -> None:
+    index = DatasetIndex(Path("."), None, Path("mf"))  # type: ignore[arg-type]
+    manifest = {
+        "semantic_models": [
+            {
+                "name": "fct_x",
+                "primary_entity": "order_line",
+                "entities": [],
+                "dimensions": [
+                    {"name": "order_status", "type": "categorical", "description": "注文ステータス"}
+                ],
+            }
+        ]
+    }
+    assert index._dimension_labels(manifest)["order_line__order_status"][0] == "注文ステータス"
+
+
+def test_broken_manifest_is_reported(tmp_path: Path) -> None:
+    (tmp_path / "warehouse" / "target").mkdir(parents=True)
+    (tmp_path / "warehouse" / "target" / "semantic_manifest.json").write_text("{broken")
+    (tmp_path / "warehouse" / "target" / "manifest.json").write_text("{broken")
+    data = DatasetIndex(tmp_path, Catalog(tmp_path / "x.duckdb"), Path("mf")).all()
+    assert data.metrics == [] and data.models == [] and data.errors
