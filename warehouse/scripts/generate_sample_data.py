@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import random
 import tempfile
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from pathlib import Path
 import duckdb
 
 START = date(2024, 1, 1)
-END = date(2025, 12, 31)
+END = date(2025, 12, 31)  # 注文日の範囲。配達・返品は END 以降にずれ込むことがある
 
 REGIONS = {
     "関東": ["東京都", "神奈川県", "埼玉県", "千葉県"],
@@ -40,7 +41,6 @@ BRANDS = ["あおば", "さくら", "みなと", "ひかり", "こだま", "つ�
 CHANNELS = [("store", 0.55), ("online", 0.30), ("app", 0.15)]
 PAYMENT_METHODS = [("credit_card", 0.5), ("cash", 0.2), ("e_money", 0.2), ("bank_transfer", 0.1)]
 SHIPPING_METHODS = [("standard", 0.7), ("express", 0.2), ("store_pickup", 0.1)]
-RETURN_REASONS = ["初期不良", "サイズ違い", "イメージ違い", "誤配送"]
 LAST_NAMES = ["佐藤", "鈴木", "高橋", "田中", "伊藤", "渡辺", "山本", "中村", "小林", "加藤"]
 FIRST_NAMES = ["翔", "蓮", "陽菜", "結衣", "大翔", "さくら", "湊", "葵", "悠真", "凛"]
 
@@ -66,16 +66,29 @@ class Tables:
     returns: list[tuple[object, ...]]
 
 
-def generate(n_orders: int, seed: int) -> Tables:
-    rng = random.Random(seed)
-    n_customers = max(50, n_orders // 6)
-    prefectures = [(r, p) for r, ps in REGIONS.items() for p in ps]
+# カテゴリごとの返品しやすさ（明細単位の確率）と返品理由の重み
+RETURN_PROFILE: dict[str, tuple[float, list[tuple[str, float]]]] = {
+    "衣料": (0.12, [("サイズ違い", 0.6), ("イメージ違い", 0.3), ("誤配送", 0.1)]),
+    "家電": (0.06, [("初期不良", 0.7), ("イメージ違い", 0.2), ("誤配送", 0.1)]),
+    "日用品": (0.02, [("イメージ違い", 0.5), ("誤配送", 0.5)]),
+    "書籍": (0.02, [("誤配送", 0.6), ("イメージ違い", 0.4)]),
+    "食品": (0.01, [("誤配送", 0.7), ("イメージ違い", 0.3)]),
+}
 
-    customers = []
-    for i in range(1, n_customers + 1):
+
+def _rng(seed: int, table: str) -> random.Random:
+    """テーブルごとに独立した乱数列。--orders を変えてもマスタは変わらない。"""
+    return random.Random(f"{seed}:{table}")
+
+
+def _customers(seed: int, n: int) -> list[tuple[object, ...]]:
+    rng = _rng(seed, "customers")
+    prefectures = [(r, p) for r, ps in REGIONS.items() for p in ps]
+    rows = []
+    for i in range(1, n + 1):
         region, pref = rng.choice(prefectures)
         signup = rand_date(rng, date(2020, 1, 1), END)
-        customers.append(
+        rows.append(
             (
                 i,
                 f"{rng.choice(LAST_NAMES)} {rng.choice(FIRST_NAMES)}",
@@ -88,15 +101,24 @@ def generate(n_orders: int, seed: int) -> Tables:
                 datetime.combine(signup, datetime.min.time()),
             )
         )
+    return rows
 
-    products = []
-    pid = 0
+
+def _products(seed: int) -> list[tuple[object, ...]]:
+    rng = _rng(seed, "products")
+    rows: list[tuple[object, ...]] = []
     for category, (subcats, (lo, hi)) in CATEGORIES.items():
         for sub in subcats:
             for _ in range(rng.randint(6, 12)):
-                pid += 1
+                pid = len(rows) + 1
                 price = round(rng.randint(lo, hi), -1)
-                products.append(
+                # 6 割は期間開始前から販売、残りは期間中に発売
+                launched = (
+                    rand_date(rng, date(2019, 1, 1), START - timedelta(days=1))
+                    if rng.random() < 0.6
+                    else rand_date(rng, START, date(2025, 6, 30))
+                )
+                rows.append(
                     (
                         pid,
                         f"{rng.choice(BRANDS)} {sub} {pid:04d}",
@@ -105,44 +127,52 @@ def generate(n_orders: int, seed: int) -> Tables:
                         rng.choice(BRANDS),
                         price,
                         round(price * rng.uniform(0.4, 0.75)),
-                        rand_date(rng, date(2019, 1, 1), date(2025, 6, 30)),
+                        launched,
                     )
                 )
+    return rows
 
-    stores = []
+
+def _stores(seed: int) -> list[tuple[object, ...]]:
+    rng = _rng(seed, "stores")
+    rows: list[tuple[object, ...]] = []
+    # 実店舗は各地方に最低 1 店舗
+    store_prefs = [(r, ps[0]) for r, ps in REGIONS.items()]
+    store_prefs += [(r, p) for r, ps in REGIONS.items() for p in ps]
     for i in range(1, 21):
-        channel = "store" if i <= 16 else ("online" if i <= 18 else "app")
-        region, pref = rng.choice(prefectures)
-        name = f"{pref}{i:02d}号店" if channel == "store" else f"{channel.upper()}ストア{i:02d}"
-        stores.append(
-            (
-                i,
-                name,
-                channel,
-                pref if channel == "store" else None,
-                region if channel == "store" else None,
-                rand_date(rng, date(2015, 1, 1), date(2023, 12, 31)),
-            )
-        )
-    stores_by_channel = {c: [s for s in stores if s[2] == c] for c, _ in CHANNELS}
+        opened = rand_date(rng, date(2015, 1, 1), date(2023, 12, 31))
+        if i <= 16:
+            region, pref = store_prefs[(i - 1) % len(store_prefs)]
+            rows.append((i, f"{pref}{i:02d}号店", "store", pref, region, opened))
+        else:
+            channel = "online" if i <= 18 else "app"
+            rows.append((i, f"{channel.upper()}ストア{i:02d}", channel, None, None, opened))
+    return rows
 
-    promotions = []
+
+def _promotions(seed: int) -> list[tuple[object, ...]]:
+    rng = _rng(seed, "promotions")
+    rows: list[tuple[object, ...]] = []
     for i in range(1, 25):
         s = rand_date(rng, START, END - timedelta(days=30))
         ptype = rng.choice(["percent_off", "point_up", "bundle"])
-        promotions.append(
-            (
-                i,
-                f"キャンペーン{i:02d}",
-                ptype,
-                round(rng.choice([0.05, 0.1, 0.15, 0.2]), 2) if ptype == "percent_off" else 0.0,
-                s,
-                s + timedelta(days=rng.randint(7, 30)),
-            )
+        # point_up は値引きなし（ポイント付与）、bundle はまとめ買い割引
+        rate = {"percent_off": rng.choice([0.05, 0.1, 0.15, 0.2]), "bundle": 0.1}.get(ptype, 0.0)
+        rows.append(
+            (i, f"キャンペーン{i:02d}", ptype, rate, s, s + timedelta(days=rng.randint(7, 30)))
         )
+    return rows
+
+
+def generate(n_orders: int, seed: int) -> Tables:
+    customers = _customers(seed, max(50, n_orders // 6))
+    products = _products(seed)
+    stores = _stores(seed)
+    promotions = _promotions(seed)
+    rng = _rng(seed, "orders")
+    stores_by_channel = {c: [s for s in stores if s[2] == c] for c, _ in CHANNELS}
 
     orders, items, payments, shipments, returns = [], [], [], [], []
-    item_id = pay_id = ship_id = ret_id = 0
     for oid in range(1, n_orders + 1):
         cust = rng.choice(customers)
         channel = weighted(rng, CHANNELS)
@@ -153,10 +183,56 @@ def generate(n_orders: int, seed: int) -> Tables:
         )
         active = [p for p in promotions if p[4] <= d <= p[5]]
         promo = rng.choice(active) if active and rng.random() < 0.35 else None
-        status = weighted(rng, [("completed", 0.92), ("cancelled", 0.05), ("returned", 0.03)])
         method = weighted(rng, PAYMENT_METHODS)
         if channel != "store" and method == "cash":
             method = "credit_card"
+        cancelled = rng.random() < 0.05
+
+        on_sale = [p for p in products if p[7] <= d]
+        lines = []
+        for prod in rng.sample(on_sale, min(len(on_sale), rng.randint(1, 4))):
+            qty = rng.choices([1, 2, 3, 5], weights=[70, 20, 8, 2])[0]
+            unit_price = int(prod[5])
+            rate = float(promo[3]) if promo else 0.0
+            if promo and promo[2] == "bundle" and qty < 2:
+                rate = 0.0
+            discount = int(unit_price * qty * rate)
+            lines.append((len(items) + len(lines) + 1, oid, prod, qty, unit_price, discount))
+
+        # 受け取り日時（店舗は購入時、配送は配達時）
+        received_at = ordered_at
+        shipment = None
+        if not cancelled and channel != "store":
+            smethod = weighted(rng, SHIPPING_METHODS)
+            shipped = ordered_at + timedelta(days=rng.randint(0, 3))
+            delivered = shipped + timedelta(days=1 if smethod == "express" else rng.randint(1, 5))
+            shipment = (len(shipments) + 1, oid, smethod, shipped, delivered)
+            received_at = delivered
+
+        # 返品はカテゴリごとの確率で明細単位に決め、1 件でもあれば注文は returned
+        order_returns = []
+        if not cancelled:
+            for line_id, _, prod, qty, _, _ in lines:
+                p_return, reasons = RETURN_PROFILE[str(prod[2])]
+                if rng.random() < p_return:
+                    order_returns.append(
+                        (
+                            len(returns) + len(order_returns) + 1,
+                            line_id,
+                            received_at
+                            + timedelta(days=rng.randint(1, 14), hours=rng.randint(0, 8)),
+                            rng.randint(1, qty),
+                            weighted(rng, reasons),
+                        )
+                    )
+
+        status = "cancelled" if cancelled else ("returned" if order_returns else "completed")
+        if cancelled:
+            updated_at = ordered_at + timedelta(hours=rng.randint(1, 48))
+        elif order_returns:
+            updated_at = max(r[2] for r in order_returns)
+        else:
+            updated_at = received_at
         orders.append(
             (
                 oid,
@@ -166,44 +242,24 @@ def generate(n_orders: int, seed: int) -> Tables:
                 promo[0] if promo else None,
                 status,
                 method,
-                ordered_at,
+                updated_at,
             )
         )
-
-        total = 0
-        for prod in rng.sample(products, rng.randint(1, 4)):
-            item_id += 1
-            qty = rng.choices([1, 2, 3, 5], weights=[70, 20, 8, 2])[0]
-            unit_price = int(prod[5])
-            rate = promo[3] if promo else 0.0
-            discount = int(unit_price * qty * float(rate))
-            items.append((item_id, oid, prod[0], qty, unit_price, discount))
-            total += unit_price * qty - discount
-            if status == "returned" and rng.random() < 0.7:
-                ret_id += 1
-                returns.append(
-                    (
-                        ret_id,
-                        item_id,
-                        ordered_at + timedelta(days=rng.randint(3, 20)),
-                        rng.randint(1, qty),
-                        rng.choice(RETURN_REASONS),
-                    )
-                )
-
-        if status != "cancelled":
-            pay_id += 1
+        items.extend((lid, o, prod[0], q, up, disc) for lid, o, prod, q, up, disc in lines)
+        returns.extend(order_returns)
+        if shipment:
+            shipments.append(shipment)
+        if not cancelled:
+            total = sum(q * up - disc for _, _, _, q, up, disc in lines)
             payments.append(
-                (pay_id, oid, method, total, ordered_at + timedelta(minutes=rng.randint(0, 120)))
-            )
-            if channel != "store":
-                ship_id += 1
-                smethod = weighted(rng, SHIPPING_METHODS)
-                shipped = ordered_at + timedelta(days=rng.randint(0, 3))
-                delivered = shipped + timedelta(
-                    days=1 if smethod == "express" else rng.randint(1, 5)
+                (
+                    len(payments) + 1,
+                    oid,
+                    method,
+                    total,
+                    ordered_at + timedelta(minutes=rng.randint(0, 120)),
                 )
-                shipments.append((ship_id, oid, smethod, shipped, delivered))
+            )
 
     return Tables(
         customers, products, stores, promotions, orders, items, payments, shipments, returns
@@ -253,7 +309,9 @@ def load(db_path: Path, tables: Tables) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=Path("data/dev.duckdb"))
+    parser.add_argument(
+        "--db", type=Path, default=Path(os.environ.get("ADP_DUCKDB_PATH", "data/dev.duckdb"))
+    )
     parser.add_argument("--orders", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
