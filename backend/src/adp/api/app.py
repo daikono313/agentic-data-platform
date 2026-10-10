@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -26,6 +27,11 @@ class SendMessage(BaseModel):
 
 def create_app(service: SessionService) -> FastAPI:
     app = FastAPI(title="ADP")
+    # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["localhost", "127.0.0.1", "testserver"],
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:

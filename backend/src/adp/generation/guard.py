@@ -35,6 +35,8 @@ _MF_FLAGS = {"--metrics", "--group-by", "--limit", "--order", "--start-time", "-
 _MF_SWITCHES = {"--quiet", "--show-all", "metrics", "dimensions", "entities"}
 _META = re.compile(r"[;&|`$<>\n\\]")
 _GLOB_CHARS = re.compile(r"[*?\[{]")
+# 環境変数（秘密情報）を読める Jinja の関数・属性
+_SECRET_ACCESS = re.compile(r"\b(env_var|environ|getenv)\b")
 
 
 def allowed_patterns() -> list[str]:
@@ -91,12 +93,29 @@ class WorkspaceGuard:
                 return (
                     f"{target.name} は書き換えられません（書けるのは SQL / YAML / Markdown だけ）"
                 )
-            content = " ".join(str(data.get(k, "")) for k in ("content", "new_string")) + " ".join(
-                str(e.get("new_string", "")) for e in data.get("edits", []) or []
-            )
-            if "env_var(" in content:
-                return "env_var() は使えません"
+            if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
+                return "env_var などで環境変数を読む内容は書けません"
         return None
+
+    def _resulting_content(self, tool: str, target: Path, data: dict[str, Any]) -> str:
+        """書き込み後のファイル全体（Edit は既存の内容に置換を適用した結果）。
+
+        new_string だけを見ると、複数回の編集で禁止語を組み立てられるため。
+        """
+        if tool == "Write":
+            return str(data.get("content", ""))
+        try:
+            text = target.read_text(encoding="utf-8") if target.exists() else ""
+        except OSError:
+            text = ""
+        edits = data.get("edits") or [data]
+        for e in edits:
+            old, new = str(e.get("old_string", "")), str(e.get("new_string", ""))
+            if e.get("replace_all"):
+                text = text.replace(old, new)
+            else:
+                text = text.replace(old, new, 1) if old else text + new
+        return text
 
     def _check_bash(self, command: str) -> str | None:
         if _META.search(command):

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,7 +23,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from adp.llm.settings import LLMSettings
+from adp.llm.settings import REPO_ROOT, LLMSettings
 
 
 @dataclass
@@ -36,6 +38,8 @@ class AgentSpec:
     """Claude Code の組み込み tool（Read / Edit / Bash など）。既定は無し。"""
     max_turns: int = 20
     cwd: Path | None = None
+    purpose: str = "agent"
+    """使用量の記録に書く用途（interview / repair / eval-user など）。"""
     thinking: bool = True
     """False にすると拡張思考を無効にする（対話の応答を速くし、内容を思考に隠させない）。"""
     allowed_builtin: list[str] = field(default_factory=list)
@@ -68,8 +72,11 @@ class TurnResult:
     duration_s: float
     first_token_s: float | None
     input_tokens: int | None = None
+    """キャッシュの読み書きを含む入力トークンの合計。"""
     output_tokens: int | None = None
     error: str | None = None
+    cost_usd: float | None = None
+    """SDK が報告する概算コスト（Claude Code のログイン認証では実際の請求ではない）。"""
 
 
 AgentEvent = TextDelta | ToolCall | TurnResult
@@ -84,11 +91,50 @@ class AgentRunner(Protocol):
     ) -> AsyncIterator[AgentEvent]: ...
 
 
+USAGE_LOG_MAX_BYTES = 10 * 1024 * 1024
+"""使用量ログがこれを超えたら .1 に退避して新しく始める。"""
+
+
+def _input_tokens(usage: dict[str, Any]) -> int | None:
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    values = [v for k in keys if isinstance(v := usage.get(k), int)]
+    return sum(values) if values else None
+
+
 class ClaudeAgentRunner:
     """Claude Agent SDK（Claude Code CLI）で実行する。"""
 
-    def __init__(self, settings: LLMSettings) -> None:
+    def __init__(self, settings: LLMSettings, usage_log: Path | None = None) -> None:
         self.settings = settings
+        self.usage_log = (
+            usage_log if usage_log is not None else REPO_ROOT / ".adp" / "logs" / "llm.jsonl"
+        )
+
+    def _record(self, result: TurnResult, purpose: str) -> None:
+        """使用量を JSON Lines で記録する（#16）。プロンプトや応答の本文は記録しない。"""
+        entry = {
+            "at": datetime.now(UTC).isoformat(),
+            "purpose": purpose,
+            "auth": self.settings.auth_mode,
+            "model": result.model,
+            "session_id": result.session_id,
+            "is_error": result.is_error,
+            "duration_s": round(result.duration_s, 2),
+            "first_token_s": (
+                round(result.first_token_s, 2) if result.first_token_s is not None else None
+            ),
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "cost_usd": result.cost_usd,
+        }
+        try:
+            self.usage_log.parent.mkdir(parents=True, exist_ok=True)
+            if self.usage_log.exists() and self.usage_log.stat().st_size > USAGE_LOG_MAX_BYTES:
+                self.usage_log.replace(self.usage_log.with_suffix(".jsonl.1"))
+            with self.usage_log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # 記録の失敗で処理を止めない
 
     def _options(self, spec: AgentSpec, resume: str | None) -> ClaudeAgentOptions:
         servers: dict[str, Any] = {
@@ -119,6 +165,29 @@ class ClaudeAgentRunner:
         self, prompt: str, spec: AgentSpec, resume: str | None = None
     ) -> AsyncIterator[AgentEvent]:
         start = time.monotonic()
+        recorded = False
+        try:
+            async for event in self._stream(prompt, spec, resume, start):
+                if isinstance(event, TurnResult):
+                    recorded = True
+                yield event
+        finally:
+            if not recorded:  # 中断・異常終了でも、使った時間は記録する
+                self._record(
+                    TurnResult(
+                        session_id=resume,
+                        model=spec.model,
+                        is_error=True,
+                        duration_s=time.monotonic() - start,
+                        first_token_s=None,
+                        error="中断または異常終了",
+                    ),
+                    spec.purpose,
+                )
+
+    async def _stream(
+        self, prompt: str, spec: AgentSpec, resume: str | None, start: float
+    ) -> AsyncIterator[AgentEvent]:
         first: float | None = None
         streamed = False
         async for message in query(prompt=prompt, options=self._options(spec, resume)):
@@ -139,16 +208,19 @@ class ClaudeAgentRunner:
                 streamed = False
             elif isinstance(message, ResultMessage):
                 usage = message.usage or {}
-                yield TurnResult(
+                result = TurnResult(
                     session_id=message.session_id,
                     model=spec.model,
                     is_error=message.is_error,
                     duration_s=time.monotonic() - start,
                     first_token_s=first,
-                    input_tokens=usage.get("input_tokens"),
+                    input_tokens=_input_tokens(usage),
                     output_tokens=usage.get("output_tokens"),
                     error=_error_text(message) if message.is_error else None,
+                    cost_usd=message.total_cost_usd,
                 )
+                self._record(result, spec.purpose)
+                yield result
 
 
 def _error_text(message: ResultMessage) -> str:

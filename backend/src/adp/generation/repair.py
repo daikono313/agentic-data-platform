@@ -215,6 +215,7 @@ class Repairer:
     async def _agent(self, warehouse: Path, model: str, prompt: str) -> tuple[str, list[str]]:
         guard = WorkspaceGuard(warehouse)
         spec = AgentSpec(
+            purpose="repair",
             system_prompt=REPAIR_PROMPT.format(conventions=_conventions()),
             model=model,
             builtin_tools=BUILTIN_TOOLS,

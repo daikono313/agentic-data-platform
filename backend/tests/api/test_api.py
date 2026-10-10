@@ -176,3 +176,9 @@ async def test_finalize_is_rejected_while_turn_is_running(tmp_path: Path) -> Non
     await task
     async for _ in stream:
         pass
+
+
+def test_untrusted_host_is_rejected(setup) -> None:  # type: ignore[no-untyped-def]
+    client, *_ = setup
+    assert client.get("/health", headers={"host": "evil.example"}).status_code == 400
+    assert client.get("/health", headers={"host": "localhost:8000"}).status_code == 200

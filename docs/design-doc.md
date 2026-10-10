@@ -25,6 +25,7 @@
 - [docs/modeling-conventions.md](modeling-conventions.md) — dbt モデリング規約（BEAM との対応、キー、テスト）
 - [docs/knowledge/beam.md](knowledge/beam.md) — BEAM✲ の手法リファレンス（インタビューエージェントの知識源）
 - [docs/adr/](adr/) — この設計書の確定後に生じた設計変更の記録
+- [docs/guardrails.md](guardrails.md) — 生成コードとエージェントの安全な実行のための制限の一覧
 - dbt Semantic Layer: https://docs.getdbt.com/docs/use-dbt-semantic-layer/dbt-sl?version=2 / latest spec: https://docs.getdbt.com/docs/build/latest-metrics-spec
 
 ## Goals
@@ -216,7 +217,7 @@ MVP の段階では手動で計測する。
 
 ## Logging
 
-- backend は構造化ログ（JSON）を `.adp/logs/` に出す。
+- backend は構造化ログ（JSON）を `.adp/logs/` に出す。（MVP では LLM の使用量 `llm.jsonl` のみ。生成の各段階はジョブの記録で代替する。[guardrails.md](guardrails.md) の 6）
 - 重要なイベント: セッション開始・確定、ツール呼び出し、生成の各段階、自己修復の試行、PR 作成。
 - ログに出さないもの: API キー、トークン、`.env` の内容。
 
