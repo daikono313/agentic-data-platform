@@ -1,0 +1,152 @@
+schema_version: 1
+name: sales_by_store
+title: 店舗別の売上
+request: 店舗ごとの売上を見たい
+events:
+  - name: customer_orders_product
+    label: 顧客が商品を注文する
+    subject: 顧客
+    verb: 注文する
+    object: 商品
+    story_type: discrete
+    grain: 注文明細 1 行（1 注文の中の 1 商品）
+    grain_keys: [order_line_id]
+    source_tables: [raw.orders, raw.order_items]
+    priority: high
+    impact: high
+    effort: medium
+    measures:
+      - name: quantity
+        label: 数量
+        aggregation: sum
+        unit: 個
+        source: {table: raw.order_items, column: quantity}
+        availability: available
+      - name: sales_amount
+        label: 売上金額（税抜・値引後）
+        aggregation: sum
+        unit: 円
+        source: {table: raw.order_items, expr: "quantity * unit_price - discount_amount"}
+        availability: available
+      - name: unit_price
+        label: 販売単価
+        aggregation: average
+        additivity: non_additive
+        unit: 円
+        source: {table: raw.order_items, column: unit_price}
+        availability: available
+      - name: gross_margin
+        label: 粗利
+        aggregation: sum
+        unit: 円
+        availability: unavailable
+    dimensions:
+      - w: who
+        name: customer
+        label: 顧客
+        business_key: {table: raw.customers, column: customer_id}
+        hierarchy: [region, prefecture]
+        attributes:
+          - name: membership_rank
+            label: 会員ランク
+            examples: [gold, bronze]
+            source: {table: raw.customers, column: membership_rank}
+            availability: available
+            history_required: true
+          - name: region
+            label: 地方
+            examples: [関東]
+            source: {table: raw.customers, column: region}
+            availability: available
+          - name: prefecture
+            label: 都道府県
+            examples: [東京都]
+            source: {table: raw.customers, column: prefecture}
+            availability: available
+          - name: annual_income
+            label: 年収
+            availability: unavailable
+      - w: what
+        name: product
+        label: 商品
+        business_key: {table: raw.products, column: product_id}
+        hierarchy: [category, subcategory]
+        attributes:
+          - name: category
+            label: カテゴリ
+            examples: [食品, 家電]
+            source: {table: raw.products, column: category}
+            availability: available
+          - name: subcategory
+            label: サブカテゴリ
+            examples: [お菓子]
+            source: {table: raw.products, column: subcategory}
+            availability: available
+      - w: when
+        name: date
+        label: 注文日
+        time_grain: day
+        business_key: {table: raw.orders, expr: "cast(ordered_at as date)"}
+      - w: where
+        name: store
+        label: 店舗
+        business_key: {table: raw.stores, column: store_id}
+        attributes:
+          - name: store_name
+            label: 店舗名
+            examples: [東京都01号店]
+            source: {table: raw.stores, column: store_name}
+            availability: available
+          - name: channel
+            label: チャネル
+            examples: [store, online]
+            source: {table: raw.stores, column: channel}
+            availability: available
+      - w: why
+        name: promotion
+        label: プロモーション
+        business_key: {table: raw.promotions, column: promotion_id}
+        attributes:
+          - name: promotion_name
+            label: プロモーション名
+            examples: [キャンペーン03, プロモーションなし]
+            source: {table: raw.promotions, column: promotion_name}
+            availability: available
+      - w: how
+        name: payment_method
+        label: 支払方法
+        business_key: {table: raw.orders, column: payment_method}
+        attributes:
+          - name: payment_method_name
+            label: 支払方法
+            examples: [credit_card, cash]
+            source: {table: raw.orders, column: payment_method}
+            availability: available
+    examples:
+      - values:
+          customer.membership_rank: gold
+          product.category: 食品
+          date: "2024-03-01"
+          store.store_name: 東京都01号店
+          quantity: 2
+          sales_amount: 600
+metrics:
+  - name: revenue
+    label: 売上金額
+    question: 店舗ごとの売上を見たい
+    framed_question: 日別・店舗別の売上金額（税抜・値引後）はいくらか
+    type: simple
+    event: customer_orders_product
+    measure: sales_amount
+    group_by: [store.store_name, store.channel]
+    status: confirmed
+gaps:
+  - kind: data_unavailable
+    description: 粗利を出すための原価がソースに無い（products.unit_cost は定価ベースで実績原価ではない）
+    event: customer_orders_product
+    related: gross_margin
+  - kind: data_unavailable
+    description: 顧客の年収データがソースに無い
+    event: customer_orders_product
+    w: who
+    related: customer.annual_income
