@@ -56,7 +56,8 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
     """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。"""
     pe = fact.primary_entity
     if event.degenerate(ref):
-        return f"{pe}__{ref}"
+        # 粒度のキー（主 entity）は entity 名そのもので参照する
+        return pe if fact.grain_columns == [ref] else f"{pe}__{ref}"
     dim_ref, _, attr = ref.partition(".")
     d = event.dimension(dim_ref)
     if d is None:
@@ -74,13 +75,17 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
             raise SemanticError(f"{ref} の日付列が {fact.name} にありません")
         return f"{pe}__{col}__{grain}"
     if is_masterless(d):
-        return f"{pe}__{d.ref}"
+        return pe if fact.grain_columns == [d.ref] else f"{pe}__{d.ref}"
     if not attr:
         raise SemanticError(f"{ref} には属性名が必要です")
     return f"{d.ref}__{attr}"
 
 
-def _literal(value: str) -> str:
+def _literal(value: str | int | float | bool) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
     return "'" + value.replace("'", "''") + "'"
 
 
@@ -201,20 +206,21 @@ def metric_definitions(
                     cumulative["window"] = m.window
                 top.append(cumulative)
         elif m.type == MetricType.RATIO:
-            top.append(
-                base | {"type": "ratio", "numerator": m.numerator, "denominator": m.denominator}
-            )
+            ratio = base | {"type": "ratio", "numerator": m.numerator, "denominator": m.denominator}
+            if flt:
+                ratio["filter"] = flt
+            top.append(ratio)
         elif m.type == MetricType.DERIVED:
             assert m.expr is not None
             inputs = sorted(set(re.findall(r"[a-z_][a-z0-9_]*", m.expr)))
-            top.append(
-                base
-                | {
-                    "type": "derived",
-                    "expr": m.expr,
-                    "input_metrics": [{"name": n} for n in inputs],
-                }
-            )
+            derived = base | {
+                "type": "derived",
+                "expr": m.expr,
+                "input_metrics": [{"name": n} for n in inputs],
+            }
+            if flt:
+                derived["filter"] = flt
+            top.append(derived)
         group_by = [mf_name(event, fact, ref) for ref in m.group_by]
         if m.type == MetricType.CUMULATIVE and not any(
             g.startswith("metric_time") for g in group_by

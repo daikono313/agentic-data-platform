@@ -198,6 +198,29 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 issues.append(
                     f"{p} filter の {f.ref} がイベントの属性・縮退ディメンションにありません"
                 )
+        if metric.filter and not metric.filters:
+            issues.append(f"{p} 絞り込み条件（{metric.filter}）が filters として記録されていません")
+        if metric.type == MetricType.CUMULATIVE and f"{metric.name}_input" in metrics:
+            issues.append(
+                f"{p} 指標名 {metric.name}_input は累計の元の指標に使うため予約されています"
+            )
+        if metric.type in (MetricType.RATIO, MetricType.DERIVED):
+            # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
+            inputs = (
+                [metric.numerator, metric.denominator]
+                if metric.type == MetricType.RATIO
+                else re.findall(r"[a-z_][a-z0-9_]*", metric.expr or "")
+            )
+            for name in inputs:
+                src = metrics.get(name or "")
+                src_event = model.event(src.event) if src else None
+                if src_event is None or src_event.name == event.name:
+                    continue
+                for ref in [*metric.group_by, *(f.ref for f in metric.filters)]:
+                    if resolve_ref(src_event, ref) in (None, "measure"):
+                        issues.append(
+                            f"{p} {ref} は元の指標 {name} のイベント {src_event.name} にありません"
+                        )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":

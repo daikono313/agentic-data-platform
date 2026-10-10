@@ -101,7 +101,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
   - fct 側: `derived_semantics: {entities: [{type: foreign, name: <role>, expr: <role>_key}]}`
 - When と `dim_date`
   - `dim_date` は time spine を兼ね、`date_day` を `entity: {type: primary, name: date}` にする（属性は categorical）。
-  - fct の各 When について `derived_semantics: {entities: [{type: foreign, name: <When ref>, expr: <日付列>}]}` を書く。When ref が `date` 以外の場合は、dim_date 側にも `{type: unique, name: <When ref>, expr: date_day}` を足す。
+  - fct の agg_time の日付列について `derived_semantics: {entities: [{type: foreign, name: date, expr: <日付列>}]}` を書く（MVP では agg_time の When だけ dim_date の属性で集計できる）。
 - dim の列名に `day` / `week` / `month` / `quarter` / `year` を使わない（時間粒度の名前と衝突して検証に失敗する）。
 
 ### metric
@@ -109,6 +109,9 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 - simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。ratio / derived / cumulative は、その fct の YAML ファイルのトップレベル `metrics:` に書く。
 - cumulative は `window`（例: `7 days`）か `grain_to_date` を使い、必ず `period_agg: last` を付ける。
 - 業務上の除外条件（キャンセルを除くなど）は `filter` に書き、description にも日本語で書く。ratio の分子と分母で条件をそろえる。
+- BEAM の `MetricRequest.filters`（ref・演算子・値）を `{{ Dimension('<参照名>') }} <演算子> <値>` に変換する（すべて AND）。ratio / derived の filter は、その指標自体に付ける。
+- 累計（cumulative）の元になる simple metric は `<name>_input` という名前で自動で作る（この名前は予約）。
+- 粒度のキー（主 entity）で切る場合の参照名は entity 名そのもの（例: `order_line`）。
 
 ### BEAM の group_by → MetricFlow の参照名
 

@@ -293,7 +293,18 @@ class MetricFilter(_Base):
 
     ref: str = Field(description="`<dimension ref>.<attribute>` または縮退ディメンション名")
     operator: FilterOperator
-    values: list[str] = Field(min_length=1)
+    values: list[str | int | float | bool] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _single_value(self) -> MetricFilter:
+        if (
+            self.operator in (FilterOperator.EQUALS, FilterOperator.NOT_EQUALS)
+            and len(self.values) != 1
+        ):
+            raise ValueError(
+                f"{self.operator.value} の値は 1 つだけ指定してください（複数なら in / not_in）"
+            )
+        return self
 
 
 class MetricStatus(StrEnum):
