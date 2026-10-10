@@ -1,0 +1,225 @@
+schema_version: 1
+name: store_sales
+title: 店舗別売上
+request: 店舗ごとの売上を見たい
+events:
+- name: customer_orders_product
+  table_name: order_lines
+  label: 顧客が商品を注文する
+  subject: 顧客
+  verb: 注文する
+  object: 商品
+  story_type: discrete
+  grain: 注文の中の商品1つ(注文明細1行)
+  grain_keys:
+  - order_item_id
+  measures:
+  - name: sales_amount
+    label: 売上金額(税抜)
+    description: 数量×販売単価−値引額
+    aggregation: sum
+    additivity: additive
+    unit: 円
+    source:
+      table: raw.order_items
+      expr: quantity * unit_price - discount_amount
+    availability: available
+  dimensions:
+  - w: when
+    name: ordered_at
+    label: 注文日
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: day
+    fact_key:
+      table: raw.orders
+      column: ordered_at
+  - w: where
+    name: store
+    label: 店舗
+    description: ''
+    attributes:
+    - name: store_name
+      label: 店舗名
+      description: ''
+      examples: []
+      source:
+        table: raw.stores
+        column: store_name
+      availability: available
+      history_required: false
+    - name: channel
+      label: 販売チャネル
+      description: store / online / app
+      examples:
+      - store
+      - online
+      - app
+      source:
+        table: raw.stores
+        column: channel
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.stores
+      column: store_id
+    fact_key:
+      table: raw.orders
+      column: store_id
+  - w: what
+    name: product
+    label: 商品
+    description: ''
+    attributes:
+    - name: category
+      label: 商品カテゴリ
+      description: ''
+      examples:
+      - 衣料
+      - 家電
+      - 日用品
+      - 書籍
+      - 食品
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.products
+      column: product_id
+    fact_key:
+      table: raw.order_items
+      column: product_id
+  - w: who
+    name: customer
+    label: 顧客
+    description: ''
+    attributes:
+    - name: membership_rank
+      label: 会員ランク
+      description: ''
+      examples:
+      - bronze
+      - silver
+      - gold
+      - platinum
+      source:
+        table: raw.customers
+        column: membership_rank
+      availability: available
+      history_required: false
+    - name: annual_income
+      label: 年収
+      description: ソースに存在しない
+      examples: []
+      availability: unavailable
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.customers
+      column: customer_id
+    fact_key:
+      table: raw.orders
+      column: customer_id
+  - w: why
+    name: promotion
+    label: プロモーション
+    description: 適用なしの注文は promotion_id が NULL
+    attributes:
+    - name: promotion_name
+      label: プロモーション名
+      description: ''
+      examples:
+      - キャンペーン01
+      - キャンペーン14
+      source:
+        table: raw.promotions
+        column: promotion_name
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.promotions
+      column: promotion_id
+    fact_key:
+      table: raw.orders
+      column: promotion_id
+  - w: how
+    name: order_status
+    label: 注文ステータス
+    description: ''
+    attributes:
+    - name: order_status
+      label: 注文ステータス
+      description: ''
+      examples: []
+      source:
+        table: raw.orders
+        column: order_status
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: order_status
+    fact_key:
+      table: raw.orders
+      column: order_status
+  degenerate_dimensions:
+  - name: order_item_id
+    label: 注文明細ID
+    source:
+      table: raw.order_items
+      column: order_item_id
+  agg_time_dimension: ordered_at
+  examples:
+  - values:
+      sales_amount: 2700
+      product.category: 食品
+      customer.membership_rank: gold
+  priority: high
+  impact: high
+  effort: medium
+  source_tables:
+  - raw.orders
+  - raw.order_items
+  - raw.stores
+  - raw.products
+  - raw.customers
+  - raw.promotions
+metrics:
+- name: sales_amount_total
+  label: 売上金額(税抜)
+  question: 店舗ごとの売上を見たい
+  framed_question: 店舗別の売上金額(数量×単価−値引、税抜、キャンセル除く)の合計はいくらか
+  type: simple
+  event: customer_orders_product
+  measure: sales_amount
+  filter: キャンセルされた注文は含めない
+  filters:
+  - ref: order_status.order_status
+    operator: '!='
+    values:
+    - cancelled
+  group_by:
+  - store.store_name
+  status: draft
+gaps:
+- kind: data_unavailable
+  description: 顧客の年収別の切り口を希望されたが、ソースに年収のデータがない
+  event: customer_orders_product
+  w: who
+  related: customer.annual_income
+- kind: deferred
+  description: 具体例の「渋谷店」「春のキャンペーン」はソースの店舗・プロモーション名と一致しない。イメージとして扱い、例は商品カテゴリ・会員ランク・金額(3×1,000−300=2,700円)のみ記録。ソース店舗との対応はモデラーにおまかせ
+  event: customer_orders_product
+  w: where
+  related: store.store_name
+- kind: deferred
+  description: 工数(中)はモデラーの見積もり
+  event: customer_orders_product
+finalized_at: '2026-10-10T12:21:18.848711Z'

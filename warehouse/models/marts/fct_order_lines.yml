@@ -1,0 +1,153 @@
+# adp により生成
+version: 2
+models:
+- name: fct_order_lines
+  description: '顧客が商品を注文する（transaction）。粒度: 注文の中の商品1つ(注文明細1行)'
+  semantic_model:
+    enabled: true
+  agg_time_dimension: ordered_on
+  derived_semantics:
+    entities:
+    - type: foreign
+      name: date
+      expr: ordered_on
+  metrics:
+  - name: sales_amount_total
+    label: 売上金額(税抜)
+    description: 店舗別の売上金額(数量×単価−値引、税抜、キャンセル除く)の合計はいくらか
+    type: simple
+    agg: sum
+    expr: sales_amount
+    filter: '{{ Dimension(''order_line__order_status'') }} <> ''cancelled'''
+  columns:
+  - name: order_item_id
+    description: 注文明細ID（縮退ディメンション）
+    entity:
+      type: primary
+      name: order_line
+    data_tests:
+    - unique
+    - not_null
+  - name: ordered_on
+    description: 注文日
+    granularity: day
+    dimension:
+      type: time
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_date')
+          field: date_day
+  - name: ordered_at
+    description: 注文日（日時）
+  - name: store_key
+    description: 店舗
+    entity:
+      type: foreign
+      name: store
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_store')
+          field: store_key
+  - name: product_key
+    description: 商品
+    entity:
+      type: foreign
+      name: product
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_product')
+          field: product_key
+  - name: customer_key
+    description: 顧客
+    entity:
+      type: foreign
+      name: customer
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_customer')
+          field: customer_key
+  - name: promotion_key
+    description: プロモーション
+    entity:
+      type: foreign
+      name: promotion
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_promotion')
+          field: promotion_key
+  - name: order_status
+    description: 注文ステータス（マスタなし）
+    dimension:
+      type: categorical
+    data_tests:
+    - accepted_values:
+        arguments:
+          values:
+          - cancelled
+          - completed
+          - returned
+        config:
+          severity: warn
+  - name: sales_amount
+    description: 売上金額(税抜)（円）
+unit_tests:
+- name: test_fct_order_lines_example_1
+  description: BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する
+  model: fct_order_lines
+  given:
+  - input: ref('stg_order_items')
+    rows:
+    - discount_amount: -2700
+      order_id: 1
+      order_item_id: 1
+      product_id: 1
+      quantity: 0
+      unit_price: 0
+    - discount_amount: 1
+      order_id: 2
+      order_item_id: 2
+      product_id: null
+      quantity: 1
+      unit_price: 1
+  - input: ref('stg_orders')
+    rows:
+    - customer_id: 1
+      order_id: 1
+      order_status: x
+      ordered_at: '2024-01-01 00:00:00'
+      promotion_id: 1
+      store_id: 1
+    - customer_id: null
+      order_id: 2
+      order_status: x
+      ordered_at: '2024-01-01 00:00:00'
+      promotion_id: null
+      store_id: null
+  expect:
+    rows:
+    - order_item_id: 1
+      ordered_on: '2024-01-01'
+      store_key: c4ca4238a0b923820dcc509a6f75849b
+      product_key: c4ca4238a0b923820dcc509a6f75849b
+      customer_key: c4ca4238a0b923820dcc509a6f75849b
+      promotion_key: c4ca4238a0b923820dcc509a6f75849b
+      order_status: x
+      sales_amount: 2700
+    - order_item_id: 2
+      ordered_on: '2024-01-01'
+      store_key: 4fb8d4763fa5f060e796b4710c921eb8
+      product_key: 4fb8d4763fa5f060e796b4710c921eb8
+      customer_key: 4fb8d4763fa5f060e796b4710c921eb8
+      promotion_key: 4fb8d4763fa5f060e796b4710c921eb8
+      order_status: x
+      sales_amount: 0
