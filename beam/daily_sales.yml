@@ -1,0 +1,276 @@
+schema_version: 1
+name: daily_sales
+title: 日別売上
+request: 日毎の売り上げがみたい
+events:
+- name: customer_orders_product
+  table_name: order_lines
+  label: 顧客が商品を注文する
+  subject: 顧客
+  verb: 注文する
+  object: 商品
+  story_type: discrete
+  grain: 注文の中の商品1つ(注文明細1行)
+  grain_keys:
+  - order_item_id
+  measures:
+  - name: sales_amount
+    label: 売上金額(税抜)
+    description: 数量×販売単価−値引額
+    aggregation: sum
+    additivity: additive
+    unit: 円
+    source:
+      table: raw.order_items
+      expr: quantity * unit_price - discount_amount
+    availability: available
+  - name: quantity
+    label: 数量
+    description: ''
+    aggregation: sum
+    additivity: additive
+    unit: 個
+    source:
+      table: raw.order_items
+      column: quantity
+    availability: available
+  - name: discount_amount
+    label: 値引額(税抜)
+    description: ''
+    aggregation: sum
+    additivity: additive
+    unit: 円
+    source:
+      table: raw.order_items
+      column: discount_amount
+    availability: available
+  dimensions:
+  - w: when
+    name: order_date
+    label: 注文日
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: day
+    fact_key:
+      table: raw.orders
+      column: ordered_at
+  - w: how
+    name: order_status
+    label: 注文ステータス
+    description: ''
+    attributes:
+    - name: order_status
+      label: 注文ステータス
+      description: ''
+      examples:
+      - completed
+      - returned
+      - cancelled
+      source:
+        table: raw.orders
+        column: order_status
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: order_status
+    fact_key:
+      table: raw.orders
+      column: order_status
+  - w: how
+    name: payment_method
+    label: 支払方法
+    description: ''
+    attributes:
+    - name: payment_method
+      label: 支払方法
+      description: ''
+      examples:
+      - credit_card
+      - e_money
+      - cash
+      - bank_transfer
+      source:
+        table: raw.orders
+        column: payment_method
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: payment_method
+    fact_key:
+      table: raw.orders
+      column: payment_method
+  - w: who
+    name: customer
+    label: 顧客
+    description: ''
+    attributes:
+    - name: region
+      label: 居住地方
+      description: ''
+      examples:
+      - 関東
+      - 関西
+      - 中部
+      - 北海道
+      - 九州
+      source:
+        table: raw.customers
+        column: region
+      availability: available
+      history_required: true
+    - name: prefecture
+      label: 居住都道府県
+      description: ''
+      examples:
+      - 東京都
+      - 大阪府
+      - 神奈川県
+      source:
+        table: raw.customers
+        column: prefecture
+      availability: available
+      history_required: true
+    hierarchy:
+    - region
+    - prefecture
+    business_key:
+      table: raw.customers
+      column: customer_id
+    fact_key:
+      table: raw.orders
+      column: customer_id
+  - w: what
+    name: product
+    label: 商品
+    description: ''
+    attributes:
+    - name: brand
+      label: ブランド
+      description: ''
+      examples:
+      - つばさ
+      - ひかり
+      - こだま
+      - みなと
+      - あおば
+      - さくら
+      source:
+        table: raw.products
+        column: brand
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.products
+      column: product_id
+    fact_key:
+      table: raw.order_items
+      column: product_id
+  - w: where
+    name: store
+    label: 店舗・チャネル
+    description: ''
+    attributes:
+    - name: channel
+      label: 販売チャネル
+      description: ''
+      examples:
+      - store
+      - online
+      - app
+      source:
+        table: raw.stores
+        column: channel
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.stores
+      column: store_id
+    fact_key:
+      table: raw.orders
+      column: store_id
+  - w: why
+    name: promotion
+    label: プロモーション
+    description: ''
+    attributes:
+    - name: promotion_name
+      label: プロモーション名
+      description: ''
+      examples:
+      - キャンペーン01
+      - キャンペーン02
+      - キャンペーン03
+      source:
+        table: raw.promotions
+        column: promotion_name
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.promotions
+      column: promotion_id
+    fact_key:
+      table: raw.orders
+      column: promotion_id
+  degenerate_dimensions:
+  - name: order_item_id
+    label: 注文明細ID
+    source:
+      table: raw.order_items
+      column: order_item_id
+  - name: order_id
+    label: 注文ID
+    source:
+      table: raw.order_items
+      column: order_id
+  agg_time_dimension: order_date
+  examples:
+  - values:
+      order_date: '2025-12-20'
+      customer.region: 関東
+      product.brand: さくら
+      store.channel: app
+      payment_method.payment_method: credit_card
+      quantity: 2
+      discount_amount: 500
+      sales_amount: 5500
+  priority: high
+  impact: high
+  effort: medium
+  source_tables:
+  - raw.orders
+  - raw.order_items
+  - raw.customers
+  - raw.products
+  - raw.stores
+  - raw.promotions
+metrics:
+- name: daily_sales
+  label: 日別売上金額
+  question: 日毎の売り上げがみたい
+  framed_question: 1日ごとの売上金額(税抜、キャンセル除く)はいくらか
+  type: simple
+  event: customer_orders_product
+  measure: sales_amount
+  filter: キャンセルされた注文を除く(完了と返品を含む)
+  filters:
+  - ref: order_status.order_status
+    operator: '!='
+    values:
+    - cancelled
+  group_by:
+  - order_date.day
+  status: confirmed
+gaps:
+- kind: deferred
+  description: '工数(effort: medium)はモデラーの見積もり'
+  event: customer_orders_product
+  related: effort
+finalized_at: '2026-10-10T13:24:19.047858Z'
