@@ -169,7 +169,13 @@ class SessionService:
             prompt_version=message.prompt_version if message else prompt_version(),
             model=message.model if message else None,
         )
-        return feedback_view(self.store.save_feedback(row))
+        # 送られてこなかった分類・コメントは既存の値を残す
+        keep = {
+            column
+            for field, column in (("categories", "categories_json"), ("comment", "comment"))
+            if field not in body.model_fields_set
+        }
+        return feedback_view(self.store.save_feedback(row, keep))
 
     async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
         state = self._state(session_id)

@@ -90,6 +90,10 @@ def system_prompt() -> str:
 
 
 def prompt_version() -> str:
-    """`<版>+<内容のハッシュ>`。版を上げ忘れても、知識ファイルなどの変更を区別できる。"""
+    """`<版>+<内容のハッシュ>`。版を上げ忘れても、知識ファイルなどの変更を区別できる。
+
+    ハッシュに入るのはシステムプロンプト（知識ファイルを含む）だけ。tool の説明や設定を変えたときは
+    PROMPT_VERSION を上げる。
+    """
     digest = hashlib.sha256(system_prompt().encode("utf-8")).hexdigest()[:8]
     return f"{PROMPT_VERSION}+{digest}"

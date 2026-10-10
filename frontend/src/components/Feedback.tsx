@@ -11,15 +11,17 @@ export type SendFeedback = (body: FeedbackIn) => Promise<FeedbackView>
 function useSender(send: SendFeedback) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const submit = async (body: FeedbackIn) => {
+  const submit = async (body: FeedbackIn): Promise<boolean> => {
     setStatus('sending')
     try {
       await send(body)
       setStatus('sent')
       setError(null)
+      return true
     } catch (e) {
       setStatus('error')
       setError(errorText(e))
+      return false
     }
   }
   return { status, error, submit }
@@ -93,11 +95,14 @@ export function MessageFeedback({
   const [thumb, setThumb] = useState<'up' | 'down' | null>(current?.thumb ?? null)
   const [open, setOpen] = useState(false)
   const { status, error, submit } = useSender(send)
-  const choose = (t: 'up' | 'down') => {
-    setThumb(t)
-    // 👎 のときは理由を聞く。評価そのものは先に保存する
+  const choose = async (t: 'up' | 'down') => {
+    // 👎 のときは理由を聞く。同じものを押し直したら、入力欄を開くだけにする
     setOpen(t === 'down')
-    void submit({ kind: 'message', message_index: index, thumb: t })
+    if (t === thumb) return
+    const previous = thumb
+    setThumb(t)
+    // 評価だけを先に保存する（保存済みの分類・コメントは backend が残す）
+    if (!(await submit({ kind: 'message', message_index: index, thumb: t }))) setThumb(previous)
   }
   return (
     <div className="text-xs text-muted-foreground">
@@ -107,7 +112,7 @@ export function MessageFeedback({
           aria-label="この発言はよかった"
           aria-pressed={thumb === 'up'}
           className={cn('rounded p-1 hover:bg-background', thumb === 'up' && 'text-primary')}
-          onClick={() => choose('up')}
+          onClick={() => void choose('up')}
         >
           <ThumbsUp className="size-3.5" />
         </button>
@@ -116,7 +121,7 @@ export function MessageFeedback({
           aria-label="この発言はよくなかった"
           aria-pressed={thumb === 'down'}
           className={cn('rounded p-1 hover:bg-background', thumb === 'down' && 'text-destructive')}
-          onClick={() => choose('down')}
+          onClick={() => void choose('down')}
         >
           <ThumbsDown className="size-3.5" />
         </button>
@@ -126,7 +131,11 @@ export function MessageFeedback({
           </button>
         )}
         {status === 'sent' && <span role="status">送信しました</span>}
-        {error && <span className="text-destructive">{error}</span>}
+        {error && (
+          <span role="alert" className="text-destructive">
+            {error}
+          </span>
+        )}
       </div>
       {open && thumb && (
         <Details
@@ -191,7 +200,11 @@ export function SessionRating({ current, send }: { current?: FeedbackView; send:
             ありがとうございます。改善に使います
           </span>
         )}
-        {error && <span className="text-xs text-destructive">{error}</span>}
+        {error && (
+          <span role="alert" className="text-xs text-destructive">
+            {error}
+          </span>
+        )}
       </div>
     </form>
   )

@@ -3,6 +3,7 @@
 発言ごとの 👍 / 👎・分類・コメントと、セッション全体の評価。
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -50,12 +51,26 @@ def test_message_feedback_is_saved_with_context(setup) -> None:  # type: ignore[
     assert row.message_text == "言い換えました。" and row.user_text == "店舗ごとの売上"
     assert row.prompt_version == prompt_version() and row.phase == "framing"
 
-    # 送り直すと上書きする（同じ発言に 2 件残さない）
+    # 👍 / 👎 だけを送り直しても、分類とコメントは残す（同じ発言に 2 件残さない）
     client.post(
         f"/sessions/{sid}/feedback", json={"kind": "message", "message_index": 1, "thumb": "up"}
     )
     [row] = store.feedback(sid)
-    assert row.thumb == "up" and row.comment == ""
+    assert row.thumb == "up" and row.comment == "『粒度』の意味がわからない"
+    assert json.loads(row.categories_json) == ["duplicate", "jargon"]
+    # 明示して送れば消せる
+    client.post(
+        f"/sessions/{sid}/feedback",
+        json={
+            "kind": "message",
+            "message_index": 1,
+            "thumb": "up",
+            "categories": [],
+            "comment": "",
+        },
+    )
+    [row] = store.feedback(sid)
+    assert row.comment == "" and row.categories_json == "[]"
     assert client.get(f"/sessions/{sid}").json()["feedback"][0]["thumb"] == "up"
 
 
@@ -90,6 +105,21 @@ def test_invalid_feedback_is_rejected(setup) -> None:  # type: ignore[no-untyped
     assert client.post("/sessions/nope/feedback", json=bad[0]).status_code == 404
     assert store.feedback(sid) == []
     assert "jargon" in client.get("/feedback/categories").json()
+
+
+def test_concurrent_feedback_is_one_row(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = Store(tmp_path / "app.db")
+
+    def save(thumb: str) -> None:
+        store.save_feedback(
+            FeedbackRow(session_id="s", kind="message", message_index=1, thumb=thumb)
+        )
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(save, ["up", "down"] * 20))
+    assert len(store.feedback("s")) == 1
 
 
 def _age(store: Store, row: FeedbackRow, days: int) -> None:

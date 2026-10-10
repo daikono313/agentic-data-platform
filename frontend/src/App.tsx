@@ -132,6 +132,11 @@ function InterviewApp() {
       } finally {
         // done が届かずにストリームが終わっても、入力できる状態に戻す
         dispatch({ type: 'idle' })
+        // 会話を backend と合わせる（発言の番号でフィードバックを送るため。空の発言や中断でずれない）
+        api
+          .getSession(id)
+          .then((s) => dispatch({ type: 'session', session: s }))
+          .catch(() => {})
       }
     },
     [],

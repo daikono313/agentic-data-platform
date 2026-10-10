@@ -48,6 +48,10 @@ class FeedbackIn(BaseModel):
         unknown = set(self.categories) - set(CATEGORIES)
         if unknown:
             raise ValueError(f"分類にないものがあります: {sorted(unknown)}")
-        self.categories = sorted(set(self.categories), key=list(CATEGORIES).index)
-        self.comment = self.comment.strip()
+        # 送られてきた項目だけを整える
+        # （代入すると「送られた項目」に数えられ、保存済みの値を消してしまう）
+        if "categories" in self.model_fields_set:
+            self.categories = sorted(set(self.categories), key=list(CATEGORIES).index)
+        if "comment" in self.model_fields_set:
+            self.comment = self.comment.strip()
         return self

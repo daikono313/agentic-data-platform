@@ -63,13 +63,32 @@ describe('発言ごとのフィードバック', () => {
     expect(screen.queryByLabelText('コメント')).toBeNull()
   })
 
-  it('送れなかったら理由を出す', async () => {
+  it('送れなかったら理由を出し、評価を元に戻す', async () => {
     const send = vi.fn(async () => {
       throw new Error(JSON.stringify({ detail: 'セッションがありません' }))
     })
     render(<ChatPanel messages={messages} draft="" choices={[]} busy={false} onSend={() => {}} feedback={{ categories: CATEGORIES, send }} />)
     fireEvent.click(screen.getByLabelText('この発言はよかった'))
-    expect(await screen.findByText('セッションがありません')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('セッションがありません')
+    expect(screen.getByLabelText('この発言はよかった')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('同じ評価を押し直しても送り直さない（保存済みのコメントを上書きしない）', async () => {
+    const { sent, send } = sender()
+    const current = { kind: 'message' as const, message_index: 1, thumb: 'down' as const, score: null, categories: ['jargon'], comment: 'x', prompt_version: null, model: null }
+    render(
+      <ChatPanel
+        messages={messages}
+        draft=""
+        choices={[]}
+        busy={false}
+        onSend={() => {}}
+        feedback={{ items: [current], categories: CATEGORIES, send }}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText('この発言はよくなかった'))
+    expect(screen.getByLabelText('コメント')).toHaveValue('x')
+    expect(sent).toEqual([])
   })
 
   it('フィードバックが無ければ評価ボタンを出さない（デモ）', () => {

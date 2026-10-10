@@ -190,9 +190,15 @@ def build_default_app() -> FastAPI:
     retention = env.get("ADP_FEEDBACK_RETENTION_DAYS") or os.environ.get(
         "ADP_FEEDBACK_RETENTION_DAYS"
     )
-    store = Store(
-        REPO_ROOT / ".adp" / "app.db",
-        feedback_retention_days=int(retention) if retention else RETENTION_DAYS,
-    )
+    try:
+        retention_days = int(retention) if retention else RETENTION_DAYS
+    except ValueError:
+        print(
+            f"ADP_FEEDBACK_RETENTION_DAYS は日数（整数）で指定してください: {retention!r}。"
+            f"{RETENTION_DAYS} 日にします",
+            file=sys.stderr,
+        )
+        retention_days = RETENTION_DAYS
+    store = Store(REPO_ROOT / ".adp" / "app.db", feedback_retention_days=retention_days)
     service = SessionService(store, interviewer, pipeline.run)
     return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT))

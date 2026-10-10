@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,7 @@ class Store:
         self.engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
         SQLModel.metadata.create_all(self.engine)
         self._add_missing_columns()
+        self._feedback_lock = threading.Lock()
         self.prune_feedback(feedback_retention_days)
 
     def _add_missing_columns(self) -> None:
@@ -178,9 +180,13 @@ class Store:
             return db.get(JobRow, job_id)
 
     # --- feedback（#44） ---
-    def save_feedback(self, row: FeedbackRow) -> FeedbackRow:
-        """同じ発言（セッション全体の評価はセッションごとに 1 つ）への送り直しは上書きする。"""
-        with Session(self.engine) as db:
+    def save_feedback(self, row: FeedbackRow, keep: set[str] | None = None) -> FeedbackRow:
+        """同じ発言（セッション全体の評価はセッションごとに 1 つ）への送り直しは上書きする。
+
+        keep に挙げた項目は、既存の値を残す（👍 / 👎 だけを送り直してもコメントを消さない）。
+        同時に送られても 1 件にまとめるため、保存はロックの中で行う。
+        """
+        with self._feedback_lock, Session(self.engine) as db:
             existing = db.exec(
                 select(FeedbackRow).where(
                     FeedbackRow.session_id == row.session_id,
@@ -191,7 +197,7 @@ class Store:
                 )
             ).first()
             if existing is not None:
-                data = row.model_dump(exclude={"id", "created_at"})
+                data = row.model_dump(exclude={"id", "created_at", *(keep or set())})
                 for key, value in data.items():
                     setattr(existing, key, value)
                 existing.updated_at = _now()
