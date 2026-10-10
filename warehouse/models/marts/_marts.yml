@@ -1,0 +1,127 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: 日付ディメンション（When）。範囲は dbt_project.yml の vars（adp_date_start / adp_date_end）
+    columns:
+      - {name: date_day, description: 日付, data_tests: [unique, not_null]}
+      - {name: year, description: 年}
+      - {name: quarter, description: 四半期}
+      - {name: month, description: 月}
+      - {name: month_start, description: 月初日}
+      - {name: week_start, description: 週の開始日（月曜）}
+      - {name: day_of_week, description: 曜日番号（1=月曜〜7=日曜）}
+      - {name: day_of_week_name, description: 曜日名}
+      - {name: is_weekend, description: 土日かどうか}
+
+  - name: dim_customer
+    description: 顧客ディメンション（Who）。SCD Type1。customer_id が NULL の行は不明メンバー
+    columns:
+      - {name: customer_key, description: サロゲートキー, data_tests: [unique, not_null]}
+      - {name: customer_id, description: 顧客ID（自然キー）}
+      - {name: customer_name, description: 顧客名}
+      - {name: gender, description: 性別}
+      - {name: birth_date, description: 生年月日}
+      - {name: prefecture, description: 居住都道府県}
+      - {name: region, description: 居住地方}
+      - {name: membership_rank, description: 会員ランク}
+      - {name: signup_date, description: 会員登録日}
+
+  - name: dim_product
+    description: 商品ディメンション（What）。SCD Type1
+    columns:
+      - {name: product_key, description: サロゲートキー, data_tests: [unique, not_null]}
+      - {name: product_id, description: 商品ID（自然キー）}
+      - {name: product_name, description: 商品名}
+      - {name: category, description: 商品カテゴリ}
+      - {name: subcategory, description: 商品サブカテゴリ}
+      - {name: brand, description: ブランド}
+      - {name: list_price, description: 定価（円・税抜）}
+
+  - name: dim_store
+    description: 店舗・チャネルディメンション（Where）。SCD Type1
+    columns:
+      - {name: store_key, description: サロゲートキー, data_tests: [unique, not_null]}
+      - {name: store_id, description: 店舗ID（自然キー）}
+      - {name: store_name, description: 店舗名}
+      - name: channel
+        description: 販売チャネル（store / online / app。不明メンバーは「不明」）
+        data_tests:
+          - accepted_values: {arguments: {values: [store, online, app, 不明]}}
+      - {name: prefecture, description: 所在都道府県（online / app は NULL）}
+      - {name: region, description: 所在地方（online / app は NULL）}
+
+  - name: dim_promotion
+    description: プロモーションディメンション（Why）。適用なしの注文は「プロモーションなし」の行を参照する
+    columns:
+      - {name: promotion_key, description: サロゲートキー, data_tests: [unique, not_null]}
+      - {name: promotion_id, description: プロモーションID（自然キー）}
+      - {name: promotion_name, description: プロモーション名}
+      - name: promotion_type
+        description: 種類（percent_off / point_up / bundle。不明メンバーは「プロモーションなし」を表す none）
+        data_tests:
+          - accepted_values: {arguments: {values: [percent_off, point_up, bundle, none]}}
+      - {name: discount_rate, description: 割引率}
+
+  - name: fct_order_lines
+    description: |
+      注文明細ファクト（transaction fact）。
+      元イベント: 顧客が商品を注文する。粒度: 注文明細 1 行（1 注文の中の 1 商品）
+    columns:
+      - {name: order_line_id, description: 注文明細番号（縮退ディメンション）, data_tests: [unique, not_null]}
+      - {name: order_id, description: 注文番号（縮退ディメンション）, data_tests: [not_null]}
+      - name: customer_key
+        description: 顧客（dim_customer）
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_customer'), field: customer_key}}
+      - name: product_key
+        description: 商品（dim_product）
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_product'), field: product_key}}
+      - name: store_key
+        description: 店舗（dim_store）
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_store'), field: store_key}}
+      - name: promotion_key
+        description: プロモーション（dim_promotion）
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_promotion'), field: promotion_key}}
+      - name: ordered_on
+        description: 注文日（dim_date）
+        data_tests:
+          - not_null
+          - relationships: {arguments: {to: ref('dim_date'), field: date_day}}
+      - {name: ordered_at, description: 注文日時}
+      - name: order_status
+        description: 注文ステータス
+        data_tests:
+          - accepted_values: {arguments: {values: [completed, cancelled, returned]}}
+      - {name: payment_method, description: 支払方法（How。属性が1つだけなので dim を作らず fct に置く）}
+      - {name: quantity, description: 数量}
+      - {name: unit_price, description: 販売単価（円・税抜）}
+      - {name: discount_amount, description: 値引額（円・税抜）}
+      - {name: sales_amount, description: 売上金額（数量 × 単価 − 値引、円・税抜）。キャンセルされた明細も含むので、指標ではステータスで絞る}
+
+unit_tests:
+  - name: test_fct_order_lines_from_beam_example
+    description: |
+      BEAM の具体例（gold 会員が食品を2個、単価300円で購入）から作った unit test。
+      measure と縮退ディメンションは expect で検証し、dim の属性や When は given の入力行を作るのに使う。
+      プロモーションなしの注文は不明メンバーのキー（md5("__unknown__")）になることも検証する。
+    model: fct_order_lines
+    given:
+      - input: ref('stg_order_items')
+        rows:
+          - {order_item_id: 1, order_id: 10, product_id: 5, quantity: 2, unit_price: 300, discount_amount: 0}
+          - {order_item_id: 2, order_id: 10, product_id: 6, quantity: 1, unit_price: 1000, discount_amount: 100}
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 10, customer_id: 1, store_id: 1, ordered_at: "2024-03-01 10:00:00", ordered_on: "2024-03-01", promotion_id: null, order_status: completed, payment_method: cash}
+    expect:
+      rows:
+        - {order_line_id: 1, order_id: 10, ordered_on: "2024-03-01", quantity: 2, sales_amount: 600, promotion_key: 4fb8d4763fa5f060e796b4710c921eb8}
+        - {order_line_id: 2, order_id: 10, ordered_on: "2024-03-01", quantity: 1, sales_amount: 900, promotion_key: 4fb8d4763fa5f060e796b4710c921eb8}

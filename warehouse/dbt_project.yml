@@ -10,6 +10,11 @@ test-paths: ["tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
+vars:
+  # dim_date の範囲（end は含まない）。When のソース日付がすべて収まるようにする
+  adp_date_start: "2010-01-01"
+  adp_date_end: "2031-01-01"
+
 models:
   adp:
     staging:
