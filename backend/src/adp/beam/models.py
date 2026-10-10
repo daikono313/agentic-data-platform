@@ -128,8 +128,9 @@ def _check_row_expr(expr: str) -> None:
         "ディメンションで表します）"
     )
     # dbt は SQL の中の Jinja を展開する（env_var・run_query で秘密情報の読み出しや任意の SQL）
-    if "{" in expr or "}" in expr:
-        raise ValueError("expr に { } は使えません（Jinja は書けません）")
+    # \ は Jinja の文字列（dim_key の引数）の中でエスケープとして解釈され、引用符などを作れる
+    if any(c in expr for c in "{}\\"):
+        raise ValueError("expr に { } \\ は使えません（Jinja やエスケープは書けません）")
     try:
         trees = sqlglot.parse(expr, read="duckdb")
     except sqlglot.errors.SqlglotError as e:

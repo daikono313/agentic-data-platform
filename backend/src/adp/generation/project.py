@@ -18,7 +18,8 @@ _ALLOWED_JINJA = [
     re.compile(r"ref\('[a-z_][a-z0-9_]*'\)"),
     re.compile(r"source\('[a-z_][a-z0-9_]*', '[a-z_][a-z0-9_]*'\)"),
     re.compile(r"unknown_key\(\)"),
-    re.compile(r"dim_key\('[^'{}]*'\)|dim_key\(\"[^\"{}]*\"\)"),
+    # 引数は Jinja の文字列なので、エスケープ（\x27 など）を作れる \ も含めない
+    re.compile(r"dim_key\('[^'{}\\]*'\)|dim_key\(\"[^\"{}\\]*\"\)"),
     # YAML のシングルクォートの中では ' が '' になる
     re.compile(r"Dimension\(('|'')[a-z_][a-z0-9_]*\1\)"),
 ]

@@ -35,6 +35,9 @@ def test_row_expressions_are_allowed(expr: str) -> None:
         "{{ env_var('GH_TOKEN') }}",
         "'{{ env_var(\"X\") }}'",
         "{% set x = 1 %}quantity",
+        # Jinja の文字列のエスケープ（dim_key の引数の中で引用符を作る。#61 の再レビュー）
+        r"concat(customer_id, '\x27 || (select string_agg(email, \x27,\x27) from raw.customers)"
+        r" || \x27')",
         # 閉じていない文字列・コメント（sqlglot の別の例外も ValueError にする）
         "'abc",
         "a /*",
@@ -63,5 +66,6 @@ def test_generated_files_reject_unexpected_jinja(tmp_path) -> None:  # type: ign
         "{# comment #}",
         "{{ dim_key('{{ env_var(\"X\") }}') }}",
         "{{ ref('x') }}{{ ref(\"y\") }}",
+        "{{ dim_key(\"concat(id, '\\x27 || (select 1) || \\x27')\") }}",
     ):
         assert unsafe_jinja(bad), bad

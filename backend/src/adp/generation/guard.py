@@ -40,7 +40,8 @@ _MF_SWITCHES = {"--quiet", "--show-all", "metrics", "dimensions", "entities"}
 _META = re.compile(r"[;&|`$<>\n\\]")
 _GLOB_CHARS = re.compile(r"[*?\[{]")
 # 環境変数（秘密情報）を読める Jinja の関数・属性
-_SECRET_ACCESS = re.compile(r"\b(env_var|environ|getenv)\b")
+_SECRET_ACCESS = re.compile(r"\b(env_var|environ|getenv|run_query)\b")
+"""秘密情報の読み出し（env_var など）と、dbt の実行中に任意の SQL を流す run_query。"""
 
 
 def allowed_patterns() -> list[str]:
@@ -110,7 +111,7 @@ class WorkspaceGuard:
             if PROTECTED_DIRS & {p.lower() for p in target.relative_to(self.root).parts[:1]}:
                 return "チャート（charts/ と chart_specs/）は書き換えられません"
             if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
-                return "env_var などで環境変数を読む内容は書けません"
+                return "env_var や run_query を含む内容は書けません"
         return None
 
     def _resulting_content(self, tool: str, target: Path, data: dict[str, Any]) -> str:

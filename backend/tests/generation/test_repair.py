@@ -40,6 +40,8 @@ def test_guard(tmp_path: Path) -> None:
         ("Write", {"file_path": str(tmp_path / ".." / "x.sql"), "content": "x"}),
         # チャートは adp.charts が書き出す（#42）
         ("Write", {"file_path": "charts/x.yml", "content": "title: x"}),
+        # dbt の実行中に任意の SQL を流す
+        ("Write", {"file_path": "models/a.sql", "content": "{{ run_query('copy x to y') }}"}),
         ("Write", {"file_path": "chart_specs/x.yml", "content": "title: x"}),
         # 大文字・小文字を区別しないファイルシステムでの迂回
         ("Write", {"file_path": "Charts/x.yml", "content": "title: x"}),
