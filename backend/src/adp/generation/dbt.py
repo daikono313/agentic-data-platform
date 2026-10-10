@@ -12,6 +12,7 @@ from typing import Any, Protocol
 import yaml
 
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
+from adp.design.builder import dim_key_expr
 
 UNKNOWN_LABEL = "不明"
 
@@ -26,6 +27,14 @@ class WarehouseInfo(Protocol):
         ...
 
     def source_primary_key(self, table: str) -> str | None: ...
+
+    def existing_columns(self, model: str) -> set[str]:
+        """既存モデルの YAML に書かれている列。"""
+        ...
+
+    def declared_sources(self) -> set[str]:
+        """dbt の sources に宣言済みのテーブル（`<schema>.<table>`）。"""
+        ...
 
 
 @dataclass
@@ -77,7 +86,10 @@ def _select(columns: list[tuple[str, str]]) -> str:
 
 def staging_files(table: str, info: WarehouseInfo) -> list[GeneratedFile]:
     model = "stg_" + table.rpartition(".")[2]
-    source_name, _, source_table = table.rpartition(".")
+    schema, _, source_table = table.rpartition(".")
+    declared = table in info.declared_sources()
+    # 未宣言のソースは、テーブルごとに別名のソースとして宣言する（既存の sources を編集しない）
+    source_name = schema if declared else f"adp_{source_table}"
     cols = info.source_columns(table)
     sql = (
         "-- adp により生成\n"
@@ -92,10 +104,27 @@ def staging_files(table: str, info: WarehouseInfo) -> list[GeneratedFile]:
             entry["data_tests"] = ["unique", "not_null"]
         columns.append(entry)
     yml = _yaml([{"name": model, "description": f"{table} を整形", "columns": columns}])
-    return [
+    files = [
         GeneratedFile(f"models/staging/{model}.sql", sql),
         GeneratedFile(f"models/staging/{model}.yml", yml),
     ]
+    if not declared:
+        sources = yaml.safe_dump(
+            {
+                "version": 2,
+                "sources": [
+                    {"name": source_name, "schema": schema, "tables": [{"name": source_table}]}
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        files.append(
+            GeneratedFile(
+                f"models/staging/_{source_name}__sources.yml", "# adp により生成\n" + sources
+            )
+        )
+    return files
 
 
 # --- dim -----------------------------------------------------------------------------------
@@ -114,7 +143,7 @@ def dim_files(dim: DimTable, info: WarehouseInfo) -> list[GeneratedFile]:
         j.right.alias: j.right.table for j in dim.joins
     }
     natural = dim.columns[0]
-    select = [(dim.key_column, f"{{{{ dim_key('{natural.expr}') }}}}")]
+    select = [(dim.key_column, dim_key_expr(natural.expr))]
     select += [(c.name, c.expr) for c in dim.columns]
     unknown = ["{{ unknown_key() }}"] + [
         f"'{UNKNOWN_LABEL}'"
@@ -127,6 +156,13 @@ def dim_files(dim: DimTable, info: WarehouseInfo) -> list[GeneratedFile]:
         + _select(select)
         + "\n"
         + _from_clause(dim.base, dim.joins)
+        # 自然キーごとに 1 行にする（NULL の自然キーは不明メンバーと重複するので除く）
+        + f"\nwhere {natural.expr} is not null"
+        + "\nqualify row_number() over (partition by "
+        + natural.expr
+        + " order by "
+        + natural.expr
+        + ") = 1"
         + "\n\nunion all\n\n-- 不明メンバー\nselect "
         + ", ".join(unknown)
         + "\n"
@@ -174,7 +210,7 @@ def fact_files(fact: FactTable) -> list[GeneratedFile]:
             tests += ["unique", "not_null"]
         if c.role in (ColumnRole.FOREIGN_KEY, ColumnRole.TIME) and c.references:
             ref_model, _, ref_col = c.references.partition(".")
-            if not c.nullable:
+            if not c.nullable and "not_null" not in tests:
                 tests.append("not_null")
             tests.append(
                 {"relationships": {"arguments": {"to": f"ref('{ref_model}')", "field": ref_col}}}
@@ -205,6 +241,11 @@ def fact_files(fact: FactTable) -> list[GeneratedFile]:
 
 
 def generate_models(design: PhysicalDesign, info: WarehouseInfo) -> Generation:
+    if design.blockers:
+        raise ValueError(
+            "確認が必要な課題があるため生成できません: "
+            + " / ".join(i.message for i in design.blockers)
+        )
     existing = info.existing_models()
     result = Generation()
     tables: set[str] = set()
@@ -223,18 +264,20 @@ def generate_models(design: PhysicalDesign, info: WarehouseInfo) -> Generation:
     for dim in design.dims:
         if dim.name in existing:
             result.reused.append(dim.name)
-            if dim.new_columns:
+            have = info.existing_columns(dim.name)
+            missing = [c.name for c in dim.columns if c.name not in have]
+            if missing:
                 result.tasks.append(
                     AgentTask(
                         kind="add_dim_columns",
                         target=dim.name,
                         instruction=(
-                            f"既存の {dim.name} に列 {', '.join(dim.new_columns)} を追加する。"
+                            f"既存の {dim.name} に列 {', '.join(missing)} を追加する。"
                             "既存の列は変更・削除しない。ソース: "
                             + ", ".join(
-                                f"{c.name} = {c.expr}"
+                                f"{c.name} = {c.expr}（{dim.base.table} が t0）"
                                 for c in dim.columns
-                                if c.name in dim.new_columns
+                                if c.name in missing
                             )
                         ),
                     )

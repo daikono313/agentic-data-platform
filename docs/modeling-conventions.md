@@ -85,7 +85,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 ## Semantic Layer（MetricFlow, latest spec）
 
-[ADR 0001](adr/0001-metricflow-on-duckdb.md) を参照。リファレンスは `models/marts/_marts.yml`。
+[ADR 0001](adr/0001-metricflow-on-duckdb.md) を参照。dim の例は `warehouse/models/marts/_marts.yml`、fct と指標の例は `backend/tests/fixtures/generation/reference/fct_order_lines.yml`。
 
 ### semantic model
 
@@ -106,7 +106,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 ### metric
 
-- simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。ratio / derived / cumulative は `_marts.yml` のトップレベル `metrics:` に書く。
+- simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。ratio / derived / cumulative は、その fct の YAML ファイルのトップレベル `metrics:` に書く。
 - cumulative は `window`（例: `7 days`）か `grain_to_date` を使い、必ず `period_agg: last` を付ける。
 - 業務上の除外条件（キャンセルを除くなど）は `filter` に書き、description にも日本語で書く。ratio の分子と分母で条件をそろえる。
 

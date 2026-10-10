@@ -27,7 +27,7 @@ def _warehouse_copy(tmp: Path) -> Path:
     shutil.copytree(
         ROOT / "warehouse",
         dst,
-        ignore=shutil.ignore_patterns("target", "data", "logs", "dbt_packages", ".user.yml"),
+        ignore=shutil.ignore_patterns("target", "data", "logs", ".user.yml"),
     )
     spec = importlib.util.spec_from_file_location(
         "gen_sample", dst / "scripts/generate_sample_data.py"
@@ -42,6 +42,11 @@ def _warehouse_copy(tmp: Path) -> Path:
 
 def _dbt(warehouse: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ | {"DBT_PROFILES_DIR": str(warehouse)}
+    if args[0] == "build" and not (warehouse / "dbt_packages" / "dbt_utils").exists():
+        deps = subprocess.run(
+            [str(DBT), "deps"], cwd=warehouse, env=env, capture_output=True, text=True, check=False
+        )
+        assert deps.returncode == 0, deps.stdout[-2000:]
     return subprocess.run(
         [str(DBT), *args], cwd=warehouse, env=env, capture_output=True, text=True, check=False
     )
@@ -77,7 +82,6 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     ref_sql = (FIXTURES / "generation/reference/fct_order_lines.sql").read_text(encoding="utf-8")
     (warehouse / "models/marts/ref_fct_order_lines.sql").write_text(ref_sql, encoding="utf-8")
 
-    _dbt(warehouse, "deps")
     result = _dbt(warehouse, "build")
     assert result.returncode == 0, result.stdout[-3000:]
 
@@ -117,7 +121,6 @@ def test_new_dimension_and_staging_are_generated(tmp_path: Path) -> None:
     dim_sql = next(f.content for f in generation.files if f.path.endswith("dim_store.sql"))
     assert "'不明'" in dim_sql and "{{ unknown_key() }}" in dim_sql
     info.write(generation.files)
-    _dbt(warehouse, "deps")
     result = _dbt(warehouse, "build")
     assert result.returncode == 0, result.stdout[-3000:]
 
@@ -130,3 +133,113 @@ def _drop_model_entry(text: str, name: str) -> str:
         if key in data:
             data[key] = [m for m in data[key] if m.get("name") != name]
     return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def test_existing_dim_missing_columns_become_tasks(warehouse: Path) -> None:
+    from adp.beam import Attribute, Availability, SourceRef
+
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    store = beam.events[0].dimension("store")
+    assert store is not None
+    store.attributes.append(
+        Attribute(
+            name="opened_on",
+            label="開店日",
+            source=SourceRef(table="raw.stores", column="opened_on"),
+            availability=Availability.AVAILABLE,
+        )
+    )
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    generation = generate_models(design, ProjectInfo(warehouse, catalog))
+    tasks = [(t.kind, t.target) for t in generation.tasks]
+    assert ("add_dim_columns", "dim_store") in tasks
+
+
+def test_blockers_stop_generation(warehouse: Path) -> None:
+    from adp.design import DesignIssue, IssueSeverity
+
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    design = DesignBuilder(CatalogSchema(catalog)).build(
+        load(FIXTURES / "beam" / "sales_by_store.yml")
+    )
+    design.issues.append(DesignIssue(severity=IssueSeverity.BLOCKER, message="x"))
+    with pytest.raises(ValueError, match="確認が必要"):
+        generate_models(design, ProjectInfo(warehouse, catalog))
+
+
+def test_write_is_all_or_nothing(tmp_path: Path) -> None:
+    from adp.generation import GeneratedFile
+
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "b.sql").write_text("old")
+    info = ProjectInfo(tmp_path, Catalog(tmp_path / "x.duckdb"))
+    with pytest.raises(FileExistsError):
+        info.write([GeneratedFile("models/a.sql", "a"), GeneratedFile("models/b.sql", "b")])
+    assert not (tmp_path / "models" / "a.sql").exists()
+
+
+def test_edge_cases_compile(tmp_path: Path) -> None:
+    """式の自然キー、FK が粒度の fct、未宣言のソースでも dbt が通る。"""
+    import duckdb as ddb
+
+    from adp.beam import FactType
+    from adp.design import (
+        Column,
+        ColumnRole,
+        DimTable,
+        FactTable,
+        PhysicalDesign,
+        SourceTable,
+    )
+
+    warehouse = _warehouse_copy(tmp_path)
+    con = ddb.connect(str(warehouse / "data" / "dev.duckdb"))
+    con.execute(
+        "create table raw.coupons as select store_id, channel, 'C' || store_id as code"
+        " from raw.stores"
+    )
+    con.close()
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    base = SourceTable(table="raw.coupons", model="stg_coupons", alias="t0")
+    dim = DimTable(
+        name="dim_store_channel",
+        dimension="store_channel",
+        label="店舗チャネル",
+        key_column="store_channel_key",
+        base=base,
+        columns=[
+            Column(
+                name="store_channel",
+                role=ColumnRole.NATURAL_KEY,
+                expr="t0.store_id || '-' || t0.channel",
+            ),
+            Column(name="channel", role=ColumnRole.ATTRIBUTE, expr="t0.channel"),
+        ],
+    )
+    fact = FactTable(
+        name="fct_coupon_stores",
+        event="e",
+        label="クーポン",
+        fact_type=FactType.TRANSACTION,
+        grain="店舗チャネル",
+        grain_columns=["store_channel_key"],
+        base=base,
+        columns=[
+            Column(
+                name="store_channel_key",
+                role=ColumnRole.FOREIGN_KEY,
+                expr="{{ dim_key(\"t0.store_id || '-' || t0.channel\") }}",
+                references="dim_store_channel.store_channel_key",
+            ),
+            Column(name="code", role=ColumnRole.DEGENERATE, expr="t0.code"),
+        ],
+        primary_entity="coupon_store",
+    )
+    design = PhysicalDesign(beam="x", facts=[fact], dims=[dim], uses_dim_date=False)
+    info = ProjectInfo(warehouse, catalog)
+    generation = generate_models(design, info)
+    assert "models/staging/_adp_coupons__sources.yml" in [f.path for f in generation.files]
+    info.write(generation.files)
+    result = _dbt(warehouse, "build", "--select", "+fct_coupon_stores", "+dim_store_channel")
+    assert result.returncode == 0, result.stdout[-3000:]
