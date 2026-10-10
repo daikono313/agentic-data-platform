@@ -78,7 +78,9 @@ class GitWorkspace:
     def remote_repo(self) -> str | None:
         """origin が GitHub のときの `<owner>/<repo>`（それ以外は None）。"""
         url = self.git("remote", "get-url", "origin").rstrip("/")
-        m = re.search(r"github\.com[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url)
+        m = re.search(
+            r"^(?:https://|ssh://git@|git@)github\.com[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url
+        )
         return f"{m.group(1)}/{m.group(2)}" if m else None
 
     def remove(self, wt: Worktree, path: str) -> None:

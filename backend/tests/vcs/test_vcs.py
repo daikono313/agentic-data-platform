@@ -54,6 +54,8 @@ def repo(tmp_path: Path) -> Path:
         ("git@github.com:daikono313/auto_data_platform.git", "daikono313/auto_data_platform"),
         ("https://github.com/daikono313/auto_data_platform", "daikono313/auto_data_platform"),
         ("https://gitlab.com/a/b.git", None),
+        ("https://evil-github.com/a/b", None),
+        ("https://x.com/github.com/a/b", None),
         ("/tmp/remote/daikono313/repo.git", None),
     ],
 )

@@ -291,11 +291,13 @@ class GenerationPipeline:
     def _commit_image(self, wt: Worktree, beam: BeamModel) -> str | None:
         """画像を commit し、次の commit で消す。PR 本文は画像のある commit を参照する。"""
         image = f"{ASSETS_DIR}/{beam.name}.png"
-        repo = self.workspace.remote_repo()
-        if repo is None or not (wt.path / image).exists():
-            return None
-        before = self.workspace.git("rev-parse", "HEAD", cwd=wt.path)
+        before: str | None = None
         try:
+            repo = self.workspace.remote_repo()
+            if repo is None or not (wt.path / image).exists():
+                shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
+                return None
+            before = self.workspace.git("rev-parse", "HEAD", cwd=wt.path)
             self.workspace.stage(wt, [ASSETS_DIR])
             sha = self.workspace.commit(
                 wt, "chore: PR 本文に載せるチャートの画像（次の commit で削除）"
@@ -304,7 +306,8 @@ class GenerationPipeline:
             self.workspace.commit(wt, "chore: チャートの画像を削除（main には残さない）")
         except Exception:
             # 画像なしで PR を作る。画像の commit をブランチに残さない
-            self.workspace.git("reset", "-q", "--hard", before, cwd=wt.path)
+            if before is not None:
+                self.workspace.git("reset", "-q", "--hard", before, cwd=wt.path)
             shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
             return None
         return f"https://github.com/{repo}/blob/{sha}/{image}?raw=true"

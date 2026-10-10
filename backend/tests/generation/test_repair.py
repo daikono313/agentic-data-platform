@@ -46,6 +46,9 @@ def test_guard(tmp_path: Path) -> None:
         ("MultiEdit", {"file_path": "CHART_SPECS/x.yml", "content": "x"}),
         ("Write", {"file_path": "DBT_CHARTS.yml", "content": "sources: {}"}),
         ("Write", {"file_path": "models/a.SQL.py", "content": "x"}),
+        # Unicode の case folding（ſ → s）での迂回
+        ("Write", {"file_path": "dbt_chart\u017f.yml", "content": "x"}),
+        ("Write", {"file_path": "chart\u017f/x.yml", "content": "x"}),
         ("Edit", {"file_path": str(tmp_path / "charts/.gitkeep/x.yml"), "new_string": "x"}),
         ("Write", {"file_path": "models/x.py", "content": "def model(dbt, s): ..."}),
         ("Edit", {"file_path": "dbt_project.yml", "new_string": "x"}),

@@ -93,7 +93,10 @@ class WorkspaceGuard:
                 return outside
         if tool in WRITE_TOOLS:
             target = self._resolve(str(data.get("file_path", "")))
-            # macOS などのファイルシステムは大文字・小文字を区別しないので、小文字にして比べる
+            # macOS などのファイルシステムは大文字・小文字（Unicode の case folding。ſ → s など）を
+            # 区別しない。書けるパスを ASCII に限り、小文字にして比べる
+            if not all(p.isascii() for p in target.relative_to(self.root).parts):
+                return "パスには英数字（ASCII）だけを使ってください"
             if (
                 target.name.lower() in PROTECTED_FILES
                 or target.suffix.lower() not in WRITABLE_SUFFIXES
