@@ -15,6 +15,7 @@ dependencies = [
   "dbt-core>=1.12,<1.13",
   "dbt-duckdb>=1.11",
   "dbt-metricflow[dbt-duckdb]>=0.15",
+  "dbt-charts>=0.9.1,<0.10",
 ]
 
 [dependency-groups]
