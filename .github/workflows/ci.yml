@@ -25,7 +25,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: uv python install 3.12
-      - run: make setup
+      - run: make setup SAMPLE_ORDERS=3000
       - run: make lint
       - run: make test
       - run: make dbt-build
