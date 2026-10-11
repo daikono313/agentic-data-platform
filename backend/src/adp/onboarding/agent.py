@@ -87,7 +87,7 @@ async def propose_with_agent(
         system_prompt=SYSTEM_PROMPT + "\n既存のオントロジー:\n```yaml\n" + dump(ontology) + "```\n",
         model=settings.default_model,
         tools={
-            CATALOG_SERVER: build_tools(catalog),
+            CATALOG_SERVER: build_tools(catalog, sample=False),  # 行の値は要らない（最小権限）
             SERVER_NAME: [build_submit_tool(ontology, catalog, source, out)],
         },
         max_turns=MAX_TURNS,

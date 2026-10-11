@@ -157,7 +157,17 @@ class ForeignKeyCandidate(BaseModel):
 
 
 SAMPLE_MAX = 5
+SAMPLE_VALUE_MAX = 100
+"""sample_rows で返す 1 つの値の最大文字数（長い自由記述・JSON で結果が大きくならないように）。"""
 MASKED = "（個人情報のため非表示）"
+FREE_TEXT_MASKED = "（自由記述のため非表示）"
+_FREE_TEXT = re.compile(
+    r"(^|_)(memo|note|notes|comment|comments|remark|remarks|review|review_text|message|"
+    r"body|free_text|inquiry|shipping_name|ship_to|recipient|contact|card|card_number|"
+    r"credit_card|password|passwd|secret|token|my_number|mynumber)($|_)",
+    re.IGNORECASE,
+)
+"""行の値として出さない列（自由記述は個人情報を含みうる。秘密情報）。sample_rows だけで伏せる。"""
 
 
 class SampleRows(BaseModel):
@@ -402,38 +412,48 @@ class Catalog:
     ) -> SampleRows:
         """テーブルの実際の行を数件返す。where_column = value で絞れる（キーで関連する行をたどる）。
 
-        値は文字列にして返す。個人情報の列（is_pii）は値を伏せる。絞り込みの値は SQL に埋め込まず
-        パラメータで渡し、個人情報の列での絞り込みは受け付けない（値の当て推量を防ぐ）。
+        値は文字列にして返す（長い値は切り詰める）。個人情報の列（is_pii）と、自由記述・秘密情報と
+        推定する列は値を伏せる。絞り込みの値は SQL に埋め込まずパラメータで渡し、伏せた列での
+        絞り込みは受け付けない（値の当て推量を防ぐ）。
         """
+        if value is not None and not where_column:
+            raise ValueError("value を指定したときは where_column も指定してください")
         schema, name = self._resolve(table)
         limit = max(1, min(int(limit), SAMPLE_MAX))
         with self._connect() as con:
             columns = [c.name for c in self._columns(con, schema, name)]
-            if not columns:
-                raise ValueError(f"テーブルが見つかりません: {schema}.{name}")
-            masked = [c for c in columns if self.is_pii(schema, name, c)]
+            pii = {c for c in columns if self.is_pii(schema, name, c)}
+            free = {c for c in columns if c not in pii and _FREE_TEXT.search(c)}
             sql = f"select * from {_q(schema)}.{_q(name)}"
             params: list[Any] = []
-            if where_column is not None:
+            if where_column:
                 if where_column not in columns:
                     raise ValueError(f"列が見つかりません: {schema}.{name}.{where_column}")
-                if where_column in masked:
-                    raise ValueError("個人情報の列では絞り込めません")
+                if where_column in pii or where_column in free:
+                    raise ValueError("個人情報・自由記述の列では絞り込めません")
                 if value is None:
                     raise ValueError("where_column を指定したときは value も指定してください")
                 sql += f" where cast({_q(where_column)} as varchar) = ?"
                 params.append(str(value))
             sql += f" limit {limit}"
             rows = con.execute(sql, params).fetchall()
-        out = [
-            [
-                MASKED if col in masked and v is not None else (None if v is None else str(v))
-                for col, v in zip(columns, row, strict=True)
-            ]
-            for row in rows
-        ]
+
+        def show(col: str, v: Any) -> str | None:
+            if v is None:
+                return None
+            if col in pii:
+                return MASKED
+            if col in free:
+                return FREE_TEXT_MASKED
+            text = str(v)
+            return text if len(text) <= SAMPLE_VALUE_MAX else text[: SAMPLE_VALUE_MAX - 1] + "…"
+
+        out = [[show(c, v) for c, v in zip(columns, row, strict=True)] for row in rows]
         return SampleRows(
-            table=f"{schema}.{name}", columns=columns, rows=out, masked_columns=masked
+            table=f"{schema}.{name}",
+            columns=columns,
+            rows=out,
+            masked_columns=[c for c in columns if c in pii or c in free],
         )
 
     def profile_table(self, table: str, top: int = 5, detail: bool = False) -> TableProfile:
