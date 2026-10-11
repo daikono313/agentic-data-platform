@@ -1,8 +1,8 @@
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { api } from '@/api/client'
-import { errorText, onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
+import { api, errorText } from '@/api/client'
+import { onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -38,7 +38,7 @@ export function MermaidDiagram({ text }: { text: string }) {
     let cancelled = false
     renderMermaid(text)
       .then((s) => !cancelled && setSvg(s))
-      .catch((e) => !cancelled && setError(String(e)))
+      .catch((e) => !cancelled && setError(errorText(e)))
     return () => {
       cancelled = true
     }

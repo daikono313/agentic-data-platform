@@ -44,6 +44,21 @@ def warehouse_db(warehouse: Path) -> Path:
     """DuckDB のファイル（dbt のプロファイル `warehouse/profiles.yml` の既定と同じ場所）。
 
     profiles.yml は ADP_DUCKDB_PATH で場所を変えられるが、アプリはその指定を受け付けない
-    （warehouse_kind が起動時に止める）。生成の検証の dbt にも渡さない（generation.repair）。
+    （warehouse_kind が起動時に止める）。子プロセスの dbt / mf / dct にも渡さない（tool_env）。
     """
     return warehouse / "data" / "dev.duckdb"
+
+
+DROP_ENV = ("ADP_DUCKDB_PATH",)
+"""dbt のプロファイルの DB の場所を変える環境変数。子プロセスには渡さない（設定されていると、
+生成の検証が作業ツリーではなく手元の本物の DB に書き、描画・反映が別の DB を見る）。"""
+
+
+def tool_env(warehouse: Path) -> dict[str, str]:
+    """dbt / mf / dct（と検査の `python -m adp.*`）を子プロセスで動かすときの環境変数。
+
+    プロファイルは `warehouse` のもの（DBT_PROFILES_DIR）、出力に色を付けない（NO_COLOR）、
+    DB の場所を変える変数（DROP_ENV）は外す。どの呼び出しもここを通す（#110）。
+    """
+    env = {k: v for k, v in os.environ.items() if k not in DROP_ENV}
+    return env | {"DBT_PROFILES_DIR": str(warehouse), "NO_COLOR": "1"}

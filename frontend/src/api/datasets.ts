@@ -205,18 +205,6 @@ export function rankDimensions<T extends { name: string; kind: string }>(dims: T
   return [...dims].sort((a, b) => score(a) - score(b))
 }
 
-/** API のエラー（FastAPI の {"detail": ...}）を読みやすい文にする */
-export function errorText(e: unknown): string {
-  const text = e instanceof Error ? e.message : String(e)
-  try {
-    const detail = (JSON.parse(text) as { detail?: unknown }).detail
-    if (typeof detail === 'string') return detail
-  } catch {
-    // JSON でなければそのまま
-  }
-  return text
-}
-
 export function matches(query: string, ...texts: string[]): boolean {
   const q = query.trim().toLowerCase()
   return !q || texts.some((t) => t.toLowerCase().includes(q))

@@ -1,9 +1,9 @@
 import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
-import { api } from '@/api/client'
+import { api, errorText, trackJob } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import { errorText, exampleRequests, rankDimensions, similarMetrics, type Datasets } from '@/api/datasets'
+import { exampleRequests, rankDimensions, similarMetrics, type Datasets } from '@/api/datasets'
 import { chartUrl } from '@/api/charts'
 import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
@@ -144,7 +144,7 @@ function InterviewApp() {
       try {
         for await (const event of api.send(id, text)) dispatch({ type: 'event', event })
       } catch (e) {
-        dispatch({ type: 'error', error: String(e) })
+        dispatch({ type: 'error', error: errorText(e) })
       } finally {
         // done が届かずにストリームが終わっても、入力できる状態に戻す
         dispatch({ type: 'idle' })
@@ -165,25 +165,11 @@ function InterviewApp() {
       window.history.replaceState(null, '', `?session=${s.id}`)
       await send(s.id, request)
     } catch (e) {
-      dispatch({ type: 'error', error: String(e) })
+      dispatch({ type: 'error', error: errorText(e) })
     }
   }
 
-  const followJob = useCallback(async (initial: JobView) => {
-    let job = initial
-    for await (const ev of api.jobEvents(job.id)) {
-      if (ev.event === 'step') {
-        const step = ev.data
-        job = { ...job, steps: job.steps.map((x) => (x.step === step.step ? step : x)) }
-      } else {
-        job = ev.data
-      }
-      dispatch({ type: 'job', job })
-    }
-    if (job.status === 'running') {
-      dispatch({ type: 'job', job: { ...job, status: 'failed', error: '進捗の受信が途切れました。再読み込みしてください' } })
-    }
-  }, [])
+  const followJob = useCallback((initial: JobView) => trackJob(initial, (job) => dispatch({ type: 'job', job })), [])
 
   const finalize = async () => {
     if (!session) return
@@ -192,7 +178,7 @@ function InterviewApp() {
       dispatch({ type: 'session', session: s })
       if (s.job) await followJob(s.job)
     } catch (e) {
-      dispatch({ type: 'error', error: String(e) })
+      dispatch({ type: 'error', error: errorText(e) })
     }
   }
 
@@ -201,7 +187,7 @@ function InterviewApp() {
     try {
       dispatch({ type: 'session', session: { ...(await api.reopen(session.id)), job: null } })
     } catch (e) {
-      dispatch({ type: 'error', error: String(e) })
+      dispatch({ type: 'error', error: errorText(e) })
     }
   }
 
@@ -213,11 +199,11 @@ function InterviewApp() {
       .then((s) => {
         dispatch({ type: 'session', session: s })
         // 生成ジョブの実行中に再読み込みした場合は、進捗の受信を再開する
-        if (s.job?.status === 'running') followJob(s.job).catch((e) => dispatch({ type: 'error', error: String(e) }))
+        if (s.job?.status === 'running') followJob(s.job).catch((e) => dispatch({ type: 'error', error: errorText(e) }))
       })
       .catch((e) => {
         window.history.replaceState(null, '', '/')
-        dispatch({ type: 'error', error: `セッションを読み込めませんでした: ${String(e)}` })
+        dispatch({ type: 'error', error: `セッションを読み込めませんでした: ${errorText(e)}` })
       })
   }, [isDemo, followJob])
 

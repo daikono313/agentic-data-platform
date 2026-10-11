@@ -6,7 +6,8 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ PR_STATE_LOOKUPS = 20
 PR_STATE_DEADLINE_S = 15.0
 """PR の状態の問い合わせを待つ時間の上限。過ぎたら残りは「不明」で一覧を返す（#88 レビュー）。"""
 PR_STATE_WORKERS = 5
+STATE_CACHE = 64
+"""メモリに置くインタビューの状態の数の上限。超えたら使っていないものから外す（DB から読める）。"""
 
 
 def _sse(event: str, data: Any) -> SSEEvent:
@@ -74,15 +77,23 @@ class Job:
     id: str
     session_id: str
     status: str = "running"
-    steps: list[dict[str, Any]] = field(
-        default_factory=lambda: [
-            {"step": s, "label": label, "status": "pending", "detail": ""} for s, label in STEPS
-        ]
-    )
+    steps: list[dict[str, Any]] = field(default_factory=list)
     pr_url: str | None = None
     error: str | None = None
     branch: str | None = None
     subscribers: list[asyncio.Queue[SSEEvent | None]] = field(default_factory=list)
+
+    @classmethod
+    def new(cls, session_id: str, steps: Sequence[tuple[str, str]]) -> Job:
+        """新しいジョブ。steps は (ステップ, 表示名) の並び（STEPS・ONBOARD_STEPS・SYNC_STEPS）。"""
+        return cls(
+            id=uuid.uuid4().hex[:12],
+            session_id=session_id,
+            steps=[
+                {"step": step, "label": label, "status": "pending", "detail": ""}
+                for step, label in steps
+            ],
+        )
 
     def view(self) -> dict[str, Any]:
         return {
@@ -129,8 +140,10 @@ class SessionService:
         self.pr_state = pr_state
         self.sync = sync
         self._pr_cache: dict[str, tuple[float, str | None]] = {}
-        self._states: dict[str, InterviewState] = {}
+        self._states: OrderedDict[str, InterviewState] = OrderedDict()
+        """最近使った順（STATE_CACHE 件まで）。"""
         self._jobs: dict[str, Job] = {}
+        """実行中のジョブ。終わって保存したら外す（以後は DB から読む）。"""
         self._tasks: set[asyncio.Task[None]] = set()
         self._activity: dict[str, float] = {}
         """インタビューの直近の操作（time.monotonic）。自動反映を控えるため（#106）。"""
@@ -139,7 +152,9 @@ class SessionService:
     # --- セッション ------------------------------------------------------------------------
 
     def _state(self, session_id: str) -> InterviewState:
-        if session_id not in self._states:
+        if session_id in self._states:
+            self._states.move_to_end(session_id)
+        else:
             try:
                 state = self.store.load_session(session_id)
             except ValidationError as e:  # 検証が厳しくなる前に保存した成果物など（500 にしない）
@@ -149,13 +164,26 @@ class SessionService:
                 ) from e
             if state is None:
                 raise NotFound(f"セッション {session_id} がありません")
-            self._states[session_id] = state
+            self._cache_state(session_id, state)
         return self._states[session_id]
+
+    def _cache_state(self, session_id: str, state: InterviewState) -> None:
+        """状態をメモリに置き、上限を超えたら古いものから外す。
+
+        応答の途中の状態は外さない（応答の排他は状態のオブジェクトごとのため）。外した状態は
+        保存済みなので、次に使うときに DB から読み直す。
+        """
+        self._states[session_id] = state
+        for sid in list(self._states):
+            if len(self._states) <= STATE_CACHE:
+                break
+            if sid != session_id and not self.interviewer.is_busy(self._states[sid]):
+                del self._states[sid]
 
     def create(self, request: str) -> str:
         session_id = uuid.uuid4().hex[:12]
         state = new_state(request.strip())
-        self._states[session_id] = state
+        self._cache_state(session_id, state)
         self.store.save_session(session_id, state)
         self._activity[session_id] = time.monotonic()
         return session_id
@@ -184,24 +212,20 @@ class SessionService:
 
         PR の状態は GitHub に問い合わせる（同期処理。呼び出し側でスレッドに出す）。
         """
+        rows = self.store.session_summaries()
+        jobs = self._job_views([row.id for row in rows])
         sessions: list[dict[str, Any]] = []
-        for row in self.store.list_sessions():
-            job = self._job_view(row.id)
-            try:
-                state = InterviewState.model_validate_json(row.state_json)
-                title, request = state.beam.title, state.beam.request
-                phase, metrics = state.phase.value, [m.label for m in state.beam.metrics]
-            except ValidationError:  # 古い形式・壊れた行でも一覧全体は返す
-                title, request, phase, metrics = "", "（読めないセッション）", "unknown", []
+        for row in rows:
+            readable = row.phase is not None  # 壊れた行でも一覧全体は返す
             sessions.append(
                 {
                     "id": row.id,
-                    "title": title,
-                    "request": request,
-                    "phase": phase,
+                    "title": row.title,
+                    "request": row.request if readable else "（読めないセッション）",
+                    "phase": row.phase if readable else "unknown",
                     "updated_at": row.updated_at.isoformat(),
-                    "metrics": metrics,
-                    "job": job,
+                    "metrics": row.metrics,
+                    "job": jobs.get(row.id),
                     "pr_state": None,
                 }
             )
@@ -359,8 +383,7 @@ class SessionService:
             raise Conflict("確定済みのセッションです")
         if self.interviewer.is_busy(state):
             raise Conflict("応答の途中です。応答が終わってから確定してください")
-        running = self._job_view(session_id)
-        if running and running["status"] == "running":
+        if session_id in self._running():
             raise Conflict("生成ジョブを実行中です")
         self._check_not_syncing()
         try:
@@ -369,19 +392,17 @@ class SessionService:
             raise Conflict(str(e)) from e
         self.store.save_session(session_id, state)
         self.store.add_version(session_id, beam)
-        job = Job(id=uuid.uuid4().hex[:12], session_id=session_id)
+        job = Job.new(session_id, STEPS)
         self._start(job, lambda on_step: self.pipeline(beam, on_step))
         return self.view(session_id)
 
     def _check_not_syncing(self) -> None:
-        sync = self._jobs_running(SYNC_ID)
-        if sync:
+        if SYNC_ID in self._running():
             raise Conflict("main の反映（dbt build）を実行中です。終わってから実行してください")
 
-    def _jobs_running(self, session_id: str) -> bool:
-        return any(
-            j.status == "running" and j.session_id == session_id for j in list(self._jobs.values())
-        )
+    def _running(self) -> set[str]:
+        """実行中のジョブの session_id（メモリで動く。DB の running は起動時に失敗にする）。"""
+        return {j.session_id for j in list(self._jobs.values()) if j.status == "running"}
 
     def _start(
         self,
@@ -401,24 +422,17 @@ class SessionService:
     ) -> dict[str, Any]:
         if self.onboarding is None:
             raise Conflict("源泉の取り込みは使えません")
-        last = self._job_view(ONBOARD_PREFIX + source)
-        if last and last["status"] == "running":
+        if ONBOARD_PREFIX + source in self._running():
             raise Conflict("この源泉の取り込みを実行中です")
         self._check_not_syncing()
+        last = self._job_view(ONBOARD_PREFIX + source)
         if last and last["status"] == "succeeded" and not redo:
             # 同じ源泉の PR を 2 本作らない。前の PR を閉じた場合だけ、明示してやり直す
             raise Conflict(
                 f"この源泉の取り込みの PR は作成済みです（{last['pr_url']}）。"
                 "マージすればオントロジーに入ります。PR を閉じた場合は「やり直す」を選んでください"
             )
-        job = Job(
-            id=uuid.uuid4().hex[:12],
-            session_id=ONBOARD_PREFIX + source,
-            steps=[
-                {"step": s, "label": label, "status": "pending", "detail": ""}
-                for s, label in ONBOARD_STEPS
-            ],
-        )
+        job = Job.new(ONBOARD_PREFIX + source, ONBOARD_STEPS)
         runner = self.onboarding
         self._start(job, lambda on_step: runner(source, patch, cleansing, on_step))
         return job.view()
@@ -431,22 +445,13 @@ class SessionService:
     def start_sync(self) -> dict[str, Any]:
         if self.sync is None:
             raise Conflict("反映は使えません")
-        last = self._job_view(SYNC_ID)
-        if last and last["status"] == "running":
+        running = self._running()
+        if SYNC_ID in running:
             raise Conflict("反映を実行中です")
         # 反映の dbt build は共有の DuckDB に書く。生成・取り込みのジョブ（DB を写す）と重ねない
-        if any(
-            j.status == "running" and j.session_id != SYNC_ID for j in list(self._jobs.values())
-        ):
+        if running - {SYNC_ID}:
             raise Conflict("生成・取り込みのジョブを実行中です。終わってから反映してください")
-        job = Job(
-            id=uuid.uuid4().hex[:12],
-            session_id=SYNC_ID,
-            steps=[
-                {"step": s, "label": label, "status": "pending", "detail": ""}
-                for s, label in SYNC_STEPS
-            ],
-        )
+        job = Job.new(SYNC_ID, SYNC_STEPS)
         self._start(job, self.sync)
         return job.view()
 
@@ -456,8 +461,7 @@ class SessionService:
     def reopen(self, session_id: str) -> dict[str, Any]:
         """確定を取り消して修正できるようにする。生成ジョブの実行中はできない。"""
         state = self._state(session_id)
-        running = self._job_view(session_id)
-        if running and running["status"] == "running":
+        if session_id in self._running():
             raise Conflict("生成ジョブを実行中です")
         try:
             self.interviewer.reopen(state)
@@ -503,6 +507,9 @@ class SessionService:
             self.store.save_job(
                 job.id, job.session_id, job.status, job.steps, job.pr_url, job.error, job.branch
             )
+            # 保存できたら、以後は DB から読む（終わったジョブをメモリに溜めない）。購読中の
+            # job_events はこの job を持っているので、下の done はそのまま届く
+            self._jobs.pop(job.id, None)
         finally:
             self._publish(job, _sse("done", job.view()))
             for q in job.subscribers:
@@ -513,21 +520,15 @@ class SessionService:
             q.put_nowait(event)
 
     def _job_view(self, session_id: str) -> dict[str, Any] | None:
+        return self._job_views([session_id]).get(session_id)
+
+    def _job_views(self, session_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """セッションごとの最新のジョブ。実行中はメモリ、終わったものは DB（1 回の問い合わせ）。"""
         # 一覧はスレッドで作るので、ループ側で増えても壊れないよう写しを見る
-        live = [j for j in list(self._jobs.values()) if j.session_id == session_id]
-        if live:
-            return live[-1].view()
-        row = self.store.latest_job(session_id)
-        if row is None:
-            return None
-        return {
-            "id": row.id,
-            "status": row.status,
-            "steps": json.loads(row.steps_json),
-            "pr_url": row.pr_url,
-            "error": row.error,
-            "branch": row.branch,
-        }
+        live = {j.session_id: j.view() for j in list(self._jobs.values())}
+        wanted = [sid for sid in session_ids if sid not in live]
+        views = {sid: row.view() for sid, row in self.store.latest_jobs(wanted).items()}
+        return views | {sid: live[sid] for sid in session_ids if sid in live}
 
     async def job_events(self, job_id: str) -> AsyncIterator[SSEEvent]:
         job = self._jobs.get(job_id)
@@ -535,17 +536,7 @@ class SessionService:
             row = self.store.job(job_id)
             if row is None:
                 raise NotFound(f"ジョブ {job_id} がありません")
-            yield _sse(
-                "done",
-                {
-                    "id": row.id,
-                    "status": row.status,
-                    "steps": json.loads(row.steps_json),
-                    "pr_url": row.pr_url,
-                    "error": row.error,
-                    "branch": row.branch,
-                },
-            )
+            yield _sse("done", row.view())
             return
         for step in job.steps:
             yield _sse("step", step)

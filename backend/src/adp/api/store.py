@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import case, func
+from sqlalchemy import select as sa_select
 from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 from adp.beam import BeamModel, to_yaml
@@ -50,6 +53,39 @@ class JobRow(SQLModel, table=True):
     """生成ジョブの作業ブランチ（描画画面で PR の内容をプレビューするため。#43）。"""
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+    def view(self) -> dict[str, Any]:
+        """画面に返すジョブ（実行中のものは service.Job.view と同じ形）。"""
+        return {
+            "id": self.id,
+            "status": self.status,
+            "steps": json.loads(self.steps_json),
+            "pr_url": self.pr_url,
+            "error": self.error,
+            "branch": self.branch,
+        }
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    """一覧（#73）に出すセッションの要約。読めない行は phase が None。"""
+
+    id: str
+    updated_at: datetime
+    title: str
+    request: str
+    phase: str | None
+    metrics: list[str]
+
+
+def _labels(metrics_json: Any) -> list[str]:
+    try:
+        metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else []
+    except ValueError:
+        return []
+    if not isinstance(metrics, list):
+        return []
+    return [str(m["label"]) for m in metrics if isinstance(m, dict) and "label" in m]
 
 
 class FeedbackRow(SQLModel, table=True):
@@ -108,11 +144,48 @@ class Store:
                 db.add(row)
             db.commit()
 
-    def list_sessions(self, limit: int = 200) -> list[SessionRow]:
-        """新しく更新された順（一覧画面。#73）。"""
-        with Session(self.engine) as db:
-            stmt = select(SessionRow).order_by(col(SessionRow.updated_at).desc()).limit(limit)
-            return list(db.exec(stmt))
+    def session_summaries(self, limit: int = 200) -> list[SessionSummary]:
+        """一覧に出す項目だけを、状態の JSON を検証せずに SQLite の JSON 関数で取り出す。
+
+        新しく更新された順。JSON として読めない・形の違う行は phase を None にする。
+        """
+        state = col(SessionRow.state_json)
+
+        def extract(path: str, fn: Any = func.json_extract) -> Any:
+            # 壊れた JSON に JSON 関数を使うとクエリ全体が失敗するので、先に確かめる
+            return case((func.json_valid(state) == 1, fn(state, path)), else_=None)
+
+        stmt = (
+            sa_select(
+                col(SessionRow.id),
+                col(SessionRow.updated_at),
+                extract("$.beam", func.json_type),
+                extract("$.phase"),
+                extract("$.beam.title"),
+                extract("$.beam.request"),
+                extract("$.beam.metrics"),
+            )
+            .order_by(col(SessionRow.updated_at).desc())
+            .limit(limit)
+        )
+        with self.engine.connect() as conn:  # 列が多く sqlmodel の select の型が合わない
+            rows = conn.execute(stmt).all()
+        result = []
+        for id_, updated_at, beam_type, phase, title, request, metrics in rows:
+            if beam_type != "object" or not isinstance(phase, str):
+                result.append(SessionSummary(id_, updated_at, "", "", None, []))
+                continue
+            result.append(
+                SessionSummary(
+                    id_,
+                    updated_at,
+                    title if isinstance(title, str) else "",
+                    request if isinstance(request, str) else "",
+                    phase,
+                    _labels(metrics),
+                )
+            )
+        return result
 
     def load_session(self, session_id: str) -> InterviewState | None:
         with Session(self.engine) as db:
@@ -177,13 +250,17 @@ class Store:
             db.commit()
             return len(rows)
 
-    def latest_job(self, session_id: str) -> JobRow | None:
+    def latest_jobs(self, session_ids: list[str]) -> dict[str, JobRow]:
+        """セッションごとの最新のジョブを 1 回の問い合わせで（一覧。#110）。"""
+        if not session_ids:
+            return {}
         with Session(self.engine) as db:
-            return db.exec(
+            rows = db.exec(
                 select(JobRow)
-                .where(JobRow.session_id == session_id)
-                .order_by(JobRow.created_at.desc())  # type: ignore[attr-defined]
-            ).first()
+                .where(col(JobRow.session_id).in_(session_ids))
+                .order_by(col(JobRow.created_at))
+            ).all()
+        return {row.session_id: row for row in rows}  # 後の（新しい）行で上書きする
 
     def job(self, job_id: str) -> JobRow | None:
         with Session(self.engine) as db:

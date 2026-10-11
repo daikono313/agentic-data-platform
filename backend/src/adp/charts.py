@@ -41,6 +41,7 @@ import yaml
 from sqlglot import exp
 
 from adp.metricflow import literal
+from adp.warehouse import DROP_ENV, tool_env
 
 HEADER = (
     "# adp により生成（chart_specs/{name}.yml から `python -m adp.charts compile`）。編集しない\n"
@@ -217,7 +218,7 @@ def compile_sql(warehouse: Path, mf: Path, query: MetricQuery) -> str:
     result = subprocess.run(
         [str(mf), "query", *query.args(), "--explain"],
         cwd=warehouse,
-        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse), "NO_COLOR": "1"},
+        env=tool_env(warehouse),
         capture_output=True,
         text=True,
         check=False,
@@ -366,7 +367,7 @@ class BoardRenderer:
         problems = _check_sources(self.warehouse)
         # プロセス内の dbt Charts は、環境変数でプロファイルや DB の場所が変わる
         # （CLI のように固定できない）
-        for name in ("DBT_PROFILES_DIR", "ADP_DUCKDB_PATH"):
+        for name in ("DBT_PROFILES_DIR", *DROP_ENV):
             if os.environ.get(name):
                 problems.append(
                     f"環境変数 {name} を外して backend を起動してください"
@@ -599,7 +600,7 @@ def render_png(warehouse: Path, dct: Path, board: str, out: Path) -> None:
             "--no-cache",
         ],
         cwd=warehouse,
-        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse), "NO_COLOR": "1"},
+        env=tool_env(warehouse),
         capture_output=True,
         text=True,
         check=False,

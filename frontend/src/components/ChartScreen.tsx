@@ -2,8 +2,8 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { GRAINS, svgDataUrl, type ChartOptions, type ChartResult, type Grain } from '@/api/charts'
-import { api } from '@/api/client'
-import { errorText, rankDimensions } from '@/api/datasets'
+import { api, errorText } from '@/api/client'
+import { rankDimensions } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 

@@ -1,8 +1,8 @@
 import { RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import { api } from '@/api/client'
-import { errorText } from '@/api/datasets'
+import { api, errorText, trackJob } from '@/api/client'
+
 import type { JobView, SyncView } from '@/api/types'
 import { JobProgress } from '@/components/JobProgress'
 import { Button } from '@/components/ui/button'
@@ -95,23 +95,9 @@ export function SyncBanner({ onDone, pollMs = SYNC_POLL_MS }: { onDone?: () => v
     following.current = initial.id
     followed.current.add(initial.id)
     markSeen(initial.id) // 終わった後の問い合わせで、同じジョブの結果を出し直さない
-    let current = initial
-    setJob(current)
     try {
-      for await (const ev of api.jobEvents(current.id)) {
-        if (ev.event === 'step') {
-          const s = ev.data
-          current = { ...current, steps: current.steps.map((x) => (x.step === s.step ? s : x)) }
-        } else {
-          current = ev.data
-        }
-        setJob(current)
-      }
-      if (current.status === 'running') {
-        // 進捗のストリームが途中で切れた（backend の再起動など）。実行中のまま固めない
-        current = { ...current, status: 'failed', error: '進捗を受け取れなくなりました。もう一度実行してください' }
-        setJob(current)
-      }
+      // 進捗のストリームが途中で切れたら（backend の再起動など）、失敗にして「もう一度実行する」を出す
+      const current = await trackJob(initial, setJob, '進捗を受け取れなくなりました。もう一度実行してください')
       if (current.status === 'succeeded') onDone?.()
     } catch (e) {
       setError(errorText(e))
