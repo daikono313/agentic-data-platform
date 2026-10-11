@@ -74,6 +74,30 @@ describe('DatasetsPanel', () => {
   })
 })
 
+describe('バスマトリクス', () => {
+  const bus = {
+    groups: [
+      { name: 'dim_store', label: '店舗', kind: 'dim', attributes: [{ name: 'store__channel', label: '販売チャネル' }] },
+      { name: 'dim_promotion', label: 'プロモーション', kind: 'dim', attributes: [{ name: 'promotion__type', label: '種類' }] },
+      { name: 'fct_order_lines', label: '注文', kind: 'degenerate', attributes: [{ name: 'order_line__status', label: '注文ステータス' }] },
+    ],
+    rows: [{ name: 'fct_order_lines', label: '注文', groups: ['dim_store', 'fct_order_lines'] }],
+  }
+
+  it('fact × dimension の表を出し、結合できる属性に ✓ を付ける', () => {
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} />)
+    const table = screen.getByRole('table', { name: 'バスマトリクス' })
+    expect(within(table).getByRole('columnheader', { name: /店舗/ })).toHaveAttribute('colspan', '1')
+    expect(within(table).getByRole('columnheader', { name: '販売チャネル' })).toBeInTheDocument()
+    const row = screen.getByTestId('bus-fct_order_lines')
+    expect(within(row).getByLabelText('fct_order_lines × 販売チャネル')).toBeInTheDocument()
+    expect(within(row).getByLabelText('fct_order_lines × 注文ステータス')).toBeInTheDocument()
+    expect(within(row).queryByLabelText('fct_order_lines × 種類')).not.toBeInTheDocument()
+    // バスマトリクスがあるときは fact / dimension の一覧は出さない
+    expect(screen.queryByRole('region', { name: 'dimension' })).not.toBeInTheDocument()
+  })
+})
+
 describe('exampleRequests', () => {
   it('日時や ID の列は切り口にしない', () => {
     expect(exampleRequests(datasets.sources)).toEqual(['返品理由別の返品の返品数量を見たい'])

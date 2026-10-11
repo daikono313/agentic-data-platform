@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
 import { matches, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
+import { BusMatrixView } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 
@@ -41,7 +42,8 @@ function Section({
 
 /**
  * 使えるデータの一覧（#38、#62）。
- * 上から「既存のデータ（指標 → fact → dimension）」「使える源泉」の順に並べる。
+ * 上から「既存のデータ（指標 → fact × dimension のバスマトリクス）」「使える源泉」の順に並べる。
+ * バスマトリクスが無い（semantic manifest が無い）ときは fact と dimension の一覧を出す。
  */
 export function DatasetsPanel({ datasets, error, compact }: Props) {
   const [query, setQuery] = useState('')
@@ -111,14 +113,25 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
           </ul>
         </Section>
 
-        <div className={compact ? 'space-y-4' : 'grid gap-4 lg:grid-cols-2'}>
-          <Section icon={<Table2 className="size-4" />} title="fact" count={facts.length} note="出来事の記録">
-            <ModelList models={facts} />
+        {datasets.bus && datasets.bus.rows.length > 0 ? (
+          <Section
+            icon={<Table2 className="size-4" />}
+            title="fact × dimension"
+            count={datasets.bus.rows.length}
+            note="バスマトリクス。✓ の切り口で fact を集計できる"
+          >
+            <BusMatrixView bus={datasets.bus} models={datasets.models} />
           </Section>
-          <Section icon={<Boxes className="size-4" />} title="dimension" count={dims.length} note="切り口の属性">
-            <ModelList models={dims} />
-          </Section>
-        </div>
+        ) : (
+          <div className={compact ? 'space-y-4' : 'grid gap-4 lg:grid-cols-2'}>
+            <Section icon={<Table2 className="size-4" />} title="fact" count={facts.length} note="出来事の記録">
+              <ModelList models={facts} />
+            </Section>
+            <Section icon={<Boxes className="size-4" />} title="dimension" count={dims.length} note="切り口の属性">
+              <ModelList models={dims} />
+            </Section>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">

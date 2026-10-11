@@ -183,3 +183,45 @@ def test_source_profile_db_error_is_fixed_text(repo: Path, monkeypatch: pytest.M
     index = DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb"))
     res = TestClient(create_app(service, index)).get("/sources/raw.returns/profile")
     assert res.status_code == 503 and "secret" not in res.text
+
+
+def test_bus_matrix(repo: Path) -> None:
+    """fact × dimension のバスマトリクスを entity の結合関係から作る（#62）。"""
+    bus = DatasetIndex(repo, None).all().bus
+    groups = {g.name: g for g in bus.groups}
+    assert groups["dim_store"].kind == "dim" and groups["dim_store"].label
+    assert "store__channel" in [a.name for a in groups["dim_store"].attributes]
+    assert [g.kind for g in bus.groups][-1] == "degenerate"  # fact 自身の属性は最後
+    row = next(r for r in bus.rows if r.name == "fct_order_lines")
+    assert {"dim_store", "dim_customer", "dim_date"} <= set(row.groups)
+    assert all(g in groups for g in row.groups)
+
+
+def test_bus_matrix_from_manifest() -> None:
+    index = DatasetIndex(Path("."), None)
+    manifest = {
+        "semantic_models": [
+            {
+                "name": "dim_a",
+                "description": "Aディメンション（Who）。",
+                "entities": [{"name": "a", "type": "primary"}],
+                "dimensions": [{"name": "x", "type": "categorical", "description": "属性X（注）"}],
+            },
+            {
+                "name": "dim_b",
+                "entities": [{"name": "b", "type": "primary"}],
+                "dimensions": [{"name": "y", "type": "categorical", "label": "Y"}],
+            },
+            {
+                "name": "fct_f",
+                "description": "出来事",
+                "entities": [{"name": "f", "type": "primary"}, {"name": "a", "type": "foreign"}],
+                "dimensions": [],
+            },
+        ]
+    }
+    index._semantic_manifest = lambda: manifest  # type: ignore[method-assign]
+    bus = index.bus_matrix()
+    assert [(g.name, g.label) for g in bus.groups] == [("dim_a", "A"), ("dim_b", "dim_b")]
+    assert bus.groups[0].attributes[0].label == "属性X"
+    assert [(r.name, r.label, r.groups) for r in bus.rows] == [("fct_f", "出来事", ["dim_a"])]

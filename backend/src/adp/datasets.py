@@ -14,6 +14,7 @@ ADR 0003）。
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -80,9 +81,48 @@ class SourceProfile(TableProfile):
     """この源泉を（staging などを経由して）使っている整備済みのモデル（dim / fct）。"""
 
 
+class BusAttribute(BaseModel):
+    name: str
+    """MetricFlow の参照名（例: product__category）。"""
+    label: str
+
+
+class BusGroup(BaseModel):
+    """バスマトリクスの列のまとまり。
+
+    dimension 1 つか、fact 自身が持つ属性（退化ディメンション）。
+    """
+
+    name: str
+    """dim のモデル名。fact 自身の属性なら fact のモデル名。"""
+    label: str
+    kind: str
+    """dim / degenerate"""
+    attributes: list[BusAttribute] = Field(default_factory=list)
+
+
+class BusRow(BaseModel):
+    name: str
+    """fct のモデル名。"""
+    label: str
+    groups: list[str] = Field(default_factory=list)
+    """結合できる（✓ が付く）列のまとまりの name。"""
+
+
+class BusMatrix(BaseModel):
+    """Kimball のバスマトリクス（fact × dimension。#62）。
+
+    Semantic Layer の entity の結合関係から作る。
+    """
+
+    groups: list[BusGroup] = Field(default_factory=list)
+    rows: list[BusRow] = Field(default_factory=list)
+
+
 class Datasets(BaseModel):
     metrics: list[MetricInfo]
     models: list[ModelInfo]
+    bus: BusMatrix = Field(default_factory=BusMatrix)
     sources: list[SourceInfo]
     beams: list[BeamInfo]
     errors: list[str] = Field(default_factory=list)
@@ -300,16 +340,87 @@ class DatasetIndex:
         models = {c.rsplit(".", 1)[-1] for c in seen}
         return sorted(m for m in models if m.startswith(("dim_", "fct_")))
 
+    def bus_matrix(self) -> BusMatrix:
+        """fct の foreign entity と、dim の primary entity の対応から fact × dimension の表を作る。
+
+        semantic manifest が無ければ空（理由は metrics() が errors に入れる）。
+        """
+        manifest = self._semantic_manifest()
+        if manifest is None:
+            return BusMatrix()
+        models = manifest.get("semantic_models", [])
+
+        def attributes(sm: dict[str, Any], entity: str) -> list[BusAttribute]:
+            return [
+                BusAttribute(
+                    name=f"{entity}__{d['name']}",
+                    label=d.get("label") or _short(d.get("description") or "") or d["name"],
+                )
+                for d in sm.get("dimensions", [])
+            ]
+
+        def primary(sm: dict[str, Any]) -> str | None:
+            found = [e["name"] for e in sm.get("entities", []) if e.get("type") == "primary"]
+            return found[0] if found else sm.get("primary_entity")
+
+        groups: list[BusGroup] = []
+        dim_of_entity: dict[str, str] = {}
+        for sm in sorted(models, key=lambda m: m["name"]):
+            entity = primary(sm)
+            if not sm["name"].startswith("dim_") or entity is None:
+                continue
+            dim_of_entity[entity] = sm["name"]
+            groups.append(
+                BusGroup(
+                    name=sm["name"],
+                    label=_dim_label(sm),
+                    kind="dim",
+                    attributes=attributes(sm, entity),
+                )
+            )
+        rows: list[BusRow] = []
+        for sm in sorted(models, key=lambda m: m["name"]):
+            if not sm["name"].startswith("fct_"):
+                continue
+            label = sm.get("label") or _short(sm.get("description") or "") or sm["name"]
+            joined = [
+                dim_of_entity[e["name"]]
+                for e in sm.get("entities", [])
+                if e.get("type") == "foreign" and e["name"] in dim_of_entity
+            ]
+            own = attributes(sm, primary(sm) or sm["name"]) if sm.get("dimensions") else []
+            if own:
+                groups.append(
+                    BusGroup(name=sm["name"], label=label, kind="degenerate", attributes=own)
+                )
+                joined.append(sm["name"])
+            rows.append(BusRow(name=sm["name"], label=label, groups=list(dict.fromkeys(joined))))
+        # dim を先、fact 自身の属性を後ろに並べる
+        groups.sort(key=lambda g: g.kind != "dim")
+        return BusMatrix(groups=groups, rows=rows)
+
     def all(self) -> Datasets:
         errors: list[str] = []
         beams = self.beams(errors)
         return Datasets(
             metrics=self.metrics(beams, errors),
             models=self.models(errors),
+            bus=self.bus_matrix(),
             sources=self.sources(errors),
             beams=beams,
             errors=errors,
         )
+
+
+def _short(text: str) -> str:
+    """説明文の最初の句（「（」「。」まで）。表の見出しに使う。"""
+    return re.split(r"[（(。\n]", text, maxsplit=1)[0].strip()
+
+
+def _dim_label(sm: dict[str, Any]) -> str:
+    """dim の見出し。「顧客ディメンション（Who）」→「顧客」"""
+    label = sm.get("label") or _short(sm.get("description") or "")
+    return label.removesuffix("ディメンション").strip() or sm["name"]
 
 
 def _time_label(name: str) -> str:

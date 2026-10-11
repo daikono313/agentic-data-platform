@@ -66,9 +66,27 @@ export function sourceUrl(table: string): string {
   return `?${new URLSearchParams({ source: table }).toString()}`
 }
 
+/** バスマトリクス（fact × dimension。#62） */
+export interface BusGroup {
+  name: string
+  label: string
+  kind: 'dim' | 'degenerate' | string
+  attributes: { name: string; label: string }[]
+}
+export interface BusRow {
+  name: string
+  label: string
+  groups: string[]
+}
+export interface BusMatrix {
+  groups: BusGroup[]
+  rows: BusRow[]
+}
+
 export interface Datasets {
   metrics: MetricInfo[]
   models: ModelInfo[]
+  bus?: BusMatrix
   sources: SourceInfo[]
   beams: BeamInfo[]
   errors: string[]
