@@ -55,6 +55,18 @@ def create_app(
             raise HTTPException(503, "データ一覧は利用できません")
         return datasets.all().model_dump(mode="json")
 
+    @app.get("/ontology")
+    def ontology() -> dict[str, Any]:
+        """オントロジー（概念・属性・関係・制約）の図と、源泉との食い違い（#67）。"""
+        if datasets is None:
+            raise HTTPException(503, "オントロジーは利用できません")
+        try:
+            return datasets.ontology().model_dump(mode="json")
+        except FileNotFoundError as e:
+            raise HTTPException(404, "ontology/ontology.yml がありません") from e
+        except ValueError as e:  # yml の形式の誤り（pydantic の ValidationError を含む）
+            raise HTTPException(422, f"ontology.yml の形式が正しくありません: {e}") from e
+
     @app.get("/sources/{table}/profile")
     def source_profile(table: str) -> dict[str, Any]:
         """源泉 1 つのデータプロファイル（列ごとの統計・キーの候補・使っているモデル。#62）。"""

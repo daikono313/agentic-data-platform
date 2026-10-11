@@ -12,6 +12,7 @@ import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
+import { OntologyScreen } from '@/components/Ontology'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { SourceProfileScreen } from '@/components/SourceProfile'
 import { Button } from '@/components/ui/button'
@@ -113,6 +114,7 @@ export default function App() {
   if (chart) return <ChartScreen metric={chart} jobId={params.get('job')} />
   const source = params.get('source')
   if (source) return <SourceProfileScreen table={source} />
+  if (params.has('ontology')) return <OntologyScreen />
   return <InterviewApp />
 }
 

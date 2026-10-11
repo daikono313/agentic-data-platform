@@ -84,7 +84,12 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
       )}
 
       <div className="space-y-4">
-        <h2 className="border-b pb-1 text-base font-bold">既存のデータ</h2>
+        <h2 className="flex items-baseline justify-between border-b pb-1 text-base font-bold">
+          既存のデータ
+          <a href="?ontology" className="text-xs font-normal text-primary underline" {...linkProps}>
+            オントロジー（概念の関係）を見る
+          </a>
+        </h2>
         <Section icon={<BarChart3 className="size-4" />} title="指標（metrics）" count={metrics.length} note="すぐチャートで見られる">
           {metrics.length === 0 && <p className="text-xs text-muted-foreground">まだありません。要求すると作れます。</p>}
           <ul className={compact ? 'space-y-2' : 'grid gap-2 md:grid-cols-2'}>

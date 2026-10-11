@@ -248,6 +248,14 @@ class Catalog:
             ]
         return candidates
 
+    def is_unique(self, table: str, column: str) -> bool:
+        """列の値が NULL を含まず一意か（主キーとして使えるか）。"""
+        schema, name = self._resolve(table)
+        if not _IDENT.match(column):
+            raise ValueError(f"不正な列名です: {column}")
+        with self._connect() as con:
+            return _is_unique(con, schema, name, column)
+
     def profile_column(self, table: str, column: str, top: int = 10) -> ColumnProfile:
         schema, name = self._resolve(table)
         if not _IDENT.match(column):

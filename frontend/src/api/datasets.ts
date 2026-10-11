@@ -62,6 +62,30 @@ export interface SourceProfile {
   used_by: string[]
 }
 
+/** GET /ontology の型（backend の adp.datasets.OntologyView と対応。#67） */
+export interface OntologyConcept {
+  name: string
+  label: string
+  domain: string
+  kind: 'entity' | 'event'
+  source: string
+  key: string
+  model?: string
+  attributes: { name: string; label: string; column: string }[]
+}
+export interface OntologyView {
+  mermaid: string
+  ontology: {
+    domains: { name: string; label: string }[]
+    concepts: OntologyConcept[]
+    relations: { from: string; to: string; verb: string; via: string }[]
+    constraints: { concept: string; text: string }[]
+  }
+  unmapped_sources: string[]
+  unmapped_models: string[]
+  errors: string[]
+}
+
 export function sourceUrl(table: string): string {
   return `?${new URLSearchParams({ source: table }).toString()}`
 }
