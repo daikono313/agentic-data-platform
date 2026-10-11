@@ -101,7 +101,7 @@ export function MessageFeedback({
     if (t === thumb) return
     const previous = thumb
     setThumb(t)
-    // 評価だけを先に保存する（保存済みの分類・コメントは backend が残す）
+    // 評価だけを先に保存する（👎 の分類・コメントは backend が残す。👍 に付け替えたら消える）
     if (!(await submit({ kind: 'message', message_index: index, thumb: t }))) setThumb(previous)
   }
   return (
