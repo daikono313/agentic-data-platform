@@ -172,7 +172,9 @@ def test_repository_definitions_reproduce_previous_staging() -> None:
         "stg_orders",
         "stg_order_items",
     }
-    for spec in specs:
+    # 以前の手書きの stg があったもの（後から取り込んだ源泉は対象外）
+    previous = {"customers", "products", "stores", "promotions", "orders", "order_items"}
+    for spec in (s for s in specs if s.table_name in previous):
         cols = [
             SourceColumn(n, t)
             for n, t in con.execute(
@@ -184,7 +186,10 @@ def test_repository_definitions_reproduce_previous_staging() -> None:
         new = (
             render(spec, defaults, cols)
             .sql.split("\n", 1)[1]
-            .replace(f"{{{{ source('{spec.schema_name}', '{spec.table_name}') }}}}", spec.source)
+            .replace(
+                f"{{{{ source('{spec.dbt_source or spec.schema_name}', '{spec.table_name}') }}}}",
+                spec.source,
+            )
         )
         orders = spec.table_name == "orders"
         derived = ", cast(ordered_at as date) as ordered_on" if orders else ""
@@ -290,8 +295,8 @@ def test_generator_aligns_dbt_source_for_undeclared_sources() -> None:
     class Info:
         warehouse_dir = WAREHOUSE
 
-        def declared_sources(self) -> set[str]:
-            return set()
+        def declared_sources(self) -> dict[str, str]:
+            return {}
 
         def source_columns(self, table: str) -> list[tuple[str, str]]:
             return [("order_id", "INTEGER"), ("ordered_at", "TIMESTAMP")]
@@ -315,3 +320,57 @@ def test_draft_skips_unrepresentable_columns(tmp_path: Path) -> None:
     con.close()
     spec = draft(Catalog(db).profile_table("raw.t"))
     assert spec.key == "t_id" and spec.rule("Kind") is None and spec.rule("tabbed") is None
+
+
+def test_generator_uses_the_existing_source_name() -> None:
+    """別名（adp_<table>）で宣言済みの源泉は、その名前で参照する（宣言を増やさない。#104）。"""
+    from adp.generation.dbt import staging_files
+
+    class Info:
+        warehouse_dir = WAREHOUSE
+
+        def declared_sources(self) -> dict[str, str]:
+            return {"raw.orders": "adp_orders"}
+
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [("order_id", "INTEGER"), ("ordered_at", "TIMESTAMP")]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return "order_id"
+
+    files = {f.path: f.content for f in staging_files("raw.orders", Info())}  # type: ignore[arg-type]
+    assert "source('adp_orders', 'orders')" in files["models/staging/stg_orders.sql"]
+    assert not any(p.endswith("__sources.yml") for p in files)
+
+
+def test_existing_spec_gets_the_same_source_name_as_stg(tmp_path: Path) -> None:
+    """取り込みが先に書いた定義（dbt_source 無し）も、stg と同じ source 名に書き換える。"""
+    import shutil
+
+    from adp.cleansing import load_spec
+    from adp.generation.dbt import staging_files
+
+    shutil.copytree(WAREHOUSE / "cleansing", tmp_path / "cleansing")
+    spec = tmp_path / "cleansing" / "raw.coupons.yml"
+    spec.write_text(
+        "source: raw.coupons\ndescription: クーポン\nkey: coupon_id\n", encoding="utf-8"
+    )
+
+    class Info:
+        warehouse_dir = tmp_path
+
+        def declared_sources(self) -> dict[str, str]:
+            return {}
+
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [("coupon_id", "INTEGER")]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return "coupon_id"
+
+    files = {f.path: f for f in staging_files("raw.coupons", Info())}  # type: ignore[arg-type]
+    written = files["cleansing/raw.coupons.yml"]
+    assert written.replaces == spec.read_text(encoding="utf-8")
+    spec.write_text(written.content, encoding="utf-8")
+    assert load_spec(spec).dbt_source == "adp_coupons"
+    assert "source('adp_coupons', 'coupons')" in files["models/staging/stg_coupons.sql"].content
