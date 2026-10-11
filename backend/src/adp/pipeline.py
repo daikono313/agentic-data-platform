@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import yaml
@@ -23,7 +24,7 @@ from adp.design import DesignBuilder, PhysicalDesign
 from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import load_ontology
 from adp.generation import generate_models
-from adp.generation.chart_specs import chart_spec
+from adp.generation.chart_specs import LINE_SERIES_MAX, chart_spec, source_of
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
 from adp.generation.semantic import MetricQuery
@@ -262,7 +263,20 @@ class GenerationPipeline:
 
         失敗してもモデルと指標の PR は作る（チャートは含めず、理由を PR 本文に書く）。
         """
-        spec = chart_spec(beam, queries)
+        warehouse = wt.path / "warehouse"
+        info = ProjectInfo(warehouse, Catalog(warehouse / "data" / "dev.duckdb"))
+
+        def cardinality(ref: str) -> int | None:
+            column = source_of(beam, ref)
+            if column is None:
+                return None
+            try:
+                values = info.distinct_values(column[0], column[1], LINE_SERIES_MAX)
+            except Exception:
+                return None
+            return LINE_SERIES_MAX + 1 if values is None else len(values)
+
+        spec = chart_spec(beam, queries, cardinality)
         if spec is None:
             return None
         warehouse = wt.path / "warehouse"
@@ -282,15 +296,16 @@ class GenerationPipeline:
             preview.skipped = f"既にチャートがあるため作りませんでした（warehouse/{spec_rel}）"
             return preview
         mf = self.config.bin_dir / "mf"
-        try:
+
+        def write(board: dict[str, Any]) -> None:
             spec_path.parent.mkdir(parents=True, exist_ok=True)
             board_path.parent.mkdir(parents=True, exist_ok=True)
             spec_path.write_text(
                 "# adp が BEAM の指標要求から生成（SQL は書かない。ADR 0002）\n"
-                + yaml.safe_dump(spec, allow_unicode=True, sort_keys=False, width=100),
+                + yaml.safe_dump(board, allow_unicode=True, sort_keys=False, width=100),
                 encoding="utf-8",
             )
-            board_path.write_text(compile_board(beam.name, spec, warehouse, mf), encoding="utf-8")
+            board_path.write_text(compile_board(beam.name, board, warehouse, mf), encoding="utf-8")
             problems = check(warehouse, mf)
             if problems:
                 raise ChartError(" / ".join(problems))
@@ -300,11 +315,39 @@ class GenerationPipeline:
                 beam.name,
                 wt.path / ASSETS_DIR / f"{beam.name}.png",
             )
-        except Exception as e:  # チャートの失敗で PR 全体を止めない
+
+        def clean() -> None:
             spec_path.unlink(missing_ok=True)
             board_path.unlink(missing_ok=True)
             shutil.rmtree(wt.path / ASSETS_DIR, ignore_errors=True)
+
+        try:
+            write(spec)
+            return preview
+        except Exception as e:  # チャートの失敗で PR 全体を止めない
+            clean()
+            first_error = str(e)
+        # 1 つの指標の失敗でボード全体を落とさない: 指標ごとに試し、描けるものだけで作り直す（#79）
+        ok: list[str] = []
+        failed: list[str] = []
+        for name in spec["charts"]:
+            try:
+                compile_board(beam.name, _only(spec, [name]), warehouse, mf)
+                ok.append(name)
+            except Exception:
+                failed.append(name)
+        if not ok or not failed:
+            preview.error = first_error
+            return preview
+        try:
+            write(_only(spec, ok))
+        except Exception as e:
+            clean()
             preview.error = str(e)
+            return preview
+        titles = {n: c.get("title") or c.get("label") or n for n, c in spec["charts"].items()}
+        preview.charts = [(titles[n], spec["charts"][n]["type"]) for n in ok]
+        preview.error = f"描けなかった指標を除きました: {', '.join(titles[n] for n in failed)}"
         return preview
 
     def _commit_image(self, wt: Worktree, beam: BeamModel) -> str | None:
@@ -367,3 +410,14 @@ def copy_database(source: Path, dest: Path) -> None:
         ) from e
     finally:
         con.close()
+
+
+def _only(spec: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    """チャートの元ファイルのうち、names のチャート（とその問い合わせ）だけを残す。"""
+    queries = {spec["charts"][n]["query"] for n in names}
+    return {
+        **spec,
+        "metric_queries": {k: v for k, v in spec["metric_queries"].items() if k in queries},
+        "charts": {n: spec["charts"][n] for n in names},
+        "rows": [n for n in spec["rows"] if n in names],
+    }

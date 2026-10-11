@@ -92,3 +92,22 @@ def test_labels_cannot_inject_templates() -> None:
 
 def test_no_chart_without_queries() -> None:
     assert chart_spec(BEAM, []) is None
+
+
+def test_line_chart_drops_series_for_many_values() -> None:
+    """値の種類が多い切り口では、折れ線を色分けしない（系列が多すぎて読めないため。#79）。"""
+    from adp.generation.chart_specs import LINE_SERIES_MAX, source_of
+
+    m = BEAM.metrics[0]
+    beam = BEAM.model_copy(update={"metrics": [m]})
+    query = [MetricQuery(m.name, ["metric_time__month", "store__store_name"])]
+    few = chart_spec(beam, query, lambda ref: 5)
+    many = chart_spec(beam, query, lambda ref: LINE_SERIES_MAX + 1)
+    unknown = chart_spec(beam, query, lambda ref: None)
+    assert few and many and unknown
+    assert few["charts"][m.name]["color"] == "store__store_name"
+    assert "color" not in many["charts"][m.name]
+    assert many["metric_queries"][m.name]["group_by"] == ["metric_time__month"]
+    assert unknown["charts"][m.name]["color"] == "store__store_name"
+    assert source_of(BEAM, "store__store_name") == ("raw.stores", "store_name")
+    assert source_of(BEAM, "nope__x") is None

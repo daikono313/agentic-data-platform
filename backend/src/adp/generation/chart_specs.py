@@ -13,6 +13,7 @@ SQL は書かない。ボードへの書き出しと検査は `adp.charts`（ADR
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from adp.beam import BeamModel, MetricRequest, MetricType
@@ -22,6 +23,11 @@ from adp.generation.semantic import MetricQuery
 # store__year のようなカテゴリの属性と区別する
 _TIME = re.compile(r"^(metric_time|[a-z0-9_]+__[a-z0-9_]+)__(day|week|month|quarter|year)$")
 BAR_LIMIT = 20
+LINE_SERIES_MAX = 10
+"""折れ線の系列（色分け）の上限。値の種類がこれより多い切り口では色分けしない（#79）。"""
+
+Cardinality = Callable[[str], int | None]
+"""切り口の参照名（例: store__channel）→ 値の種類の数（分からなければ None）。"""
 
 
 def safe_label(value: str) -> str:
@@ -29,7 +35,9 @@ def safe_label(value: str) -> str:
     return re.sub(r"[<>{}]", "", value).strip()
 
 
-def _chart(m: MetricRequest, group_by: list[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _chart(
+    m: MetricRequest, group_by: list[str], cardinality: Cardinality | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     times = [g for g in group_by if _TIME.search(g)]
     categories = [g for g in group_by if g not in times]
     query: dict[str, Any] = {"metrics": [m.name]}
@@ -42,6 +50,11 @@ def _chart(m: MetricRequest, group_by: list[str]) -> tuple[dict[str, Any], dict[
         times = ["metric_time__month"]
     if times:
         x, color = times[0], categories[:1]
+        # 系列が多すぎると読めないので、値の種類が多い切り口では色分けしない
+        if color and cardinality is not None:
+            n = cardinality(color[0])
+            if n is not None and n > LINE_SERIES_MAX:
+                color = []
         query["group_by"] = [x, *color]
         query["order"] = [x]
         chart |= {"type": "line", "x": x, "y": m.name}
@@ -62,7 +75,22 @@ def _chart(m: MetricRequest, group_by: list[str]) -> tuple[dict[str, Any], dict[
     return query, chart
 
 
-def chart_spec(beam: BeamModel, queries: list[MetricQuery]) -> dict[str, Any] | None:
+def source_of(beam: BeamModel, ref: str) -> tuple[str, str] | None:
+    """MetricFlow の切り口の参照名（<ディメンション>__<属性>）の元の列（<schema>.<table>, 列）。"""
+    dim, _, attr = ref.partition("__")
+    for event in beam.events:
+        for d in event.dimensions:
+            if d.name != dim:
+                continue
+            for a in d.attributes:
+                if a.name == attr and a.source is not None and a.source.column:
+                    return a.source.table, a.source.column
+    return None
+
+
+def chart_spec(
+    beam: BeamModel, queries: list[MetricQuery], cardinality: Cardinality | None = None
+) -> dict[str, Any] | None:
     """確定した指標ごとに 1 つのチャートを持つボードの元ファイル。指標が無ければ None。"""
     by_name = {q.metric: q for q in queries}
     metric_queries: dict[str, Any] = {}
@@ -71,7 +99,7 @@ def chart_spec(beam: BeamModel, queries: list[MetricQuery]) -> dict[str, Any] | 
         q = by_name.get(m.name)
         if q is None:
             continue
-        metric_queries[m.name], charts[m.name] = _chart(m, q.group_by)
+        metric_queries[m.name], charts[m.name] = _chart(m, q.group_by, cardinality)
     if not charts:
         return None
     return {

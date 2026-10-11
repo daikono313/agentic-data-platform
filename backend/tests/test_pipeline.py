@@ -238,3 +238,43 @@ def test_copy_database_includes_wal(tmp_path: Path) -> None:
     copy_database(src, dest)
     row = duckdb.connect(str(dest), read_only=True).execute("select count(*) from t").fetchone()
     assert row == (2,)
+
+
+def test_one_failing_chart_does_not_drop_the_board(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """1 つの指標のチャートが作れなくても、ほかの指標のチャートでボードを作る（#79）。"""
+    import adp.pipeline as pipeline_module
+    from adp.charts import ChartError
+    from adp.generation.semantic import MetricQuery
+    from adp.vcs import Worktree
+
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    second = beam.metrics[0].model_copy(update={"name": "broken", "label": "壊れた指標"})
+    beam = beam.model_copy(update={"metrics": [beam.metrics[0], second]})
+    compiled: list[list[str]] = []
+
+    def compile_board(name, spec, warehouse, mf):  # type: ignore[no-untyped-def]
+        compiled.append(list(spec["charts"]))
+        if "broken" in spec["charts"]:
+            raise ChartError("broken を描けません")
+        return "board"
+
+    monkeypatch.setattr(pipeline_module, "compile_board", compile_board)
+    monkeypatch.setattr(pipeline_module, "check", lambda warehouse, mf: [])
+    monkeypatch.setattr(pipeline_module, "render_png", lambda *a: None)
+    (tmp_path / "warehouse").mkdir()
+    pipe = GenerationPipeline(
+        PipelineConfig(tmp_path, tmp_path, tmp_path / "x.duckdb", "daikono313"),
+        FixingRunner(lambda n, spec: None),
+        LLMSettings(),
+    )
+    queries = [
+        MetricQuery("revenue", ["store__channel"]),
+        MetricQuery("broken", ["store__channel"]),
+    ]
+    preview = pipe._charts(beam, queries, Worktree(tmp_path, "beam/x"))
+    assert preview is not None
+    assert [t for t, _ in preview.charts] == ["売上金額"]
+    assert preview.error and "壊れた指標" in preview.error
+    assert compiled[-1] == ["revenue"]  # 描けるものだけで作り直した
+    spec = (tmp_path / "warehouse" / "chart_specs" / f"{beam.name}.yml").read_text()
+    assert "broken" not in spec

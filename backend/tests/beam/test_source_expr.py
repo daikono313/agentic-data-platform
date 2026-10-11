@@ -73,3 +73,34 @@ def test_generated_files_reject_unexpected_jinja(tmp_path) -> None:  # type: ign
         "{{ dim_key(\"concat(id, '\\x27 || (select 1) || \\x27')\") }}",
     ):
         assert unsafe_jinja(bad), bad
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "getenv('HOME')",
+        "read_csv('/etc/passwd')",
+        "current_setting('home_directory')",
+        "coalesce(quantity, getenv('X'))",
+        "md5(customer_name)",
+    ],
+)
+def test_only_allowed_functions(expr: str) -> None:
+    """関数は許可したものだけ（ファイルの読み込み・設定や環境の読み出しなどは不可。#79）。"""
+    with pytest.raises(ValueError, match="使えない関数"):
+        SourceRef(table="raw.orders", expr=expr)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "date_trunc('month', ordered_at)",
+        "extract(year from ordered_at)",
+        "round(abs(unit_price - list_price), 2)",
+        "nullif(lower(trim(status)), '')",
+        "greatest(quantity, 0)",
+        "if(quantity > 0, 1, 0)",
+    ],
+)
+def test_common_functions_are_allowed(expr: str) -> None:
+    assert SourceRef(table="raw.orders", expr=expr).expr == expr

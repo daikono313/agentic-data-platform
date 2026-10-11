@@ -144,6 +144,70 @@ def _check_row_expr(expr: str) -> None:
     forbidden = (exp.Query, exp.Subquery, exp.Table, exp.AggFunc, exp.Window, exp.Star)
     if any(tree.find_all(*forbidden)) or any(c.table for c in tree.find_all(exp.Column)):
         raise ValueError(hint)
+    # 関数は許可したものだけ（ファイルの読み込み・設定や環境の読み出しなどを書かせない。#79）
+    unknown = sorted(
+        {
+            (f.name if isinstance(f, exp.Anonymous) else type(f).__name__).lower()
+            for f in tree.find_all(exp.Func)
+            if isinstance(f, exp.Anonymous) or type(f).__name__ not in _ALLOWED_FUNCS
+        }
+    )
+    if unknown:
+        raise ValueError(
+            f"expr に使えない関数があります: {', '.join(unknown)}"
+            "（四則演算・CASE・COALESCE・CAST・日付・文字列・数値の基本的な関数だけ使えます）"
+        )
+
+
+_ALLOWED_FUNCS = {
+    # 条件・NULL
+    "Case",
+    "If",
+    "Coalesce",
+    "Nullif",
+    # 型
+    "Cast",
+    "TryCast",
+    # 数値
+    "Abs",
+    "Round",
+    "Floor",
+    "Ceil",
+    "Greatest",
+    "Least",
+    "Sqrt",
+    "Pow",
+    "Ln",
+    "Log",
+    "Sign",
+    # 日付・日時
+    "TimestampTrunc",
+    "DateTrunc",
+    "Extract",
+    "DateDiff",
+    "DateAdd",
+    "DateSub",
+    "Year",
+    "Month",
+    "Day",
+    "Quarter",
+    "Week",
+    "DayOfWeek",
+    "DayOfMonth",
+    "DayOfYear",
+    # 文字列
+    "Lower",
+    "Upper",
+    "Trim",
+    "Length",
+    "Substring",
+    "Concat",
+    "ConcatWs",
+    "Left",
+    "Right",
+    "Replace",
+}
+"""expr で使える関数（sqlglot の関数の型の名前）。名前の分からない関数（Anonymous）は不可。"""
 
 
 class Measure(_Base):
