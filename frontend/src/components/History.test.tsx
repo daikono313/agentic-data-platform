@@ -26,9 +26,19 @@ describe('HistoryScreen', () => {
           title: '',
           request: '返品率を見たい',
           phase: 'grain',
-          updated_at: '2026-10-11T01:00:00',
+          updated_at: '2026-10-11T01:00:00+00:00',
           metrics: [],
           job: null,
+          pr_state: null,
+        },
+        {
+          id: 's3',
+          title: '試し',
+          request: '試し',
+          phase: 'finalized',
+          updated_at: '2026-10-11T02:00:00+00:00',
+          metrics: [],
+          job: { id: 'j3', status: 'failed', steps: [], pr_url: 'javascript:alert(1)' },
           pr_state: null,
         },
       ],
@@ -41,6 +51,9 @@ describe('HistoryScreen', () => {
     expect(screen.getByRole('link', { name: '日別売上' })).toHaveAttribute('href', '?session=s1')
     expect(screen.getByRole('link', { name: /o\/r\/pull\/56/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/56')
     expect(screen.getByTestId('session-s2')).toHaveTextContent('返品率を見たい')
+    // GitHub の PR の URL でなければリンクにしない
+    expect(screen.getByTestId('session-s3')).toHaveTextContent('失敗')
+    expect(screen.queryByRole('link', { name: /javascript/ })).not.toBeInTheDocument()
   })
 
   it('まだ要求が無ければそう出す', async () => {

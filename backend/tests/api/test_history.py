@@ -28,33 +28,84 @@ def test_history_lists_sessions_with_job_and_pr_state(setup) -> None:  # type: i
     assert first["metrics"] == ["売上金額"] and first["job"] is None and first["pr_state"] is None
 
 
-async def test_pr_state_is_cached_and_limited(tmp_path: Path) -> None:
+def _service(tmp_path: Path, pr_state):  # type: ignore[no-untyped-def]
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    store = Store(tmp_path / "app.db")
+    return SessionService(store, Interviewer(None, LLMSettings()), pipeline, pr_state=pr_state), store  # type: ignore[arg-type]
+
+
+def test_history_includes_pr_state_and_caches_it(tmp_path: Path) -> None:
     lookups: list[str] = []
 
     def pr_state(url: str) -> str | None:
         lookups.append(url)
         return "OPEN" if url.endswith("/1") else "MERGED"
 
-    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
-        raise AssertionError
+    service, store = _service(tmp_path, pr_state)
+    from adp.beam import BeamModel
+    from adp.interview.state import InterviewState
 
-    store = Store(tmp_path / "app.db")
-    service = SessionService(store, Interviewer(None, LLMSettings()), pipeline, pr_state=pr_state)  # type: ignore[arg-type]
-    budget = [10]
-    assert service._cached_pr_state("https://github.com/o/r/pull/1", budget) == "OPEN"
-    assert service._cached_pr_state("https://github.com/o/r/pull/2", budget) == "MERGED"
+    for sid, n in (("a", 1), ("b", 2), ("c", 2)):
+        store.save_session(
+            sid,
+            InterviewState(
+                beam=BeamModel(name=f"s_{sid}", title=f"要求 {sid}", request=f"要求 {sid}")
+            ),
+        )
+        store.save_job(f"j{sid}", sid, "succeeded", [], f"https://github.com/o/r/pull/{n}")
+    states = {s["id"]: s["pr_state"] for s in service.history()["sessions"]}
+    assert states == {"a": "OPEN", "b": "MERGED", "c": "MERGED"}
+    assert sorted(lookups) == ["https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"]
     # 時間内は問い合わせ直さない。マージ済みは時間が過ぎても問い合わせ直さない
-    service._cached_pr_state("https://github.com/o/r/pull/1", budget)
+    service.history()
     service._pr_cache = {k: (time.monotonic() - 10_000, v[1]) for k, v in service._pr_cache.items()}
-    service._cached_pr_state("https://github.com/o/r/pull/2", budget)
-    service._cached_pr_state("https://github.com/o/r/pull/1", budget)
-    assert lookups == [
+    service.history()
+    assert sorted(lookups) == [
+        "https://github.com/o/r/pull/1",
         "https://github.com/o/r/pull/1",
         "https://github.com/o/r/pull/2",
-        "https://github.com/o/r/pull/1",
     ]
-    # 上限を超えたら問い合わせずに、分からない（または前回の結果）
-    assert service._cached_pr_state("https://github.com/o/r/pull/3", [0]) is None
+
+
+def test_slow_github_does_not_block_the_list(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import threading
+
+    from adp.api import service as service_module
+
+    release = threading.Event()
+
+    def pr_state(url: str) -> str | None:
+        release.wait(5)
+        return "OPEN"
+
+    monkeypatch.setattr(service_module, "PR_STATE_DEADLINE_S", 0.2)
+    service, store = _service(tmp_path, pr_state)
+    from adp.beam import BeamModel
+    from adp.interview.state import InterviewState
+
+    store.save_session(
+        "a", InterviewState(beam=BeamModel(name="s_a", title="要求", request="要求"))
+    )
+    store.save_job("ja", "a", "succeeded", [], "https://github.com/o/r/pull/1")
+    started = time.monotonic()
+    [row] = service.history()["sessions"]
+    assert time.monotonic() - started < 2 and row["pr_state"] is None
+    release.set()
+
+
+def test_broken_session_row_does_not_break_the_list(tmp_path: Path) -> None:
+    from sqlmodel import Session
+
+    from adp.api.store import SessionRow
+
+    service, store = _service(tmp_path, None)
+    with Session(store.engine) as db:
+        db.add(SessionRow(id="broken", state_json='{"beam": 1}'))
+        db.commit()
+    [row] = service.history()["sessions"]
+    assert row["id"] == "broken" and row["phase"] == "unknown"
 
 
 def test_github_pr_state_only_queries_github_pr_urls(tmp_path: Path) -> None:

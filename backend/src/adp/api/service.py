@@ -7,8 +7,12 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from typing import Any
+
+from pydantic import ValidationError
 
 from adp.api.store import FeedbackRow, Store
 from adp.beam import BeamModel, build_event_matrix
@@ -44,6 +48,9 @@ PrState = Callable[[str], str | None]
 PR_STATE_TTL_S = 300.0
 PR_STATE_LOOKUPS = 20
 """一覧 1 回あたりに GitHub へ問い合わせる PR の数の上限（残りは前回の結果か不明）。"""
+PR_STATE_DEADLINE_S = 15.0
+"""PR の状態の問い合わせを待つ時間の上限。過ぎたら残りは「不明」で一覧を返す（#88 レビュー）。"""
+PR_STATE_WORKERS = 5
 
 
 def _sse(event: str, data: Any) -> SSEEvent:
@@ -162,38 +169,68 @@ class SessionService:
 
         PR の状態は GitHub に問い合わせる（同期処理。呼び出し側でスレッドに出す）。
         """
-        budget = [PR_STATE_LOOKUPS]
-        sessions = []
+        sessions: list[dict[str, Any]] = []
         for row in self.store.list_sessions():
-            state = InterviewState.model_validate_json(row.state_json)
             job = self._job_view(row.id)
-            pr_url = job["pr_url"] if job else None
+            try:
+                state = InterviewState.model_validate_json(row.state_json)
+                title, request = state.beam.title, state.beam.request
+                phase, metrics = state.phase.value, [m.label for m in state.beam.metrics]
+            except ValidationError:  # 古い形式・壊れた行でも一覧全体は返す
+                title, request, phase, metrics = "", "（読めないセッション）", "unknown", []
             sessions.append(
                 {
                     "id": row.id,
-                    "title": state.beam.title,
-                    "request": state.beam.request,
-                    "phase": state.phase.value,
+                    "title": title,
+                    "request": request,
+                    "phase": phase,
                     "updated_at": row.updated_at.isoformat(),
-                    "metrics": [m.label for m in state.beam.metrics],
+                    "metrics": metrics,
                     "job": job,
-                    "pr_state": self._cached_pr_state(pr_url, budget) if pr_url else None,
+                    "pr_state": None,
                 }
             )
+        urls = list(
+            dict.fromkeys(s["job"]["pr_url"] for s in sessions if s["job"] and s["job"]["pr_url"])
+        )
+        states = self._pr_states(urls)
+        for s in sessions:
+            if s["job"] and s["job"]["pr_url"]:
+                s["pr_state"] = states.get(s["job"]["pr_url"])
         return {"sessions": sessions}
 
-    def _cached_pr_state(self, url: str, budget: list[int]) -> str | None:
+    def _pr_states(self, urls: list[str]) -> dict[str, str | None]:
+        """PR の状態をまとめて調べる。キャッシュに無いものは並列に、決まった時間まで待つ。"""
         now = time.monotonic()
-        cached = self._pr_cache.get(url)
-        # マージ・クローズ済みは変わらないので問い合わせ直さない
-        if cached and (cached[1] in ("MERGED", "CLOSED") or now - cached[0] < PR_STATE_TTL_S):
-            return cached[1]
-        if self.pr_state is None or budget[0] <= 0:
-            return cached[1] if cached else None
-        budget[0] -= 1
-        state = self.pr_state(url)
-        self._pr_cache[url] = (now, state)
-        return state
+        result: dict[str, str | None] = {}
+        todo: list[str] = []
+        for url in urls:
+            cached = self._pr_cache.get(url)
+            # マージ・クローズ済みは変わらないので問い合わせ直さない
+            if cached and (cached[1] in ("MERGED", "CLOSED") or now - cached[0] < PR_STATE_TTL_S):
+                result[url] = cached[1]
+            else:
+                result[url] = cached[1] if cached else None
+                todo.append(url)
+        lookup = self.pr_state
+        if lookup is None or not todo:
+            return result
+        pool = ThreadPoolExecutor(max_workers=PR_STATE_WORKERS)
+        futures = {pool.submit(lookup, url): url for url in todo[:PR_STATE_LOOKUPS]}
+        try:
+            for future in as_completed(futures, timeout=PR_STATE_DEADLINE_S):
+                url = futures[future]
+                try:
+                    state = future.result()
+                except Exception:
+                    state = None
+                self._pr_cache[url] = (time.monotonic(), state)
+                result[url] = state
+        except FuturesTimeout:  # 残りは前回の結果か不明のまま返す（問い合わせは後ろで続く）
+            pass
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        return result
 
     def feedback(self, session_id: str, body: FeedbackIn) -> dict[str, Any]:
         """発言ごと・セッション全体のフィードバックを保存する（#44）。
@@ -407,7 +444,8 @@ class SessionService:
             q.put_nowait(event)
 
     def _job_view(self, session_id: str) -> dict[str, Any] | None:
-        live = [j for j in self._jobs.values() if j.session_id == session_id]
+        # 一覧はスレッドで作るので、ループ側で増えても壊れないよう写しを見る
+        live = [j for j in list(self._jobs.values()) if j.session_id == session_id]
         if live:
             return live[-1].view()
         row = self.store.latest_job(session_id)

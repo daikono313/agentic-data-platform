@@ -12,6 +12,9 @@ const PR_STATE: Record<string, { label: string; className: string }> = {
   MERGED: { label: 'マージ済み', className: 'border-green-600 text-green-700' },
   CLOSED: { label: 'クローズ', className: 'text-muted-foreground' },
 }
+/** GitHub の PR の URL だけをリンクにする（それ以外の値をそのまま href にしない） */
+const GITHUB_PR = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/
+
 const JOB_STATE: Record<string, string> = { running: '生成中', succeeded: 'PR 作成済み', failed: '失敗' }
 
 function status(s: SessionSummary): string {
@@ -67,7 +70,7 @@ export function HistoryScreen() {
                   </TableCell>
                   <TableCell className="text-xs">{status(s)}</TableCell>
                   <TableCell className="text-xs">
-                    {s.job?.pr_url ? (
+                    {s.job?.pr_url && GITHUB_PR.test(s.job.pr_url) ? (
                       <span className="flex flex-col items-start gap-1">
                         <a
                           href={s.job.pr_url}

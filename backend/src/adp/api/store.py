@@ -114,17 +114,6 @@ class Store:
             stmt = select(SessionRow).order_by(col(SessionRow.updated_at).desc()).limit(limit)
             return list(db.exec(stmt))
 
-    def list_jobs(self, prefix: str, limit: int = 200) -> list[JobRow]:
-        """session_id が prefix で始まるジョブ（源泉の取り込みなど）の新しい順。"""
-        with Session(self.engine) as db:
-            stmt = (
-                select(JobRow)
-                .where(col(JobRow.session_id).startswith(prefix))
-                .order_by(col(JobRow.created_at).desc())
-                .limit(limit)
-            )
-            return list(db.exec(stmt))
-
     def load_session(self, session_id: str) -> InterviewState | None:
         with Session(self.engine) as db:
             row = db.get(SessionRow, session_id)

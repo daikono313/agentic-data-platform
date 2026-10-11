@@ -137,6 +137,7 @@ class GitHub:
         self.repo_root = repo_root
         self.account = account
         self.run = runner
+        self._token: dict[str, str] | None = None
 
     def _env(self) -> dict[str, str]:
         if not self.account:
@@ -166,10 +167,12 @@ class GitHub:
         if not re.fullmatch(r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/\d+", url):
             return None
         try:
+            if self._token is None:  # 一覧で何件も問い合わせるので、トークンは 1 度だけ取る
+                self._token = self._env()
             out = self.run(
                 ["gh", "pr", "view", url, "--json", "state", "-q", ".state"],
                 self.repo_root,
-                self._env(),
+                self._token,
             ).stdout.strip()
         except Exception:
             return None
