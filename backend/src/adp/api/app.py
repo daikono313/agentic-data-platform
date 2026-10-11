@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -12,7 +13,7 @@ from typing import Any
 import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sse_starlette.sse import EventSourceResponse
 
 from adp.api.service import Conflict, NotFound, SessionService, SSEEvent
@@ -22,6 +23,8 @@ from adp.chart_view import ChartRequest, ChartView, ChartViews
 from adp.charts import ChartError
 from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
+from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
+from adp.onboarding.proposal import OntologyPatch
 
 
 class CreateSession(BaseModel):
@@ -32,10 +35,23 @@ class SendMessage(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class OnboardingDraftIn(BaseModel):
+    agent: bool = True
+    """エージェントに案を作らせる（False ならプロファイルからの決定的な案だけ）。"""
+
+
+class OnboardingIn(BaseModel):
+    patch: dict[str, Any]
+    cleansing: str = Field(min_length=1, max_length=20000)
+    redo: bool = False
+    """前の取り込みの PR を閉じた（マージしなかった）ので、もう一度作る。"""
+
+
 def create_app(
     service: SessionService,
     datasets: DatasetIndex | None = None,
     charts: ChartViews | None = None,
+    onboarding: OnboardingPipeline | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ADP")
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
@@ -66,6 +82,55 @@ def create_app(
             raise HTTPException(404, "ontology/ontology.yml がありません") from e
         except ValueError as e:  # yml の形式の誤り（pydantic の ValidationError を含む）
             raise HTTPException(422, f"ontology.yml の形式が正しくありません: {e}") from e
+
+    @app.post("/sources/{table}/onboarding/draft")
+    async def onboarding_draft(table: str, body: OnboardingDraftIn) -> dict[str, Any]:
+        """源泉の取り込みの下書き（オントロジーへの追加案・クレンジングの定義・バスの差分。#69）。"""
+        if onboarding is None:
+            raise HTTPException(503, "源泉の取り込みは使えません")
+        try:
+            draft = await onboarding.draft(table, use_agent=body.agent)
+        except AlreadyOnboarded as e:
+            raise HTTPException(409, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(503, "ontology/ontology.yml がありません") from e
+        except ValidationError as e:  # ontology.yml などの形式の誤り（入力の誤りではない）
+            raise HTTPException(422, f"形式が正しくありません: {e}") from e
+        except ValueError as e:  # 対象外のテーブル
+            raise HTTPException(404, str(e)) from e
+        except CatalogUnavailable as e:
+            raise HTTPException(503, str(e)) from e
+        except duckdb.Error as e:
+            raise HTTPException(503, "下書きを作れませんでした") from e
+        return draft.model_dump(mode="json", by_alias=True)
+
+    @app.post("/sources/{table}/onboarding")
+    async def onboarding_start(table: str, body: OnboardingIn) -> dict[str, Any]:
+        """確定した追加案とクレンジングの定義で、取り込みの PR を作るジョブを始める（#69）。"""
+        if onboarding is None:
+            raise HTTPException(503, "源泉の取り込みは使えません")
+        try:
+            patch = OntologyPatch.model_validate(body.patch)
+            errors = await asyncio.to_thread(onboarding.check_request, table, patch, body.cleansing)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except CatalogUnavailable as e:
+            raise HTTPException(503, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(503, "ontology/ontology.yml がありません") from e
+        except duckdb.Error as e:
+            raise HTTPException(503, "検証できませんでした") from e
+        if errors:
+            raise HTTPException(422, " / ".join(errors))
+        try:
+            return service.start_onboarding(table, patch, body.cleansing, redo=body.redo)
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from e
+
+    @app.get("/sources/{table}/onboarding")
+    def onboarding_status(table: str) -> dict[str, Any]:
+        """この源泉の最新の取り込みジョブ（無ければ job: null）。"""
+        return {"job": service.onboarding_job(table)}
 
     @app.get("/sources/{table}/cleansing")
     def source_cleansing(table: str) -> dict[str, Any]:
@@ -218,7 +283,7 @@ def build_default_app() -> FastAPI:
         runner,
         settings,
         {SERVER_NAME: build_tools(catalog)},
-        design_issues=design_issues(catalog),
+        design_issues=design_issues(catalog, REPO_ROOT / "ontology" / "ontology.yml"),
     )
     account = (
         read_dotenv(REPO_ROOT / ".env").get("ADP_GITHUB_ACCOUNT")
@@ -248,5 +313,6 @@ def build_default_app() -> FastAPI:
         )
         retention_days = RETENTION_DAYS
     store = Store(REPO_ROOT / ".adp" / "app.db", feedback_retention_days=retention_days)
-    service = SessionService(store, interviewer, pipeline.run)
-    return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT))
+    onboarding = OnboardingPipeline(pipeline.config, runner, settings)
+    service = SessionService(store, interviewer, pipeline.run, onboarding.run)
+    return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding)

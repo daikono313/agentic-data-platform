@@ -69,6 +69,7 @@ export function BusMatrixView({ bus, models, compact }: { bus: BusMatrix; models
                     className={cn('border px-1 py-1 text-center font-semibold break-all', shade(i))}
                   >
                     {g.kind === 'dim' ? g.label : 'fact 内の属性'}
+                    {g.candidate && <span className="ml-1 text-[10px] font-normal text-primary">（候補）</span>}
                     <span className="block font-mono text-[10px] font-normal text-muted-foreground">{g.name}</span>
                   </th>
                 ))}
@@ -92,13 +93,20 @@ export function BusMatrixView({ bus, models, compact }: { bus: BusMatrix; models
         </thead>
         <tbody>
           {bus.rows.map((r) => (
-            <tr key={r.name} data-testid={`bus-${r.name}`}>
+            <tr
+              key={r.name}
+              data-testid={`bus-${r.name}`}
+              className={r.candidate ? 'outline-1 -outline-offset-1 outline-primary outline-dashed' : undefined}
+            >
               <th
                 scope="row"
                 className="sticky left-0 z-10 border bg-background px-2 py-1.5 text-left font-normal"
                 title={description.get(r.name)}
               >
-                <span className="block font-mono font-medium">{r.name}</span>
+                <span className="block font-mono font-medium">
+                  {r.name}
+                  {r.candidate && <span className="ml-1 font-sans text-[10px] text-primary">（候補）</span>}
+                </span>
                 <span className="block text-muted-foreground">{r.label}</span>
               </th>
               {bus.groups.flatMap((g, i) =>

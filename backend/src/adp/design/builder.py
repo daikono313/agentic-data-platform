@@ -30,6 +30,7 @@ from adp.design.models import (
     PhysicalDesign,
     SourceTable,
 )
+from adp.ontology.models import Ontology
 
 
 @dataclass(frozen=True)
@@ -181,9 +182,16 @@ def dim_key_expr(expr: str) -> str:
 
 
 class DesignBuilder:
-    def __init__(self, schema: SchemaInfo, existing_dims: dict[str, set[str]] | None = None):
+    def __init__(
+        self,
+        schema: SchemaInfo,
+        existing_dims: dict[str, set[str]] | None = None,
+        ontology: Ontology | None = None,
+    ):
         self.schema = schema
         self.existing_dims = existing_dims or {}
+        self.ontology = ontology
+        """あれば、ディメンションの名前がオントロジーの概念の dim と合うかを確かめる（#69）。"""
         self.issues: list[DesignIssue] = []
 
     def _issue(self, severity: IssueSeverity, message: str, ref: str | None = None) -> None:
@@ -196,6 +204,7 @@ class DesignBuilder:
         self.issues = []
         facts = [f for e in beam.events if (f := self._fact(e)) is not None]
         dims = self._dims(beam)
+        self._check_ontology(dims)
         design = PhysicalDesign(
             beam=beam.name,
             facts=facts,
@@ -206,6 +215,28 @@ class DesignBuilder:
         self._check_metrics(beam, design)
         design.issues = list(self.issues)
         return design
+
+    def _check_ontology(self, dims: list[DimTable]) -> None:
+        """同じ源泉の概念に dim があるのに、別の名前の dim を作ろうとしていないか。
+
+        別の名前にすると共通ディメンション（conformed dimension）を再利用できず、同じものの
+        dim が 2 つできる。ディメンションの名前を概念の dim に合わせるよう促す。
+        """
+        if self.ontology is None:
+            return
+        by_source = {c.source: c for c in self.ontology.concepts if c.kind == "entity" and c.model}
+        for dim in dims:
+            concept = by_source.get(dim.base.table)
+            natural = next((c.name for c in dim.columns if c.role == ColumnRole.NATURAL_KEY), None)
+            # 同じキーで識別するもの（同じ概念）だけ。地方のような、同じ源泉の別の切り口は対象外
+            if concept is not None and natural == concept.key and concept.model != dim.name:
+                name = (concept.model or "").removeprefix("dim_")
+                self._blocker(
+                    f"{dim.name} の源泉 {dim.base.table} は、オントロジーでは"
+                    f"概念「{concept.label}」（{concept.model}）です。"
+                    f"ディメンションの名前を {name} にして、{concept.model} を再利用してください",
+                    dim.dimension,
+                )
 
     # --- fct -------------------------------------------------------------------------------
 

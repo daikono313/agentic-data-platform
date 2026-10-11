@@ -67,6 +67,8 @@ class SourceInfo(BaseModel):
     description: str = ""
     row_count: int
     columns: list[ColumnInfo] = Field(default_factory=list)
+    unmapped: bool = False
+    """オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69）。"""
 
 
 class BeamInfo(BaseModel):
@@ -99,6 +101,8 @@ class BusGroup(BaseModel):
     kind: str
     """dim / degenerate"""
     attributes: list[BusAttribute] = Field(default_factory=list)
+    candidate: bool = False
+    """源泉の取り込みで増える候補（まだ無い dim。#69）。"""
 
 
 class BusRow(BaseModel):
@@ -107,6 +111,8 @@ class BusRow(BaseModel):
     label: str
     groups: list[str] = Field(default_factory=list)
     """結合できる（✓ が付く）列のまとまりの name。"""
+    candidate: bool = False
+    """源泉の取り込みで増える候補（まだ無い fct。#69）。"""
 
 
 class BusMatrix(BaseModel):
@@ -290,9 +296,19 @@ class DatasetIndex:
             )
         return sorted(result, key=lambda m: (m.kind != "fct", m.name))
 
+    def _mapped_sources(self) -> set[str] | None:
+        """オントロジーの概念になっている源泉。オントロジーが無い・読めなければ None。"""
+        from adp.ontology import load
+
+        try:
+            return {c.source for c in load(self.repo_root / "ontology" / "ontology.yml").concepts}
+        except (OSError, ValueError):
+            return None
+
     def sources(self, errors: list[str]) -> list[SourceInfo]:
         if self.catalog is None:
             return []
+        mapped = self._mapped_sources()
         try:
             tables = self.catalog.list_sources()
             return [
@@ -304,6 +320,7 @@ class DatasetIndex:
                         ColumnInfo(name=c.name, description=c.description, data_type=c.data_type)
                         for c in self.catalog.columns(t.qualified)
                     ],
+                    unmapped=mapped is not None and t.qualified not in mapped,
                 )
                 for t in tables
             ]

@@ -62,6 +62,12 @@ describe('DatasetsPanel', () => {
     expect(screen.getByText('返品')).toBeInTheDocument()
   })
 
+  it('未整理の源泉には取り込みへのリンクを出す', () => {
+    const sources = [{ ...datasets.sources[0], unmapped: true }]
+    render(<DatasetsPanel datasets={{ ...datasets, sources }} />)
+    expect(screen.getByRole('link', { name: /未整理.*取り込む/ })).toHaveAttribute('href', '?onboard=raw.returns')
+  })
+
   it('インタビュー中（compact）はリンクを別タブで開く', () => {
     render(<DatasetsPanel datasets={datasets} compact />)
     expect(screen.getByRole('link', { name: /プロファイル/ })).toHaveAttribute('target', '_blank')

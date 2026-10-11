@@ -21,12 +21,16 @@ from adp.catalog.catalog import Catalog
 from adp.charts import SPECS_DIR, ChartError, check, compile_board, render_png
 from adp.design import DesignBuilder, PhysicalDesign
 from adp.design.catalog_schema import CatalogSchema
+from adp.design.check import load_ontology
 from adp.generation import generate_models
 from adp.generation.chart_specs import chart_spec
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
 from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, LLMSettings
+from adp.ontology.models import dump as dump_ontology
+from adp.ontology.models import link_models
+from adp.ontology.render import markdown as ontology_markdown
 from adp.vcs import (
     ChartPreview,
     GitHub,
@@ -140,7 +144,9 @@ class GenerationPipeline:
 
             step("design", StepStatus.RUNNING)
             catalog = Catalog(warehouse / "data" / "dev.duckdb")
-            design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+            ontology_path = wt.path / "ontology" / "ontology.yml"
+            ontology = load_ontology(ontology_path)
+            design = DesignBuilder(CatalogSchema(catalog), ontology=ontology).build(beam)
             result.design = design
             if design.blockers:
                 raise PipelineError(
@@ -154,6 +160,16 @@ class GenerationPipeline:
             generation = generate_models(design, info, beam)
             info.write(generation.files)
             save(beam, wt.path / "beam" / f"{beam.name}.yml")
+            if ontology is not None:
+                # 作った fct / dim を、その源泉の概念に書き込む（fact / dim の整理。#69）
+                links = [(f.base.table, f.name) for f in design.facts]
+                links += [(d.base.table, d.name) for d in design.dims if not d.exists]
+                ontology, linked = link_models(ontology, links)
+                if linked:
+                    ontology_path.write_text(dump_ontology(ontology), encoding="utf-8")
+                    (wt.path / "docs" / "ontology.md").write_text(
+                        ontology_markdown(ontology), encoding="utf-8"
+                    )
             reused = f"、再利用 {len(generation.reused)} モデル" if generation.reused else ""
             step("generate", StepStatus.DONE, f"{len(generation.files)} ファイル{reused}")
 
@@ -192,7 +208,7 @@ class GenerationPipeline:
                 )
 
             step("commit", StepStatus.RUNNING)
-            files = self.workspace.stage(wt, ["warehouse", "beam"])
+            files = self.workspace.stage(wt, ["warehouse", "beam", "ontology", "docs/ontology.md"])
             if not files:
                 raise PipelineError("commit するファイルがありません")
             result.files = files
@@ -316,16 +332,20 @@ class GenerationPipeline:
         return f"https://github.com/{repo}/blob/{sha}/{image}?raw=true"
 
     def _prepare_warehouse(self, wt: Worktree) -> Path:
-        """worktree の warehouse に、検証用の DuckDB と dbt パッケージを用意する。"""
-        warehouse = wt.path / "warehouse"
-        (warehouse / "data").mkdir(parents=True, exist_ok=True)
-        if not self.config.source_db.exists():
-            raise PipelineError(f"検証用の DuckDB がありません: {self.config.source_db}")
-        copy_database(self.config.source_db, warehouse / "data" / "dev.duckdb")
-        packages = self.config.repo_root / "warehouse" / "dbt_packages"
-        if packages.exists() and not (warehouse / "dbt_packages").exists():
-            shutil.copytree(packages, warehouse / "dbt_packages")
-        return warehouse
+        return prepare_warehouse(self.config, wt)
+
+
+def prepare_warehouse(config: PipelineConfig, wt: Worktree) -> Path:
+    """worktree の warehouse に、検証用の DuckDB と dbt パッケージを用意する。"""
+    warehouse = wt.path / "warehouse"
+    (warehouse / "data").mkdir(parents=True, exist_ok=True)
+    if not config.source_db.exists():
+        raise PipelineError(f"検証用の DuckDB がありません: {config.source_db}")
+    copy_database(config.source_db, warehouse / "data" / "dev.duckdb")
+    packages = config.repo_root / "warehouse" / "dbt_packages"
+    if packages.exists() and not (warehouse / "dbt_packages").exists():
+        shutil.copytree(packages, warehouse / "dbt_packages")
+    return warehouse
 
 
 def copy_database(source: Path, dest: Path) -> None:

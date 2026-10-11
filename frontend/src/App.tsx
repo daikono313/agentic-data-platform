@@ -12,6 +12,7 @@ import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
+import { OnboardingScreen } from '@/components/Onboarding'
 import { OntologyScreen } from '@/components/Ontology'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { SourceProfileScreen } from '@/components/SourceProfile'
@@ -115,6 +116,8 @@ export default function App() {
   const source = params.get('source')
   if (source) return <SourceProfileScreen table={source} />
   if (params.has('ontology')) return <OntologyScreen />
+  const onboard = params.get('onboard')
+  if (onboard) return <OnboardingScreen table={onboard} />
   return <InterviewApp />
 }
 

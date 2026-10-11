@@ -310,7 +310,8 @@ def test_ontology_api(repo: Path, tmp_path: Path) -> None:
     (repo / "ontology" / "ontology.yml").write_text(src.read_text(encoding="utf-8"))
     body = client.get("/ontology").json()
     assert body["mermaid"].startswith("flowchart")
-    assert body["errors"] == [] and body["unmapped_sources"] == []
+    # raw.inventory は後から追加された源泉の例（オントロジーに未整理。#69）
+    assert body["errors"] == [] and body["unmapped_sources"] == ["raw.inventory"]
     (repo / "ontology" / "ontology.yml").write_text("version: 1\ndomains: []\nconcepts: [1]\n")
     assert client.get("/ontology").status_code == 422
     shutil.rmtree(repo / "ontology")

@@ -31,6 +31,8 @@ export interface SourceInfo {
   description: string
   row_count: number
   columns: ColumnInfo[]
+  /** オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69） */
+  unmapped?: boolean
 }
 export interface BeamInfo {
   name: string
@@ -94,6 +96,28 @@ export interface CleansingView {
   draft_error?: string | null
 }
 
+/** 源泉の取り込み（#69） */
+export interface OntologyPatch {
+  domains: { name: string; label: string }[]
+  concepts: OntologyConcept[]
+  relations: { from: string; to: string; verb: string; via: string }[]
+  constraints: { concept: string; text: string }[]
+}
+export interface OnboardingDraft {
+  source: string
+  patch: OntologyPatch
+  proposer: 'agent' | 'profile'
+  note: string | null
+  cleansing: string
+  cleansing_exists: boolean
+  mermaid: string
+  bus: BusMatrix
+}
+
+export function onboardUrl(table: string): string {
+  return `?${new URLSearchParams({ onboard: table }).toString()}`
+}
+
 export function sourceUrl(table: string): string {
   return `?${new URLSearchParams({ source: table }).toString()}`
 }
@@ -104,11 +128,15 @@ export interface BusGroup {
   label: string
   kind: 'dim' | 'degenerate' | string
   attributes: { name: string; label: string }[]
+  /** 源泉の取り込みで増える候補（#69） */
+  candidate?: boolean
 }
 export interface BusRow {
   name: string
   label: string
   groups: string[]
+  /** 源泉の取り込みで増える候補（#69） */
+  candidate?: boolean
 }
 export interface BusMatrix {
   groups: BusGroup[]

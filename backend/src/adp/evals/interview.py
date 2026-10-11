@@ -342,7 +342,7 @@ async def run_scenario(
         runner,
         settings,
         {CATALOG_SERVER: catalog_tools(catalog)},
-        design_issues=design_issues(catalog),
+        design_issues=design_issues(catalog, REPO_ROOT / "ontology" / "ontology.yml"),
     )
     user = SimulatedUser(runner, settings, scenario.persona)
     state = new_state(scenario.request)
