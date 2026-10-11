@@ -35,7 +35,7 @@ make eval       # インタビューの eval（実際の LLM。REPEAT=N で繰�
 make e2e        # 実際の LLM で通しの E2E（S1。V2=1 で S3・S4。既定は dry-run、PR=1 で本物の PR）
 make eval-compare BEFORE=… AFTER=…  # eval の前後比較（プロンプトを変えたら PR に貼る。C10）
 make feedback-report  # フィードバックの集計（SUMMARY=1 で Claude の要約と改善案）
-make feedback-drafts  # 低評価の会話から eval の下書き（合成に書き換えてから evals/ へ）
+make feedback-drafts  # 低評価の会話から eval の下書き（合成に書き換えてから evals/ へ。手順は docs/feedback-loop.md）
 make dev        # backend と frontend を起動
 ```
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from adp.api.store import FeedbackRow, Store
 from adp.evals.compare import compare
-from adp.evals.feedback import drafts, report, summarize
+from adp.evals.feedback import drafts, no_drafts_hint, report, summarize
 from adp.evals.interview import (
     _scenario_transcript_check,
     _transcript_checks,
@@ -100,7 +100,16 @@ def _store_with_feedback(tmp_path: Path) -> Store:
             message_text="粒度を決めます。",
         )
     )
-    store.save_feedback(FeedbackRow(**common, message_index=3, thumb="up", phase="framing"))
+    store.save_feedback(
+        FeedbackRow(
+            **common,
+            message_index=3,
+            thumb="up",
+            phase="framing",
+            comment="例を出してくれて分かりやすい",
+            message_text="たとえば…",
+        )
+    )
     store.save_feedback(
         FeedbackRow(session_id="s1", kind="session", score=2, prompt_version="interview-v1+aaa")
     )
@@ -117,6 +126,20 @@ def test_report(tmp_path: Path) -> None:
     assert "コメント: 『粒度』の意味がわからない" in text
     assert "s1: 2 点" in text
     assert "まだフィードバックがありません" in report([])
+    assert "例を出してくれて分かりやすい" in text  # 👍 のコメントも出す（#76）
+
+
+def test_report_without_downs_says_so(tmp_path: Path) -> None:
+    """👎 が無いときは見出しだけにせず「無い」と書く（#76 で実データを回して分かった問題）。"""
+    store = Store(tmp_path / "app.db")
+    store.save_feedback(
+        FeedbackRow(session_id="s1", kind="message", message_index=1, thumb="up", comment="良い")
+    )
+    text = report(store.feedback())
+    assert "まだ 👎 はありません" in text and "- **-**: 良い" in text
+    assert drafts(store, tmp_path / "drafts") == []
+    hint = no_drafts_hint(store.feedback())
+    assert "発言への評価 1 件" in hint and "docs/feedback-loop.md" in hint
 
 
 def test_drafts_map_categories_to_checks(tmp_path: Path) -> None:

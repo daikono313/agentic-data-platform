@@ -99,8 +99,11 @@ async def _feedback_report(args: argparse.Namespace) -> int:
     if not APP_DB.exists():
         print(f"{APP_DB} がありません（まだフィードバックがありません）")
         return 0
-    text = report(Store(APP_DB, feedback_retention_days=0).feedback())
-    if args.summary:
+    rows = Store(APP_DB, feedback_retention_days=0).feedback()
+    text = report(rows)
+    if args.summary and not rows:
+        print("フィードバックが無いので、Claude による要約は省きます")
+    elif args.summary:
         from adp.llm import ClaudeAgentRunner, load_settings
 
         settings = load_settings()
@@ -116,12 +119,16 @@ async def _feedback_report(args: argparse.Namespace) -> int:
 
 def _feedback_drafts(args: argparse.Namespace) -> int:
     from adp.api.store import Store
-    from adp.evals.feedback import drafts
+    from adp.evals.feedback import drafts, no_drafts_hint
 
     if not APP_DB.exists():
         print(f"{APP_DB} がありません（まだフィードバックがありません）")
         return 0
-    paths = drafts(Store(APP_DB, feedback_retention_days=0), REPO_ROOT / ".adp" / "eval-drafts")
+    store = Store(APP_DB, feedback_retention_days=0)
+    paths = drafts(store, REPO_ROOT / ".adp" / "eval-drafts")
+    if not paths:
+        print(no_drafts_hint(store.feedback()))
+        return 0
     for p in paths:
         print(p.relative_to(REPO_ROOT))
     print(
