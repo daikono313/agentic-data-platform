@@ -58,7 +58,7 @@
      - #76 のうち、画面で集まった本物のフィードバックが無い部分（自分で作ったフィードバックで「1 周」したことにしない）
 2. 新しい源泉（在庫 `raw.inventory` を #69 でサンプルデータに追加する）を足して「オントロジーの更新 → クレンジング層 → fact / dim → 指標 → チャート（画像が生成される）」が通しで動く
    - 自動テスト: `backend/tests/test_e2e_v3.py`（CI。LLM はモック）
-   - 実際の LLM: `make e2e SCENARIO=inventory V3=1`（ローカル。#69 で追加）
+   - 実際の LLM: `make e2e SCENARIO=inventory V3=1`（ローカル。#69 で追加。在庫は取り込み済みになったので、いまは `make e2e V3=1`（未整理の源泉 raw.reviews を取り込む。#113）で同じ流れを確かめる）
 3. main の CI が green
 
 1〜3 を満たしたら /goal を終了し、`needs-owner` の issue の一覧をオーナーに報告する。
