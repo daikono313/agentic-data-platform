@@ -28,7 +28,7 @@ export function SourceProfileScreen({ table }: { table: string }) {
   return (
     <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">
       <a href="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline">
-        <ArrowLeft className="size-4" /> トップへ
+        <ArrowLeft className="size-4" /> ホーム
       </a>
       <header>
         <p className="font-mono text-xs text-muted-foreground">{table}</p>

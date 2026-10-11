@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
@@ -241,9 +242,23 @@ function InterviewApp() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
-        <div>
-          <h1 className="text-base font-bold">{session.beam.title}</h1>
-          <p className="text-xs text-muted-foreground">{session.beam.request}</p>
+        <div className="flex min-w-0 items-center gap-3">
+          <a
+            href="/"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs whitespace-nowrap text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            onClick={(e) => {
+              // 回答の受信中に離れると、その回答は途中で切れる
+              if (state.busy && !window.confirm('回答の途中です。ホームに戻ると、この回答は中断されます。戻りますか？')) {
+                e.preventDefault()
+              }
+            }}
+          >
+            <ArrowLeft className="size-3.5" /> ホーム
+          </a>
+          <div className="min-w-0">
+            <h1 className="text-base font-bold">{session.beam.title}</h1>
+            <p className="text-xs text-muted-foreground">{session.beam.request}</p>
+          </div>
         </div>
         <PhaseProgress phase={session.phase} />
       </header>
