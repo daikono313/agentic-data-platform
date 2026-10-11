@@ -69,6 +69,9 @@ class SourceInfo(BaseModel):
     columns: list[ColumnInfo] = Field(default_factory=list)
     unmapped: bool = False
     """オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69）。"""
+    used_by: list[str] | None = None
+    """この源泉を（staging などを経由して）使っている fact / dim（空なら未活用。dbt の manifest が
+    無く分からなければ None。#72）。"""
 
 
 class BeamInfo(BaseModel):
@@ -101,6 +104,8 @@ class BusGroup(BaseModel):
     kind: str
     """dim / degenerate"""
     attributes: list[BusAttribute] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    """この dim の元の源泉（<schema>.<table>。#72）。"""
     candidate: bool = False
     """源泉の取り込みで増える候補（まだ無い dim。#69）。"""
 
@@ -111,6 +116,8 @@ class BusRow(BaseModel):
     label: str
     groups: list[str] = Field(default_factory=list)
     """結合できる（✓ が付く）列のまとまりの name。"""
+    sources: list[str] = Field(default_factory=list)
+    """この fct の元の源泉（<schema>.<table>。#72）。"""
     candidate: bool = False
     """源泉の取り込みで増える候補（まだ無い fct。#69）。"""
 
@@ -309,6 +316,7 @@ class DatasetIndex:
         if self.catalog is None:
             return []
         mapped = self._mapped_sources()
+        manifest = self._manifest()
         try:
             tables = self.catalog.list_sources()
             return [
@@ -321,6 +329,9 @@ class DatasetIndex:
                         for c in self.catalog.columns(t.qualified)
                     ],
                     unmapped=mapped is not None and t.qualified not in mapped,
+                    used_by=None
+                    if manifest is None
+                    else self._used_by(t.schema_name, t.name, manifest),
                 )
                 for t in tables
             ]
@@ -359,12 +370,18 @@ class DatasetIndex:
             **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
         )
 
-    def _used_by(self, schema: str, name: str) -> list[str]:
+    def _manifest(self) -> dict[str, Any] | None:
         try:
-            manifest = json.loads(
+            data: dict[str, Any] = json.loads(
                 (self.warehouse / "target" / "manifest.json").read_text(encoding="utf-8")
             )
         except (OSError, ValueError):
+            return None
+        return data
+
+    def _used_by(self, schema: str, name: str, manifest: dict[str, Any] | None = None) -> list[str]:
+        manifest = manifest if manifest is not None else self._manifest()
+        if manifest is None:
             return []
         children: dict[str, list[str]] = manifest.get("child_map", {})
         starts = [
@@ -376,10 +393,12 @@ class DatasetIndex:
         stack = list(starts)
         while stack:
             for child in children.get(stack.pop(), []):
-                if child.startswith("model.") and child not in seen:
+                if child.startswith(("model.", "snapshot.")) and child not in seen:
                     seen.add(child)
                     stack.append(child)
-        models = {c.rsplit(".", 1)[-1] for c in seen}
+        # ノードの名前で（versioned model の「.v1」などを名前と取り違えない）
+        nodes = manifest.get("nodes", {})
+        models = {nodes.get(c, {}).get("name") or c.rsplit(".", 1)[-1] for c in seen}
         return sorted(m for m in models if m.startswith(("dim_", "fct_")))
 
     def bus_matrix(self, manifest: dict[str, Any] | None = None) -> BusMatrix:
@@ -458,7 +477,15 @@ class DatasetIndex:
 
     def _bus(self, errors: list[str]) -> BusMatrix:
         try:
-            return self.bus_matrix()
+            bus = self.bus_matrix()
+            manifest = self._manifest()
+            if manifest is not None:  # fact / dim ごとの元の源泉（どの源泉が使われているか。#72）
+                upstream = model_sources(manifest)
+                for g in bus.groups:
+                    g.sources = upstream.get(g.name, [])
+                for r in bus.rows:
+                    r.sources = upstream.get(r.name, [])
+            return bus
         except Exception as e:  # 壊れた manifest でも一覧の他の部分は返す
             errors.append(f"バスマトリクスを作れませんでした: {type(e).__name__}")
             return BusMatrix()
@@ -544,3 +571,30 @@ def _time_label(name: str) -> str:
     if name == "metric_time":
         return "日付（指標の時間軸）"
     return name
+
+
+def model_sources(manifest: dict[str, Any]) -> dict[str, list[str]]:
+    """モデル名 → そのモデルが（staging などを経由して）読む源泉（<schema>.<table>）。"""
+    sources = {
+        k: f"{v.get('schema')}.{v.get('identifier') or v.get('name')}"
+        for k, v in manifest.get("sources", {}).items()
+    }
+    parents: dict[str, list[str]] = manifest.get("parent_map", {})
+    result: dict[str, list[str]] = {}
+    for key, node in manifest.get("nodes", {}).items():
+        if node.get("resource_type") != "model":
+            continue
+        found: set[str] = set()
+        seen: set[str] = set()
+        stack = [key]
+        while stack:
+            for p in parents.get(stack.pop(), []):
+                if p in seen:
+                    continue
+                seen.add(p)
+                if p in sources:
+                    found.add(sources[p])
+                elif p.startswith(("model.", "snapshot.")):
+                    stack.append(p)
+        result[node["name"]] = sorted(found)
+    return result

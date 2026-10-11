@@ -171,6 +171,7 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
           使える源泉（元データ）
           <span className="ml-1.5 text-xs font-normal text-muted-foreground">{sources.length}</span>
         </h2>
+        <SourceCoverage sources={sources} />
         <ul className={compact ? 'divide-y' : 'grid divide-y md:grid-cols-2 md:gap-x-6'}>
           {sources.map((s) => (
             <SourceItem key={s.name} source={s} linkProps={linkProps} />
@@ -207,6 +208,18 @@ function SourceItem({
           <span className="block font-medium">{source.description.split('\n')[0] || source.name}</span>
           <span className="block text-muted-foreground">
             <span className="font-mono">{source.name}</span>・{source.row_count.toLocaleString()} 行・{source.columns.length} 列
+          </span>
+          <span className="mt-0.5 flex flex-wrap gap-1">
+            {(source.used_by ?? []).map((m) => (
+              <Badge key={m} variant="secondary" className="font-mono text-[10px]">
+                {m}
+              </Badge>
+            ))}
+            {!source.unmapped && Array.isArray(source.used_by) && source.used_by.length === 0 && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                未活用（fact / dim に使われていない）
+              </Badge>
+            )}
           </span>
         </button>
         <span className="flex shrink-0 flex-col items-end gap-0.5">
@@ -264,5 +277,20 @@ function ModelItem({ model }: { model: Datasets['models'][number] }) {
         </ul>
       )}
     </li>
+  )
+}
+
+/** 源泉の活用状況の要約（#72）: fact / dim に使われている・未活用・未整理（オントロジーに無い）の数 */
+function SourceCoverage({ sources }: { sources: Datasets['sources'] }) {
+  // dbt の manifest が無いと、使われているかは分からない（未活用とは言わない）
+  if (sources.some((s) => s.used_by === null || s.used_by === undefined)) return null
+  const unmapped = sources.filter((s) => s.unmapped).length
+  const used = sources.filter((s) => !s.unmapped && (s.used_by ?? []).length > 0).length
+  const unused = sources.length - used - unmapped
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="source-coverage">
+      fact / dim に使われている {used}・未活用 {unused}
+      {unmapped > 0 && `・未整理（オントロジーに無い） ${unmapped}`}
+    </p>
   )
 }

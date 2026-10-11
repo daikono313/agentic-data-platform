@@ -60,6 +60,9 @@ def test_datasets_lists_metrics_models_sources_beams(repo: Path) -> None:
     assert data.models[0].kind == "fct"
     orders = next(s for s in data.sources if s.name == "raw.orders")
     assert orders.row_count > 0 and orders.description
+    # 活用状況（#72）: 使っている fact / dim。使われていない源泉は空
+    assert orders.used_by == ["fct_order_lines"]
+    assert next(s for s in data.sources if s.name == "raw.payments").used_by == []
     assert (
         {c.name: c.data_type for c in orders.columns}["ordered_at"].upper().startswith("TIMESTAMP")
     )
@@ -335,3 +338,55 @@ def test_source_cleansing_api(repo: Path, tmp_path: Path) -> None:
     body = client.get("/sources/raw.returns/cleansing").json()
     assert body["existing"] is None and "source: raw.returns" in body["draft"]
     assert client.get("/sources/main.x/cleansing").status_code == 404
+
+
+def test_used_by_follows_intermediate_models_and_skips_tests() -> None:
+    """源泉 → stg → int → fct のように何段でも辿る。テストは数えず、mart の無い stg は空（#72）。"""
+    manifest = {
+        "sources": {
+            "source.p.raw.orders": {"schema": "raw", "name": "orders"},
+            "source.p.raw.x": {"schema": "raw", "name": "x_alias", "identifier": "x"},
+            "source.p.raw.lonely": {"schema": "raw", "name": "lonely"},
+        },
+        "nodes": {
+            "model.p.stg_orders": {"name": "stg_orders", "resource_type": "model"},
+            "model.p.int_orders": {"name": "int_orders", "resource_type": "model"},
+            "model.p.fct_sales.v1": {"name": "fct_sales", "resource_type": "model"},
+            "model.p.stg_x": {"name": "stg_x", "resource_type": "model"},
+            "model.p.dim_x": {"name": "dim_x", "resource_type": "model"},
+            "model.p.stg_lonely": {"name": "stg_lonely", "resource_type": "model"},
+        },
+        "child_map": {
+            "source.p.raw.orders": ["model.p.stg_orders", "test.p.not_null_orders"],
+            "model.p.stg_orders": ["model.p.int_orders"],
+            "model.p.int_orders": ["model.p.fct_sales.v1"],
+            "source.p.raw.x": ["model.p.stg_x"],
+            "model.p.stg_x": ["model.p.dim_x"],
+            "source.p.raw.lonely": ["model.p.stg_lonely"],
+        },
+        "parent_map": {
+            "model.p.fct_sales.v1": ["model.p.int_orders"],
+            "model.p.int_orders": ["model.p.stg_orders"],
+            "model.p.stg_orders": ["source.p.raw.orders"],
+            "model.p.dim_x": ["model.p.stg_x"],
+            "model.p.stg_x": ["source.p.raw.x"],
+        },
+    }
+    from adp.datasets import model_sources
+
+    index = DatasetIndex(Path("."), None)
+    assert index._used_by("raw", "orders", manifest) == ["fct_sales"]
+    assert index._used_by("raw", "x", manifest) == ["dim_x"]
+    assert index._used_by("raw", "lonely", manifest) == []
+    assert model_sources(manifest)["fct_sales"] == ["raw.orders"]
+    assert model_sources(manifest)["dim_x"] == ["raw.x"]
+
+
+def test_used_by_is_unknown_without_manifest(tmp_path: Path) -> None:
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    duckdb.connect(str(db)).execute("create schema raw; create table raw.t (id int)").close()
+    (tmp_path / "warehouse").mkdir()
+    [source] = DatasetIndex(tmp_path, Catalog(db)).sources([])
+    assert source.used_by is None  # 分からない（未活用とは言わない）

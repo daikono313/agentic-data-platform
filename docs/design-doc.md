@@ -208,7 +208,7 @@ MVP の段階では手動で計測する。
 | GET | `/sessions/{id}` | 会話と BEAM 成果物の現在状態を返す |
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
-| GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62） |
+| GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62）。元データごとに、使っている fact / dim（空なら未活用。#72）とオントロジーに無いか（未整理。#69） |
 | GET | `/ontology` | オントロジーの図（Mermaid）と、源泉・dbt のモデルとの食い違い、未整理の源泉（#67） |
 | POST | `/sources/{table}/onboarding/draft` | 源泉の取り込みの下書き（`{"agent": bool}`。追加案・クレンジングの定義・追加後の図・バスマトリクスの候補。#69） |
 | POST | `/sources/{table}/onboarding` | 確定した追加案とクレンジングの定義で、取り込みの PR を作るジョブを始める（進捗は `/jobs/{id}/events`） |

@@ -33,6 +33,8 @@ export interface SourceInfo {
   columns: ColumnInfo[]
   /** オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69） */
   unmapped?: boolean
+  /** この源泉を使っている fact / dim（空なら未活用。null は分からない（dbt の manifest が無い）。#72） */
+  used_by?: string[] | null
 }
 export interface BeamInfo {
   name: string
@@ -132,6 +134,8 @@ export interface BusGroup {
   label: string
   kind: 'dim' | 'degenerate' | string
   attributes: { name: string; label: string }[]
+  /** 元の源泉（#72） */
+  sources?: string[]
   /** 源泉の取り込みで増える候補（#69） */
   candidate?: boolean
 }
@@ -139,6 +143,8 @@ export interface BusRow {
   name: string
   label: string
   groups: string[]
+  /** 元の源泉（#72） */
+  sources?: string[]
   /** 源泉の取り込みで増える候補（#69） */
   candidate?: boolean
 }
