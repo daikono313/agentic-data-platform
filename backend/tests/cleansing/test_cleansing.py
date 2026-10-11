@@ -172,7 +172,9 @@ def test_repository_definitions_reproduce_previous_staging() -> None:
         "stg_orders",
         "stg_order_items",
     }
-    for spec in specs:
+    # 以前の手書きの stg があったもの（後から取り込んだ源泉は対象外）
+    previous = {"customers", "products", "stores", "promotions", "orders", "order_items"}
+    for spec in (s for s in specs if s.table_name in previous):
         cols = [
             SourceColumn(n, t)
             for n, t in con.execute(
@@ -184,7 +186,10 @@ def test_repository_definitions_reproduce_previous_staging() -> None:
         new = (
             render(spec, defaults, cols)
             .sql.split("\n", 1)[1]
-            .replace(f"{{{{ source('{spec.schema_name}', '{spec.table_name}') }}}}", spec.source)
+            .replace(
+                f"{{{{ source('{spec.dbt_source or spec.schema_name}', '{spec.table_name}') }}}}",
+                spec.source,
+            )
         )
         orders = spec.table_name == "orders"
         derived = ", cast(ordered_at as date) as ordered_on" if orders else ""
