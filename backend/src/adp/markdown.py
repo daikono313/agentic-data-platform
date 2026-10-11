@@ -24,8 +24,8 @@ def safe(text: str) -> str:
 
 
 def cell(text: str) -> str:
-    """Markdown の表のセル（safe に加えて、列の区切りと改行を無効にする）。"""
-    return safe(text).replace("|", "\\|").replace("\n", " ")
+    """Markdown の表のセル（safe に加えて、列の区切りと改行（CR・LF）を無効にする）。"""
+    return safe(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
 _MERMAID_ENTITIES = [

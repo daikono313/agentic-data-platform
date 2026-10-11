@@ -285,3 +285,10 @@ def test_repair_prompt_commands_match_the_guard(tmp_path: Path) -> None:
     for cmd in ("dbt run", "dbt show", "dbt deps", "dbt seed", "dbt run-operation x"):
         assert guard("Bash", {"command": cmd}) is not None, cmd
         assert cmd.split()[1] not in shown
+
+    # guardrails §4 の「実行できるコマンドを限定」も同じ一覧を書く
+    from adp.generation.guard import ALLOWED_COMMANDS
+
+    doc = (Path(__file__).parents[3] / "docs" / "guardrails.md").read_text(encoding="utf-8")
+    row = next(line for line in doc.splitlines() if line.startswith("| 実行できるコマンドを限定"))
+    assert ALLOWED_COMMANDS.replace("dbt（", "`dbt`（").replace("mf（", "`mf`（") in row

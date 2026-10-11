@@ -143,8 +143,8 @@ class Sync:
         elif ahead:
             reason = (
                 f"手元の main に origin に無いコミットがあります（{ahead} 件）。"
-                "早送りで取り込めないため、手で push するか、手元の main を origin/main に"
-                "揃えてください"
+                "早送りで取り込めないため、手元のコミットをブランチに移して PR にし、手元の main を"
+                "origin/main に揃えてください"
             )
         app = [p for p in changed if p.startswith(APP_PATHS) or p == "Makefile"]
         if reason is None and app:
