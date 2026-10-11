@@ -33,7 +33,8 @@ def _service(tmp_path: Path, pr_state):  # type: ignore[no-untyped-def]
         raise AssertionError
 
     store = Store(tmp_path / "app.db")
-    return SessionService(store, Interviewer(None, LLMSettings()), pipeline, pr_state=pr_state), store  # type: ignore[arg-type]
+    interviewer = Interviewer(None, LLMSettings())  # type: ignore[arg-type]
+    return SessionService(store, interviewer, pipeline, pr_state=pr_state), store
 
 
 def test_history_includes_pr_state_and_caches_it(tmp_path: Path) -> None:
