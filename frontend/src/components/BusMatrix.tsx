@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 
+import { chartUrl } from '@/api/charts'
 import { matches, type BusGroup, type BusMatrix, type ModelInfo } from '@/api/datasets'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +30,28 @@ export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): B
  * fact が結合できる dimension の属性すべてに ✓ を付ける。fact 自身の属性（退化ディメンション）は最後の列。
  * compact（インタビュー中の狭い枠）では、属性を省いて dimension ごとに 1 列にする。
  */
-export function BusMatrixView({ bus, models, compact }: { bus: BusMatrix; models: ModelInfo[]; compact?: boolean }) {
+export interface BusMetric {
+  name: string
+  label: string
+}
+
+/**
+ * metrics: fct ごとの指標（あれば ✓ をクリックしてその切り口でチャートを開く。#70）
+ * onRequest: 空欄（結合できない組み合わせ）をクリックしたときの要求の文（開始画面で入力欄に入れる）
+ */
+export function BusMatrixView({
+  bus,
+  models,
+  compact,
+  metrics,
+  onRequest,
+}: {
+  bus: BusMatrix
+  models: ModelInfo[]
+  compact?: boolean
+  metrics?: Map<string, BusMetric[]>
+  onRequest?: (text: string) => void
+}) {
   if (bus.rows.length === 0) return <p className="text-xs text-muted-foreground">該当する fact がありません。</p>
   const description = new Map(models.map((m) => [m.name, m.description]))
   // 列のまとまりごとに背景を交互に変える
@@ -112,9 +134,37 @@ export function BusMatrixView({ bus, models, compact }: { bus: BusMatrix; models
               {bus.groups.flatMap((g, i) =>
                 columns(g).map((a) => {
                   const joined = r.groups.includes(g.name)
+                  const metric = metrics?.get(r.name)?.[0]
+                  const check = <Check role="img" className="mx-auto size-3.5" aria-label={`${r.name} × ${a.label}`} />
+                  let content: React.ReactNode = joined ? check : null
+                  if (joined && metric && !r.candidate) {
+                    // ✓ → その fact の指標を、この属性の切り口でチャートに（compact は属性が無いので切り口なし）
+                    content = (
+                      <a
+                        href={chartUrl(metric.name, null, compact ? null : a.name)}
+                        title={`${metric.label}を${a.label}別にチャートで見る`}
+                        className="block py-1 hover:bg-primary/20"
+                        {...(compact ? { target: '_blank', rel: 'noreferrer' } : {})}
+                      >
+                        {check}
+                      </a>
+                    )
+                  } else if (!joined && onRequest && !r.candidate) {
+                    // 空欄 → 「<fact>を<属性>別に見たい」を要求に入れる（作れる候補として見せる）
+                    const text = `「${r.label}」を${a.label}別に見たい`
+                    content = (
+                      <button
+                        type="button"
+                        title={`${text}（要求に入れる）`}
+                        aria-label={`要求に入れる: ${text}`}
+                        className="block h-full min-h-6 w-full hover:bg-amber-500/20"
+                        onClick={() => onRequest(text)}
+                      />
+                    )
+                  }
                   return (
-                    <td key={`${g.name}:${a.name}`} className={cn('w-8 min-w-8 max-w-8 border text-center', shade(i))}>
-                      {joined && <Check role="img" className="mx-auto size-3.5" aria-label={`${r.name} × ${a.label}`} />}
+                    <td key={`${g.name}:${a.name}`} className={cn('w-8 min-w-8 max-w-8 border p-0 text-center', shade(i))}>
+                      {content}
                       <span className="sr-only">{joined ? '集計できる' : '-'}</span>
                     </td>
                   )

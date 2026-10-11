@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { exampleRequests, type Datasets } from '@/api/datasets'
 
@@ -117,6 +117,22 @@ describe('バスマトリクス', () => {
     expect(screen.getByTestId('bus-fct_order_lines')).toBeInTheDocument()
     expect(screen.queryByTestId('bus-fct_returns')).not.toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: '種類' })).not.toBeInTheDocument()
+  })
+
+  it('✓ はその切り口のチャートへ、空欄は要求に入れる（#70）', () => {
+    const onRequest = vi.fn()
+    const two = { ...bus, rows: [...bus.rows, { name: 'fct_new', label: '新しい出来事', groups: [], candidate: true }] }
+    render(<DatasetsPanel datasets={{ ...datasets, bus: two }} onRequest={onRequest} />)
+    const row = screen.getByTestId('bus-fct_order_lines')
+    expect(within(row).getByRole('link', { name: 'fct_order_lines × 販売チャネル' })).toHaveAttribute(
+      'href',
+      '?chart=revenue&dimension=store__channel',
+    )
+    fireEvent.click(within(row).getByRole('button', { name: '要求に入れる: 「注文」を種類別に見たい' }))
+    expect(onRequest).toHaveBeenCalledWith('「注文」を種類別に見たい')
+    // 候補の行（まだ無い fct）は操作できない
+    const candidate = screen.getByTestId('bus-fct_new')
+    expect(within(candidate).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('compact では dimension ごとに 1 列にする', () => {

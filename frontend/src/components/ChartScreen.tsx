@@ -10,10 +10,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 const SELECT = 'h-9 rounded-md border bg-background px-2 text-sm'
 
 /** 指標を選び、切り口・粒度・期間を変えて見る（#43）。jobId があれば生成 PR の内容（マージ前）で見る */
-export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?: string | null }) {
+export function ChartScreen({
+  metric: initial,
+  jobId,
+  dimension: initialDimension = null,
+}: {
+  metric: string
+  jobId?: string | null
+  /** 最初に選ぶ切り口（バスマトリクスの ✓ から開いたとき。#70） */
+  dimension?: string | null
+}) {
   const [options, setOptions] = useState<ChartOptions | null>(null)
   const [metric, setMetric] = useState(initial)
-  const [dimension, setDimension] = useState<string | null>(null)
+  const [dimension, setDimension] = useState<string | null>(initialDimension)
   const [grain, setGrain] = useState<Grain | null>('month')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
@@ -34,8 +43,14 @@ export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?
     [current],
   )
 
+  // 指標に無い切り口が指定されていたら、切り口なしにする
+  useEffect(() => {
+    if (current && dimension && !dimensions.some((d) => d.name === dimension)) setDimension(null)
+  }, [current, dimension, dimensions])
+
   useEffect(() => {
     if (!current) return
+    if (dimension && !dimensions.some((d) => d.name === dimension)) return
     const controller = new AbortController()
     // 入力のたびに描画しないよう、少し待ってから描画する
     const timer = setTimeout(() => {
@@ -65,7 +80,7 @@ export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?
       clearTimeout(timer)
       controller.abort()
     }
-  }, [current, metric, dimension, grain, start, end, jobId])
+  }, [current, metric, dimension, dimensions, grain, start, end, jobId])
 
   const notFound = options && !current
 

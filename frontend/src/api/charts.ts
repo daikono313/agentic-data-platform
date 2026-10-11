@@ -40,8 +40,9 @@ export function svgDataUrl(svg: string): string {
 }
 
 /** 描画画面の URL（?chart=<指標>&job=<生成ジョブ>） */
-export function chartUrl(metric: string, jobId?: string | null): string {
+export function chartUrl(metric: string, jobId?: string | null, dimension?: string | null): string {
   const params = new URLSearchParams({ chart: metric })
   if (jobId) params.set('job', jobId)
+  if (dimension) params.set('dimension', dimension)
   return `?${params.toString()}`
 }

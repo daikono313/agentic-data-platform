@@ -64,6 +64,24 @@ describe('描画画面', () => {
     expect(await screen.findByAltText('売上金額 store__channel')).toBeInTheDocument()
   })
 
+  it('バスマトリクスから開くと、指定の切り口で描く。指標に無い切り口は使わない（#70）', async () => {
+    const svg = (body: Record<string, unknown>) =>
+      new Response(JSON.stringify({ svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>', kind: 'bar', title: `t ${String(body.dimension)}`, sql: '' }))
+    window.history.replaceState(null, '', chartUrl('revenue', null, 'store__channel'))
+    let calls = stubFetch(svg)
+    const { unmount } = render(<App />)
+    expect(await screen.findByAltText('t store__channel')).toBeInTheDocument()
+    expect(calls.filter((c) => c.url.includes('/charts/render')).map((c) => c.body?.dimension)).toEqual(['store__channel'])
+    unmount()
+    vi.unstubAllGlobals()
+
+    window.history.replaceState(null, '', chartUrl('revenue', null, 'customer__nope'))
+    calls = stubFetch(svg)
+    render(<App />)
+    expect(await screen.findByAltText('t null')).toBeInTheDocument()
+    expect(calls.filter((c) => c.url.includes('/charts/render')).map((c) => c.body?.dimension)).toEqual([null])
+  })
+
   it('描画できない理由を表示する', async () => {
     stubFetch(() => new Response(JSON.stringify({ detail: '期間の開始が終了より後になっています' }), { status: 422 }))
     render(<App />)
