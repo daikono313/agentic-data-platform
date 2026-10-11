@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _NAME = r"^[a-z][a-z0-9_]*$"
 _TABLE = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
@@ -20,6 +20,12 @@ _COLUMN = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @field_validator("label", "verb", "text", mode="before", check_fields=False)
+    @classmethod
+    def _one_line(cls, v: object) -> object:
+        """表示の文字列は 1 行にする（改行で PR 本文や図に節を差し込ませない。#87 レビュー）。"""
+        return " ".join(v.split()) if isinstance(v, str) else v
 
 
 class Domain(_Strict):
@@ -126,13 +132,13 @@ def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Onto
 
     概念の種類と接頭辞が合うもの（entity ↔ dim_、event ↔ fct_）だけ。書き込んだ概念の名前も返す。
     """
-    by_source = {s: m for s, m in models}
     linked: list[str] = []
     concepts = []
     for c in ontology.concepts:
-        model = by_source.get(c.source)
         prefix = "dim_" if c.kind == "entity" else "fct_"
-        if c.model is None and model is not None and model.startswith(prefix):
+        # 同じ源泉に fct と dim があっても、概念の種類に合うものを選ぶ
+        model = next((m for s, m in models if s == c.source and m.startswith(prefix)), None)
+        if c.model is None and model is not None:
             concepts.append(c.model_copy(update={"model": model}))
             linked.append(c.name)
         else:

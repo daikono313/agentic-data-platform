@@ -55,12 +55,12 @@ export const api = {
       }),
     )
   },
-  async startOnboarding(table: string, patch: OntologyPatch, cleansing: string): Promise<JobView> {
+  async startOnboarding(table: string, patch: OntologyPatch, cleansing: string, redo = false): Promise<JobView> {
     return json(
       await fetch(`${BASE}/sources/${encodeURIComponent(table)}/onboarding`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patch, cleansing }),
+        body: JSON.stringify({ patch, cleansing, redo }),
       }),
     )
   },

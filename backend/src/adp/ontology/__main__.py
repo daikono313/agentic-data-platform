@@ -12,7 +12,7 @@ from pathlib import Path
 
 from adp.catalog.catalog import Catalog, CatalogUnavailable
 from adp.ontology.check import check
-from adp.ontology.models import load
+from adp.ontology.models import dump, load
 from adp.ontology.render import markdown
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -26,8 +26,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     ontology = load(ONTOLOGY)
     if args.command == "build":
+        # 正本も決まった形に整える（手で編集した後でも CI の検査と一致させる）
+        ONTOLOGY.write_text(dump(ontology), encoding="utf-8")
         DOC.write_text(markdown(ontology), encoding="utf-8")
-        print(f"{DOC.relative_to(REPO_ROOT)} を生成しました")
+        print(f"{DOC.relative_to(REPO_ROOT)} を生成しました（ontology.yml も整形しました）")
         return 0
 
     failed = False

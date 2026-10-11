@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -29,9 +30,15 @@ from adp.generation.repair import verify
 from adp.llm import AgentRunner, LLMSettings
 from adp.onboarding.agent import propose_with_agent
 from adp.onboarding.plan import OnboardingDraft, bus_with_candidates
-from adp.onboarding.proposal import OntologyPatch, apply, propose_from_profile, validate_patch
+from adp.onboarding.proposal import (
+    OntologyPatch,
+    apply,
+    patch_errors,
+    propose_from_profile,
+    validate_patch,
+)
 from adp.ontology.check import check as check_ontology
-from adp.ontology.models import dump, load
+from adp.ontology.models import Ontology, dump, load
 from adp.ontology.render import markdown, mermaid
 from adp.pipeline import (
     PipelineConfig,
@@ -42,6 +49,12 @@ from adp.pipeline import (
     prepare_warehouse,
 )
 from adp.vcs import GitHub, GitWorkspace, Worktree
+from adp.vcs.pr_body import _safe
+
+
+class AlreadyOnboarded(Exception):
+    """既にオントロジーに概念がある源泉を取り込もうとした。"""
+
 
 ONBOARD_STEPS: list[tuple[str, str]] = [
     ("worktree", "作業ブランチを作成"),
@@ -88,14 +101,17 @@ class OnboardingPipeline:
     # --- 下書き ------------------------------------------------------------------------------
 
     async def draft(self, source: str, use_agent: bool = True) -> OnboardingDraft:
-        """追加案（エージェント → 失敗したらプロファイルから）・クレンジングの定義・バスの差分。"""
+        """追加案（エージェント → 失敗したらプロファイルから）・クレンジングの定義・バスの差分。
+
+        既にオントロジーにある源泉は AlreadyOnboarded、オントロジーが無ければ FileNotFoundError。
+        """
         repo = self.config.repo_root
         catalog = Catalog(self.config.source_db, repo / "warehouse" / "target" / "manifest.json")
-        ontology = load(repo / ONTOLOGY)
-        if any(c.source == source for c in ontology.concepts):
-            raise ValueError(f"{source} は既にオントロジーにあります")
+        ontology = await asyncio.to_thread(load, repo / ONTOLOGY)
         profile = await asyncio.to_thread(catalog.profile_table, source)
-        source = f"{profile.schema_name}.{profile.name}"
+        source = f"{profile.schema_name}.{profile.name}"  # raw を省いた指定も正規化してから調べる
+        if any(c.source == source for c in ontology.concepts):
+            raise AlreadyOnboarded(f"{source} は既にオントロジーにあります")
         patch: OntologyPatch | None = None
         proposer, note = "profile", None
         if use_agent and self.runner is not None:
@@ -114,7 +130,7 @@ class OnboardingPipeline:
         cleansing = (
             path.read_text(encoding="utf-8") if exists else dump_spec(cleansing_draft(profile))
         )
-        bus = DatasetIndex(repo, catalog).bus_matrix()
+        bus = await asyncio.to_thread(DatasetIndex(repo, catalog).bus_matrix)
         return OnboardingDraft(
             source=source,
             patch=patch,
@@ -126,12 +142,16 @@ class OnboardingPipeline:
             bus=bus_with_candidates(bus, ontology, patch),
         )
 
-    def check_request(self, source: str, patch: OntologyPatch, cleansing: str) -> list[str]:
-        """確定の前に、追加案とクレンジングの定義を検証する（空なら確定してよい）。"""
+    def check_request(
+        self, source: str, patch: OntologyPatch, cleansing: str, ontology: Ontology | None = None
+    ) -> list[str]:
+        """確定の前に、追加案とクレンジングの定義を検証する（空なら確定してよい）。
+
+        ontology を渡せばそれ（取り込みの作業ブランチのもの）で、無ければ手元の正本で調べる。
+        """
         repo = self.config.repo_root
         catalog = Catalog(self.config.source_db, repo / "warehouse" / "target" / "manifest.json")
-        ontology = load(repo / ONTOLOGY)
-        errors = validate_patch(ontology, patch, catalog, source)
+        errors = validate_patch(ontology or load(repo / ONTOLOGY), patch, catalog, source)
         try:
             spec = parse_cleansing(cleansing, source)
             errors += validate(spec, source_columns(catalog, source))
@@ -159,22 +179,31 @@ class OnboardingPipeline:
         result = PipelineResult(ok=False)
         worktree: Worktree | None = None
         pushed = False
+        # git・DB のコピー・dbt などの重い処理はスレッドで行う（進捗の SSE などを止めない）
+        thread = asyncio.to_thread
         try:
-            errors = self.check_request(source, patch, cleansing)
+            errors = await thread(self.check_request, source, patch, cleansing)
             if errors:
                 raise PipelineError("確定できません: " + " / ".join(errors))
             spec = parse_cleansing(cleansing, source)
-            self.github.check()
+            await thread(self.github.check)
 
             step("worktree", StepStatus.RUNNING)
-            wt = self.workspace.create_worktree(onboarding_branch(source), self.config.base)
+            wt = await thread(
+                self.workspace.create_worktree, onboarding_branch(source), self.config.base
+            )
             worktree = wt
             result.branch = wt.branch
-            warehouse = prepare_warehouse(self.config, wt)
+            # 手元ではなく、取り込む先（main）のオントロジーで確かめ直す（既に取り込み済みなど）
+            base_ontology = load(wt.path / ONTOLOGY)
+            errors = await thread(self.check_request, source, patch, cleansing, base_ontology)
+            if errors:
+                raise PipelineError("確定できません: " + " / ".join(errors))
+            warehouse = await thread(prepare_warehouse, self.config, wt)
             step("worktree", StepStatus.DONE, wt.branch)
 
             step("write", StepStatus.RUNNING)
-            ontology = apply(load(wt.path / ONTOLOGY), patch)
+            ontology = apply(base_ontology, patch)
             (wt.path / ONTOLOGY).write_text(dump(ontology), encoding="utf-8")
             (wt.path / "docs" / "ontology.md").write_text(markdown(ontology), encoding="utf-8")
             path = spec_path(warehouse / "cleansing", source)
@@ -182,19 +211,27 @@ class OnboardingPipeline:
             path.write_text(dump_spec(spec), encoding="utf-8")
             catalog = Catalog(warehouse / "data" / "dev.duckdb")
             info = ProjectInfo(warehouse, catalog)
-            # 定義（上で書いた）から stg を生成する。既に stg があれば上書きせずに止める
-            info.write(staging_files(source, info))
+            # 定義（上で書いた）から stg を生成する。既にある stg（make cleansing で作ったもの
+            # など）は定義から作り直す（stg は定義の生成物。ADR 0004）
+            files = [
+                replace(f, replaces=(warehouse / f.path).read_text(encoding="utf-8"))
+                if f.path.startswith("models/staging/stg_") and (warehouse / f.path).exists()
+                else f
+                for f in staging_files(source, info)
+            ]
+            info.write(files)
             step(
                 "write", StepStatus.DONE, f"概念 {len(patch.concepts)}、関係 {len(patch.relations)}"
             )
 
             step("verify", StepStatus.RUNNING)
-            checked = await asyncio.to_thread(verify, warehouse, self.config.bin_dir, [])
+            checked = await thread(verify, warehouse, self.config.bin_dir, [])
             problems = [] if checked.ok else [checked.summary]
-            onto_errors = check_ontology(ontology, catalog, warehouse / "target" / "manifest.json")
+            onto_errors = await thread(
+                check_ontology, ontology, catalog, warehouse / "target" / "manifest.json"
+            )
             # 取り込みで足した概念・関係に関わる食い違いだけを見る（既存の部分は CI の検査に任せる）
-            new = [c.name for c in patch.concepts] + [r.verb for r in patch.relations]
-            problems += [e for e in onto_errors.errors if any(n in e for n in new)]
+            problems += patch_errors(onto_errors.errors, patch)
             if problems:
                 raise PipelineError(
                     " / ".join(problems) + (f"\n{checked.log}" if not checked.ok else "")
@@ -202,18 +239,23 @@ class OnboardingPipeline:
             step("verify", StepStatus.DONE, checked.summary)
 
             step("commit", StepStatus.RUNNING)
-            staged = self.workspace.stage(wt, ["warehouse", "ontology", "docs/ontology.md"])
+            staged = await thread(
+                self.workspace.stage, wt, ["warehouse", "ontology", "docs/ontology.md"]
+            )
             if not staged:
                 raise PipelineError("commit するファイルがありません")
             result.files = staged
-            self.workspace.commit(wt, f"feat(onboard): 源泉 {source} を取り込む")
-            self.workspace.push(wt)
+            await thread(self.workspace.commit, wt, f"feat(onboard): 源泉 {source} を取り込む")
+            await thread(self.workspace.push, wt)
             pushed = True
             step("commit", StepStatus.DONE, f"{len(staged)} ファイル")
 
             step("pr", StepStatus.RUNNING)
-            result.pr_url = self.github.create_pr(
-                wt, f"feat(onboard): 源泉 {source} を取り込む", self._body(source, patch, staged)
+            result.pr_url = await thread(
+                self.github.create_pr,
+                wt,
+                f"feat(onboard): 源泉 {source} を取り込む",
+                self._body(source, patch, staged),
             )
             step("pr", StepStatus.DONE, result.pr_url)
             result.ok = True
@@ -224,7 +266,7 @@ class OnboardingPipeline:
                 step(current, StepStatus.FAILED, str(e)[:2000])
             if worktree is not None and not pushed:
                 try:
-                    self.workspace.remove_worktree(worktree, delete_branch=True)
+                    await thread(self.workspace.remove_worktree, worktree, True)
                     result.branch = None
                 except Exception:
                     pass
@@ -232,13 +274,15 @@ class OnboardingPipeline:
 
     @staticmethod
     def _body(source: str, patch: OntologyPatch, files: list[str]) -> str:
+        # 表示名・動詞は LLM やユーザーの文章。#N・@name・コードブロックを無効にする（guardrails）
+        kinds = {"event": "出来事", "entity": "もの・人"}
         concepts = "\n".join(
-            f"- **{c.label}**（`{c.name}`、{'出来事' if c.kind == 'event' else 'もの・人'}）: "
-            + "、".join(a.label for a in c.attributes)
+            f"- **{_safe(c.label)}**（`{c.name}`、{kinds[c.kind]}）: "
+            + "、".join(_safe(a.label) for a in c.attributes)
             for c in patch.concepts
         )
         relations = "\n".join(
-            f"- {r.from_} →{r.verb}→ {r.to}（`{r.via}`）" for r in patch.relations
+            f"- {r.from_} →{_safe(r.verb)}→ {r.to}（`{r.via}`）" for r in patch.relations
         )
         listed = "\n".join(f"- `{f}`" for f in files)
         return (

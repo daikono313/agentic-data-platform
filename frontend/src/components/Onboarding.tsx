@@ -22,6 +22,9 @@ export function OnboardingScreen({ table }: { table: string }) {
   const [draft, setDraft] = useState<OnboardingDraft | null>(null)
   const [patch, setPatch] = useState<OntologyPatch | null>(null)
   const [cleansing, setCleansing] = useState('')
+  /** 利用者が直したクレンジングの定義は、案を作り直しても上書きしない */
+  const [cleansingEdited, setCleansingEdited] = useState(false)
+  const [redo, setRedo] = useState(false)
   const [loading, setLoading] = useState<'profile' | 'agent' | null>('profile')
   const [error, setError] = useState<string | null>(null)
   const [job, setJob] = useState<JobView | null>(null)
@@ -35,14 +38,14 @@ export function OnboardingScreen({ table }: { table: string }) {
         const d = await api.onboardingDraft(table, agent)
         setDraft(d)
         setPatch(d.patch)
-        setCleansing(d.cleansing)
+        setCleansing((current) => (cleansingEdited ? current : d.cleansing))
       } catch (e) {
         setError(errorText(e))
       } finally {
         setLoading(null)
       }
     },
-    [table],
+    [table, cleansingEdited],
   )
 
   const follow = useCallback(async (initial: JobView) => {
@@ -80,7 +83,7 @@ export function OnboardingScreen({ table }: { table: string }) {
     setSubmitting(true)
     setError(null)
     try {
-      await follow(await api.startOnboarding(table, patch, cleansing))
+      await follow(await api.startOnboarding(table, patch, cleansing, redo))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -116,6 +119,23 @@ export function OnboardingScreen({ table }: { table: string }) {
                 修正してやり直す
               </Button>
             )}
+            {job.status === 'succeeded' && (
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <p>PR をマージすると、この源泉がオントロジーに入ります。</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // 前の PR を閉じた（マージしなかった）場合だけ、作り直す
+                    setRedo(true)
+                    setJob(null)
+                    if (!draft) load(false)
+                  }}
+                >
+                  PR を閉じたので、やり直す
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -132,7 +152,10 @@ export function OnboardingScreen({ table }: { table: string }) {
               patch={patch}
               onPatch={setPatch}
               cleansing={cleansing}
-              onCleansing={setCleansing}
+              onCleansing={(s) => {
+                setCleansing(s)
+                setCleansingEdited(true)
+              }}
               onAgent={() => load(true)}
               busy={loading !== null}
             />
@@ -253,8 +276,13 @@ function DraftBody({
               </ul>
             </div>
           )}
+          {patch.concepts.some((c, i) => c.kind !== draft.patch.concepts[i]?.kind) && (
+            <p className="text-xs text-amber-600">
+              種類を変えました。下の図と fact / dim の候補は元の案のままです（確定すると、直した内容で作ります）。
+            </p>
+          )}
           <details>
-            <summary className="cursor-pointer text-xs text-muted-foreground">追加後のオントロジーの図</summary>
+            <summary className="cursor-pointer text-xs text-muted-foreground">追加後のオントロジーの図（元の案）</summary>
             <MermaidDiagram text={draft.mermaid} />
           </details>
         </CardContent>
@@ -284,7 +312,8 @@ function DraftBody({
         <CardHeader className="px-4">
           <CardTitle className="text-sm">3. 取り込んだ後に作れる fact / dim（候補）</CardTitle>
           <p className="text-xs text-muted-foreground">
-            点線の行・列が候補です。インタビューで指標を要求すると、この組み合わせで fact / dim ができます。
+            点線の行・列が候補です（fct の名前は、インタビューで決まる出来事の名前になります）。インタビューで指標を要求すると、この組み合わせで
+            fact / dim ができます。
           </p>
         </CardHeader>
         <CardContent className="px-4">

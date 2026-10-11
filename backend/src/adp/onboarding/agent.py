@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -63,7 +64,8 @@ def build_submit_tool(
         except ValidationError as e:
             out.errors.append(str(e))
             return _text(f"形式の誤り: {e}", is_error=True)
-        errors = validate_patch(ontology, patch, catalog, source)
+        # DB を読むのでスレッドで（イベントループを止めない）
+        errors = await asyncio.to_thread(validate_patch, ontology, patch, catalog, source)
         if errors:
             out.errors += errors
             return _text("直してください:\n" + "\n".join(f"- {e}" for e in errors), True)

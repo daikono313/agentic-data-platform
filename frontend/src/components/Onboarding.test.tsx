@@ -65,7 +65,8 @@ describe('OnboardingScreen', () => {
     fireEvent.change(screen.getByLabelText('関係 store → inventory の動詞'), { target: { value: '入出庫する' } })
     fireEvent.click(screen.getByRole('button', { name: '確定して PR を作る' }))
     await waitFor(() => expect(start).toHaveBeenCalled())
-    const [, patch, cleansing] = start.mock.calls[0]
+    const [, patch, cleansing, redo] = start.mock.calls[0]
+    expect(redo).toBe(false)
     expect(patch.concepts[0].label).toBe('在庫の入出庫')
     expect(patch.concepts[0].attributes[0].label).toBe('数量')
     expect(patch.relations[0].verb).toBe('入出庫する')
@@ -88,7 +89,20 @@ describe('OnboardingScreen', () => {
     expect(load).toHaveBeenLastCalledWith('raw.inventory', true)
   })
 
-  it('取り込み済みならその結果を出す', async () => {
+  it('直したクレンジングの定義は、エージェントの案に作り直しても残す', async () => {
+    vi.spyOn(api, 'onboardingStatus').mockResolvedValue({ job: null })
+    vi.spyOn(api, 'onboardingDraft')
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce({ ...draft, proposer: 'agent', cleansing: 'source: raw.inventory\n' })
+    render(<OnboardingScreen table="raw.inventory" />)
+    const yaml = await screen.findByLabelText('クレンジングの定義（YAML）')
+    fireEvent.change(yaml, { target: { value: 'source: raw.inventory\nkey: edited\n' } })
+    fireEvent.click(screen.getByRole('button', { name: /エージェントに案を作らせる/ }))
+    expect(await screen.findByText('エージェントの案')).toBeInTheDocument()
+    expect(screen.getByLabelText('クレンジングの定義（YAML）')).toHaveValue('source: raw.inventory\nkey: edited\n')
+  })
+
+  it('取り込み済みならその結果を出し、PR を閉じた場合はやり直せる', async () => {
     vi.spyOn(api, 'onboardingStatus').mockResolvedValue({
       job: { id: 'j0', status: 'succeeded', steps: [], pr_url: 'https://example.test/pr/0' },
     })
@@ -96,5 +110,12 @@ describe('OnboardingScreen', () => {
     render(<OnboardingScreen table="raw.inventory" />)
     expect(await screen.findByRole('link', { name: /作成した PR を開く/ })).toBeInTheDocument()
     expect(load).not.toHaveBeenCalled()
+    load.mockResolvedValue(draft)
+    const start = vi.spyOn(api, 'startOnboarding').mockResolvedValue({ id: 'j2', status: 'running', steps: [] })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {})
+    fireEvent.click(screen.getByRole('button', { name: 'PR を閉じたので、やり直す' }))
+    fireEvent.click(await screen.findByRole('button', { name: '確定して PR を作る' }))
+    await waitFor(() => expect(start).toHaveBeenCalled())
+    expect(start.mock.calls[0][3]).toBe(true)
   })
 })

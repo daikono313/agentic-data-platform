@@ -269,12 +269,20 @@ class SessionService:
 
     # --- 源泉の取り込み（#69） ----------------------------------------------------------------
 
-    def start_onboarding(self, source: str, patch: OntologyPatch, cleansing: str) -> dict[str, Any]:
+    def start_onboarding(
+        self, source: str, patch: OntologyPatch, cleansing: str, redo: bool = False
+    ) -> dict[str, Any]:
         if self.onboarding is None:
             raise Conflict("源泉の取り込みは使えません")
-        running = self._job_view(ONBOARD_PREFIX + source)
-        if running and running["status"] == "running":
+        last = self._job_view(ONBOARD_PREFIX + source)
+        if last and last["status"] == "running":
             raise Conflict("この源泉の取り込みを実行中です")
+        if last and last["status"] == "succeeded" and not redo:
+            # 同じ源泉の PR を 2 本作らない。前の PR を閉じた場合だけ、明示してやり直す
+            raise Conflict(
+                f"この源泉の取り込みの PR は作成済みです（{last['pr_url']}）。"
+                "マージすればオントロジーに入ります。PR を閉じた場合は「やり直す」を選んでください"
+            )
         job = Job(
             id=uuid.uuid4().hex[:12],
             session_id=ONBOARD_PREFIX + source,

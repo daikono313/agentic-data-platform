@@ -227,7 +227,9 @@ class DesignBuilder:
         by_source = {c.source: c for c in self.ontology.concepts if c.kind == "entity" and c.model}
         for dim in dims:
             concept = by_source.get(dim.base.table)
-            if concept is not None and concept.model != dim.name:
+            natural = next((c.name for c in dim.columns if c.role == ColumnRole.NATURAL_KEY), None)
+            # 同じキーで識別するもの（同じ概念）だけ。地方のような、同じ源泉の別の切り口は対象外
+            if concept is not None and natural == concept.key and concept.model != dim.name:
                 name = (concept.model or "").removeprefix("dim_")
                 self._blocker(
                     f"{dim.name} の源泉 {dim.base.table} は、オントロジーでは"

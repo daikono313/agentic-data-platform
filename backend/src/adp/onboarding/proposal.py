@@ -44,21 +44,43 @@ def apply(ontology: Ontology, patch: OntologyPatch) -> Ontology:
     return Ontology.model_validate(base)
 
 
+def patch_errors(errors: list[str], patch: OntologyPatch) -> list[str]:
+    """照合の誤りのうち、追加案で足した概念・関係に関わるもの（既存の部分は CI の検査に任せる）。"""
+    prefixes = [f"概念 {c.name}:" for c in patch.concepts]
+    prefixes += [f"概念 {c.name} の" for c in patch.concepts]
+    prefixes += [f"関係「{r.verb}」: 列 {r.via} " for r in patch.relations]
+    return sorted({e for e in errors if e.startswith(tuple(prefixes))})
+
+
 def validate_patch(
     ontology: Ontology, patch: OntologyPatch, catalog: Catalog, source: str
 ) -> list[str]:
-    """追加案の誤り（空なら適用してよい）。既存の部分の食い違いは問わない。"""
+    """追加案の誤り（空なら適用してよい）。既存の部分の食い違いは問わない。
+
+    概念はすべて取り込む源泉のもので、モデルはまだ無い（作るのは生成）。既に概念のある源泉は
+    取り込めない。
+    """
+    errors: list[str] = []
+    if any(c.source == source for c in ontology.concepts):
+        errors.append(f"{source} は既にオントロジーにあります")
     if not any(c.source == source for c in patch.concepts):
-        return [f"源泉 {source} を元にした概念がありません"]
+        errors.append(f"源泉 {source} を元にした概念がありません")
+    for c in patch.concepts:
+        if c.source != source:
+            errors.append(
+                f"概念 {c.name}: 取り込む源泉（{source}）以外の源泉 {c.source} は使えない"
+            )
+        if c.model is not None:
+            errors.append(
+                f"概念 {c.name}: model は書かない（fct / dim は生成で作り、書き込まれる）"
+            )
+    if errors:
+        return errors
     try:
         merged = apply(ontology, patch)
     except ValueError as e:
         return [str(e)]
-    new = {c.name for c in patch.concepts}
-    result = check(merged, catalog, None)
-    errors = [e for e in result.errors if any(n in e for n in new)]
-    errors += [e for e in result.errors if any(r.verb in e for r in patch.relations)]
-    return sorted(set(errors))
+    return patch_errors(check(merged, catalog, None).errors, patch)
 
 
 def _singular(name: str) -> str:
