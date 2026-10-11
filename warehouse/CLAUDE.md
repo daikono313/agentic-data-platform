@@ -1,18 +1,21 @@
 # warehouse（dbt + DuckDB + MetricFlow）
 
-dbt プロジェクト。**ここのコード（SQL・YAML）はすべて AI か決定的なプログラムが書き、人間は手で書かない**（[design-doc の「ファイルの持ち主」](../docs/design-doc.md#ファイルの持ち主)）。
+dbt プロジェクト。**ここのコード（SQL・YAML）は AI か決定的なプログラムが書く。人間が直すのはクレンジングの定義（`cleansing/`）だけ**（[design-doc の「ファイルの持ち主」](../docs/design-doc.md#ファイルの持ち主)）。
 
 | 場所 | 誰が書くか |
 |---|---|
 | `cleansing/*.yml` | プロファイルから雛形 → **人間**が確認・修正（手で直してよい） |
 | `models/staging/stg_*` | `cleansing/` から決定的に生成（`make cleansing`） |
-| `models/marts/dim_*`・`fct_*` と Semantic Layer・テスト | アプリの生成器（決定的）と修復エージェント（AI）。共通ディメンションは開発時に Claude Code が書いたもの |
-| `chart_specs/`・`charts/` | パイプラインが生成（エージェントも書けない） |
+| 生成した `fct_*` と Semantic Layer・テスト | アプリの生成器（テンプレート）と生成エージェント（AI。テンプレートで作れない作業と修復） |
+| 共通ディメンション `models/marts/dim_*`・`_marts.yml`・`tests/` | 開発時に Claude Code が書いたもの（生成器の元ではない） |
+| `models/staging/_sources.yml` | Claude Code。取り込み（#69）が新しい源泉を書き足す |
+| `chart_specs/` | 生成ジョブが書く（`store_sales.yml` は開発時の見本）。エージェントは書けない |
+| `charts/` | `chart_specs/` から決定的に書き出す（`make charts`）。エージェントは書けない |
 | `macros/`・`dbt_project.yml`・`profiles.yml`・`scripts/` | Claude Code（アプリの開発） |
 
 生成コードのお手本になるので、規約を厳密に守る。
 
-**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、手書きのリファレンス fct は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。
+**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、リファレンス fct（生成器とは別に書いたもの）は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。
 
 - dbt-core 1.12+、dbt-duckdb、dbt-metricflow、dbt_utils。DuckDB ファイルは `data/*.duckdb`（git では追跡しない）。
 - レイヤーは `models/staging/stg_*` → `models/intermediate/int_*` → `models/marts/dim_*`, `fct_*`。集計済みマート（`agg_*`）は作らない。集計は Semantic Layer で行う。

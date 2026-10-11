@@ -93,7 +93,9 @@ S1 の後、別のユーザーが「商品カテゴリ別の返品率」を求�
 
 ### 全体のフローと担当
 
-青 = **人間**が画面で操作・判断する、橙 = **AI**（Claude のエージェント）が作る、灰 = **決定的なプログラム**（LLM を使わない。同じ入力なら同じ出力）が作る。
+青 = **人間**が画面で操作・判断する、橙 = **AI**（Claude のエージェント）が作る、灰 = **決定的なプログラム**（LLM を使わない。同じ入力なら同じ出力）が作る。開発の AI（Claude Code）は、オーナーの指示（issue や `/goal` の目標）でアプリのコードを書く。
+
+アプリの中で LLM を使うのは、インタビュー・取り込みの案・生成エージェント（テンプレートで作れない作業と、検証に失敗したときの修復）・フィードバックの要約（任意）だけ。dbt の生成・クレンジング層・チャート・PR 本文・同期は決定的。
 
 ```mermaid
 flowchart TB
@@ -105,41 +107,51 @@ flowchart TB
   subgraph ONB["1. 源泉の取り込み（S5）"]
     SRC[("新しい源泉<br/>raw.*")]:::store
     O_AI["取り込みエージェント<br/>オントロジーへの追加案"]:::ai
-    O_RULE["プロファイルからの案<br/>クレンジングの定義の雛形"]:::prog
+    O_RULE["プロファイルからの案<br/>（エージェントが使えないとき）<br/>クレンジングの定義の雛形（いつも）"]:::prog
     O_H["案を確認・修正して確定"]:::human
     O_GEN["ontology.yml に追加・図の生成<br/>クレンジング層（stg）の生成<br/>dbt build で検証"]:::prog
-    SRC --> O_AI & O_RULE --> O_H --> O_GEN
+    SRC --> O_AI
+    SRC --> O_RULE
+    O_AI -. 失敗したとき .-> O_RULE
+    O_AI --> O_H
+    O_RULE --> O_H
+    O_H --> O_GEN
   end
 
   subgraph REQ["2. 要求から PR まで（S1〜S3）"]
     R_H["要求を入力<br/>（バスマトリクスの空欄からも）"]:::human
     I_AI["インタビューエージェント<br/>質問・BEAM 成果物を書く"]:::ai
     I_H["質問に答える・具体例を確かめる<br/>確定を押す"]:::human
-    DES["スター設計"]:::prog
-    GEN["dbt・Semantic Layer・テストの生成"]:::prog
+    DES["スター設計<br/>（課題があれば止めて人に戻す）"]:::prog
+    GEN["dbt・Semantic Layer・テストの生成（テンプレート）<br/>作った fct / dim を ontology.yml に書き込む"]:::prog
+    TASK["生成エージェント<br/>テンプレートで作れない作業<br/>（既存の dim・fct への追加）"]:::ai
     VER{"検証<br/>dbt build / mf"}:::prog
-    REP["修復エージェント<br/>（直せなければ人に渡す）"]:::ai
+    REP["生成エージェントが修復<br/>（Sonnet 2 回 → Opus 1 回）"]:::ai
     CH["チャートの定義と画像"]:::prog
     R_H --> I_AI <--> I_H
-    I_H --> DES --> GEN --> VER
+    I_H --> DES --> GEN
+    GEN -- 作業があれば --> TASK --> VER
+    GEN -- なければ --> VER
     VER -- 失敗 --> REP --> VER
-    VER -- 成功 --> CH
+    VER -- 成功 / 直らなかった --> CH
   end
 
-  PR["GitHub の PR<br/>（PR 本文も決定的に作る）"]:::prog
+  PR["GitHub の PR（本文も決定的に作る）<br/>直らなかったら draft PR で人に渡す"]:::prog
   MERGE["PR をレビューしてマージ<br/>（データエンジニア）"]:::human
   SYNC["取り込んで更新する<br/>→ dbt build と検査"]:::prog
   VIEW["バスマトリクス・チャートで見る"]:::human
   FB["発言への 👍 / 👎・全体の評価"]:::human
-  DEV["開発者: 集計・eval 化<br/>プロンプトを直す方針を決める"]:::human
-  CODE["Claude Code がアプリのコードと<br/>プロンプトを直す PR"]:::ai
+  DEV["開発者: 集計を見て、何を直すか決める<br/>eval のシナリオを書く"]:::human
+  CODE["Claude Code がアプリのコードと<br/>プロンプトを直す PR（/goal）"]:::ai
+  REL["アプリを再起動して反映"]:::human
 
   O_GEN --> PR
   CH --> PR
   PR --> MERGE --> SYNC --> VIEW
   VIEW --> R_H
   VIEW -. 未整理の源泉 .-> SRC
-  I_H --> FB --> DEV --> CODE --> PR
+  I_H --> FB --> DEV --> CODE --> MERGE
+  MERGE -. アプリのコードの変更 .-> REL
 ```
 
 ### ファイルの持ち主
@@ -148,13 +160,14 @@ flowchart TB
 
 | 種類 | 持ち主 | ファイル | 直し方 |
 |---|---|---|---|
-| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。方針（Goals・Non-goals・Resolved issues・certificate・guardrails の制限・ADR の採否）を変えるのは人間（[certificate](certificate.md) の T2） |
+| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。それ以外の変更（方針・規約・知識の中身）は人間の承認が要る（[certificate](certificate.md) の T2） |
 | 要求の定義 | AI が案 → **人間**が確定 | `beam/*.yml` | インタビューで直す（画面のチャット）。確定は人間が押す |
-| オントロジー | AI（またはプロファイルの規則）が案 → **人間**が確定 | `ontology/ontology.yml` | 取り込み画面で直す。手で直してもよい（`make ontology` で検査） |
+| オントロジー | AI（使えなければプロファイルの規則）が案 → **人間**が確定。生成ジョブが作った fct / dim を書き足す | `ontology/ontology.yml` | 取り込み画面で直す。手で直してもよい（`make ontology` で検査） |
 | クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
-| eval のシナリオ | **人間**（フィードバックから AI が下書き） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)） |
-| アプリのコード・プロンプト | **AI**（Claude Code。/goal） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/` | 人間は issue で要求し、PR をレビューする |
-| データ基盤の生成物 | **AI / 決定的なプログラム**（アプリ） | `warehouse/models/**`（stg・dim・fct・Semantic Layer・テスト）・`warehouse/chart_specs/`・`warehouse/charts/`・`docs/ontology.md`・`frontend/src/generated/` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
+| eval のシナリオ | **人間**（フィードバックからプログラムが下書きを作る） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)）。既存のシナリオは開発時に Claude Code が書いたもので、これからは人間が確かめて足す |
+| アプリのコード・プロンプト | **AI**（Claude Code） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/`・`warehouse/macros/`・`warehouse/dbt_project.yml` など | 人間は issue で要求し、PR をレビューする |
+| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`・`_marts.yml`・`warehouse/tests/`・`warehouse/models/staging/_sources.yml`（取り込みが源泉を書き足す） | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
+| データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・生成した `fct_*` と Semantic Layer・テスト・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
 | 実行時のデータ | アプリ | `.adp/`（セッション・フィードバック・worktree・ログ。git では追跡しない） | — |
 
 ### 構成
@@ -300,7 +313,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 
 - `beam/<event_name>.yml`: BEAM 成果物。JSON Schema は `adp.beam` から生成し、frontend の TS 型もここから生成する。
 - `warehouse/models/**`: dbt の SQL と YAML（Semantic Layer は latest spec で model YAML 内に書く）。
-- `warehouse/chart_specs/*.yml`（v2）: チャートを指標名と切り口で書いたもの（パイプラインが生成）。`warehouse/charts/*.yml` は、そこから MetricFlow の SQL を埋め込んで書き出す dbt Charts のボード（R18）。どちらも手で書かない。
+- `warehouse/chart_specs/*.yml`（v2）: チャートを指標名と切り口で書いたもの（生成ジョブが書く。`store_sales.yml` は開発時の見本）。`warehouse/charts/*.yml` は、そこから MetricFlow の SQL を埋め込んで書き出す dbt Charts のボード（R18）。どちらも手で書かない。
 - `ontology/ontology.yml`（v3）: オントロジーの正本。`docs/ontology.md`（Mermaid の図）はここから生成する（#67）。
 - `warehouse/cleansing/<schema>.<table>.yml`（v3）: クレンジングの定義。`models/staging/stg_*` はここから生成する（ADR 0004）。
 
