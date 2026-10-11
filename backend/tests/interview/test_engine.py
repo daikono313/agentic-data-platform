@@ -177,6 +177,7 @@ def test_transcript_checks_detect_position_words_and_repeats() -> None:
         "question_not_repeated_in_text": False,
         "no_unexplained_jargon": True,
         "no_repeated_questions": True,
+        "no_effort_question": True,
     }
     good = [ChatMessage(role="assistant", text="支払方法は4種類です。", question="見たいですか？")]
     assert all(r.passed for r in _transcript_checks(good))

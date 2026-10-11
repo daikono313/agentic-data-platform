@@ -209,6 +209,22 @@ def _unexplained_jargon(messages: list[Any]) -> list[str]:
     return found
 
 
+_EFFORT = re.compile(r"工数|手間|作業量|作る(の|ため)の?(時間|コスト)")
+"""工数を聞く質問（工数はモデラーが見積もる。ユーザーに聞かない。#76 のフィードバック）。"""
+_IRREGULAR = re.compile(r"イレギュラー|例外|特殊な(ケース|場合)|普段と違う|まれな(ケース|場合)")
+"""例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
+
+
+def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
+    return [
+        q.strip()
+        for m in messages
+        if m.role == "assistant"
+        for q in _QUESTION.findall(_shown(m))
+        if pattern.search(q)
+    ]
+
+
 def _shown(m: Any) -> str:
     """画面に出る文（本文と、ボタンの上の質問文）。"""
     return f"{m.text}\n{m.question}" if getattr(m, "question", None) else str(m.text)
@@ -256,6 +272,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "unexplained_jargon": len(_unexplained_jargon(messages)),
         "repeated_questions": len(_repeated_questions(messages)),
         "position_words": sum(1 for m in assistant if _position_words(m)),
+        "effort_questions": len(_questions_matching(messages, _EFFORT)),
     }
 
 
@@ -273,11 +290,15 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     ]
     jargon = _unexplained_jargon(messages)
     again = _repeated_questions(messages)
+    effort = _questions_matching(messages, _EFFORT)
+    irregular = _questions_matching(messages, _IRREGULAR)
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
         CheckResult("no_unexplained_jargon", not jargon, ", ".join(jargon)),
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
+        CheckResult("no_effort_question", not effort, " / ".join(effort[:3])),
+        CheckResult("asks_irregular_cases", bool(irregular), " / ".join(irregular[:2])),
     ]
     return {r.name: r for r in results}
 
@@ -287,19 +308,26 @@ TRANSCRIPT_CHECKS = (
     "question_not_repeated_in_text",
     "no_unexplained_jargon",
     "no_repeated_questions",
+    "no_effort_question",
 )
+"""どのシナリオでも行う会話のチェック。"""
+OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases",)
+"""シナリオに書いたときだけ行う会話のチェック。"""
 TRANSCRIPT_LIMITS = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
 
 
 def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
     """会話の質のチェック（#36、#45）。どのシナリオでも行う。"""
-    return list(_transcript_check_map(messages).values())
+    checks = _transcript_check_map(messages)
+    return [checks[name] for name in TRANSCRIPT_CHECKS]
 
 
 def is_transcript_check(spec: Any) -> bool:
     """会話を見るチェックか（BEAM 成果物だけを見る再生テストや E2E では行わない）。"""
     name = spec if isinstance(spec, str) else next(iter(spec))
-    return name in TRANSCRIPT_CHECKS or name in TRANSCRIPT_LIMITS
+    return (
+        name in TRANSCRIPT_CHECKS or name in OPTIONAL_TRANSCRIPT_CHECKS or name in TRANSCRIPT_LIMITS
+    )
 
 
 def _scenario_transcript_check(spec: Any, messages: list[Any]) -> CheckResult | None:

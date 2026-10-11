@@ -283,3 +283,18 @@ def test_position_words() -> None:
         assert not _checks([_msg(text)])["no_choice_position_words"], text
     for text in ok:
         assert _checks([_msg(text)])["no_choice_position_words"], text
+
+
+def test_effort_and_irregular_case_questions() -> None:
+    """工数を聞く質問は数え、イレギュラーなケースを聞いたかを確かめる（#76 のフィードバック）。"""
+    from adp.evals.interview import _transcript_check_map, transcript_metrics
+
+    effort = [
+        _msg("最後に確認します。", question="データを作る手間（工数）はどのくらいを想定しますか？")
+    ]
+    assert not _checks(effort)["no_effort_question"]
+    assert transcript_metrics(effort)["effort_questions"] == 1
+    irregular = [_msg("具体例を伺いました。数え方の例外になりそうなケースはありますか？")]
+    assert _transcript_check_map(irregular)["asks_irregular_cases"].passed
+    assert not _transcript_check_map(effort)["asks_irregular_cases"].passed
+    assert "asks_irregular_cases" not in _checks(effort)  # シナリオに書いたときだけ
