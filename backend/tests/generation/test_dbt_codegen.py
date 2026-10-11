@@ -14,6 +14,7 @@ from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
 from adp.generation.project import ProjectInfo
+from adp.generation.semantic import MetricQuery
 
 ROOT = Path(__file__).parents[3]
 FIXTURES = Path(__file__).parents[1] / "fixtures"
@@ -37,6 +38,15 @@ def _dbt(warehouse: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(DBT), *args], cwd=warehouse, env=env, capture_output=True, text=True, check=False
     )
+
+
+def mf_query(warehouse: Path, q: MetricQuery, limit: int = 5) -> subprocess.CompletedProcess[str]:
+    """生成した指標を元の要求どおりにクエリする（dbt parse 済みであること）。"""
+    args = [str(DBT.parent / "mf"), "query", "--metrics", q.metric, "--limit", str(limit)]
+    if q.group_by:
+        args += ["--group-by", ",".join(q.group_by)]
+    env = os.environ | {"DBT_PROFILES_DIR": str(warehouse)}
+    return subprocess.run(args, cwd=warehouse, env=env, capture_output=True, text=True, check=False)
 
 
 @pytest.fixture(scope="module")
@@ -74,8 +84,6 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     assert result.returncode == 0, result.stdout[-3000:]
 
     # 元の要求（日別・店舗別の売上、キャンセル除外）を Semantic Layer から取得できる
-    from adp.generation.semantic import run_query
-
     assert [(q.metric, q.group_by) for q in generation.queries] == [
         ("revenue", ["metric_time__day", "store__store_name", "store__channel"])
     ]
@@ -89,7 +97,7 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
         check=False,
     )
     assert validate.returncode == 0, validate.stdout[-3000:]
-    query = run_query(warehouse, mf, generation.queries[0])
+    query = mf_query(warehouse, generation.queries[0])
     assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
     assert "store__store_name" in query.stdout
 
