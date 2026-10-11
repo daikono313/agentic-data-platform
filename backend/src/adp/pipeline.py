@@ -279,7 +279,6 @@ class GenerationPipeline:
         spec = chart_spec(beam, queries, cardinality)
         if spec is None:
             return None
-        warehouse = wt.path / "warehouse"
         spec_rel = f"{SPECS_DIR}/{beam.name}.yml"
         spec_path = warehouse / spec_rel
         board_path = warehouse / "charts" / f"{beam.name}.yml"
@@ -327,15 +326,18 @@ class GenerationPipeline:
         except Exception as e:  # チャートの失敗で PR 全体を止めない
             clean()
             first_error = str(e)
-        # 1 つの指標の失敗でボード全体を落とさない: 指標ごとに試し、描けるものだけで作り直す（#79）
+        # 1 つの指標の失敗でボード全体を落とさない: 指標ごとに（書き出し・検査・描画まで）試し、
+        # 描けるものだけで作り直す（#79）
         ok: list[str] = []
         failed: list[str] = []
         for name in spec["charts"]:
             try:
-                compile_board(beam.name, _only(spec, [name]), warehouse, mf)
+                write(_only(spec, [name]))
                 ok.append(name)
             except Exception:
                 failed.append(name)
+            finally:
+                clean()
         if not ok or not failed:
             preview.error = first_error
             return preview
@@ -347,7 +349,7 @@ class GenerationPipeline:
             return preview
         titles = {n: c.get("title") or c.get("label") or n for n, c in spec["charts"].items()}
         preview.charts = [(titles[n], spec["charts"][n]["type"]) for n in ok]
-        preview.error = f"描けなかった指標を除きました: {', '.join(titles[n] for n in failed)}"
+        preview.omitted = [titles[n] for n in failed]
         return preview
 
     def _commit_image(self, wt: Worktree, beam: BeamModel) -> str | None:

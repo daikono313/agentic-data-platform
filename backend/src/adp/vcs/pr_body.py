@@ -45,6 +45,8 @@ class ChartPreview:
     error: str | None = None
     skipped: str | None = None
     """作らなかった理由（既存のチャートがあるなど）。"""
+    omitted: list[str] = field(default_factory=list)
+    """描けなかったため除いた指標（ほかの指標のチャートは作った。#79）。"""
 
 
 _TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
@@ -136,6 +138,9 @@ def pr_body(
             lines += [""] + [
                 f"- {_cell(title)}（{_TYPE_LABEL.get(kind, kind)}）" for title, kind in chart.charts
             ]
+            if chart.omitted:
+                omitted = "、".join(_cell(t) for t in chart.omitted)
+                lines += ["", f"- ⚠ 描けなかったため除いた指標: {omitted}"]
             if chart.image_url:
                 lines += ["", f"![チャート]({chart.image_url})"]
             lines.append("")

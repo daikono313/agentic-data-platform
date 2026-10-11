@@ -83,6 +83,9 @@ def test_generated_files_reject_unexpected_jinja(tmp_path) -> None:  # type: ign
         "current_setting('home_directory')",
         "coalesce(quantity, getenv('X'))",
         "md5(customer_name)",
+        "version()",
+        "query('select 1')",
+        "getvariable('x')",
     ],
 )
 def test_only_allowed_functions(expr: str) -> None:
@@ -100,6 +103,21 @@ def test_only_allowed_functions(expr: str) -> None:
         "nullif(lower(trim(status)), '')",
         "greatest(quantity, 0)",
         "if(quantity > 0, 1, 0)",
+        # 演算子（sqlglot では関数の型）は関数として扱わない（#93 レビュー）
+        "case when quantity > 0 and status <> 'cancelled' then quantity else 0 end",
+        "not (a or b)",
+        "a || b",
+        "quantity % 2",
+        # DuckDB でよく使う関数
+        "strftime(ordered_at, '%Y-%m')",
+        "date_part('year', ordered_at)",
+        "hour(ordered_at)",
+        "split_part(code, '-', 1)",
+        "lpad(code, 5, '0')",
+        "strpos(name, 'x')",
+        "trunc(amount)",
+        "regexp_matches(code, '^A')",
+        "make_date(2024, 1, 1)",
     ],
 )
 def test_common_functions_are_allowed(expr: str) -> None:

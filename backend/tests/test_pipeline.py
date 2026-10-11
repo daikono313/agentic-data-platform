@@ -274,7 +274,21 @@ def test_one_failing_chart_does_not_drop_the_board(tmp_path: Path, monkeypatch) 
     preview = pipe._charts(beam, queries, Worktree(tmp_path, "beam/x"))
     assert preview is not None
     assert [t for t, _ in preview.charts] == ["売上金額"]
-    assert preview.error and "壊れた指標" in preview.error
+    # 一部だけ描けたのは失敗ではない（PR 本文にチャートと、除いた指標を出す）
+    assert preview.error is None and preview.omitted == ["壊れた指標"]
     assert compiled[-1] == ["revenue"]  # 描けるものだけで作り直した
+    # 書き出し後の検査・描画で失敗する指標も切り離す
+    compiled.clear()
+    monkeypatch.setattr(pipeline_module, "compile_board", lambda name, spec, w, mf: "board")
+
+    def check(warehouse, mf):  # type: ignore[no-untyped-def]
+        spec = (warehouse / "chart_specs" / f"{beam.name}.yml").read_text()
+        return ["broken の描画に失敗"] if "broken" in spec else []
+
+    monkeypatch.setattr(pipeline_module, "check", check)
+    (tmp_path / "warehouse" / "chart_specs" / f"{beam.name}.yml").unlink()
+    (tmp_path / "warehouse" / "charts" / f"{beam.name}.yml").unlink()
+    preview = pipe._charts(beam, queries, Worktree(tmp_path, "beam/x"))
+    assert preview is not None and preview.omitted == ["壊れた指標"] and preview.error is None
     spec = (tmp_path / "warehouse" / "chart_specs" / f"{beam.name}.yml").read_text()
     assert "broken" not in spec
