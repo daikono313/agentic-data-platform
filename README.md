@@ -48,7 +48,7 @@ PR は origin の所有者のアカウント（`gh auth token -u <owner>`）で�
 ## 品質の確認
 
 ```
-make eval REPEAT=3                                  # インタビューの eval（実際の LLM、5 シナリオ）
+make eval REPEAT=3                                  # インタビューの eval（実際の LLM、evals/interview/ のシナリオ）
 make eval-compare BEFORE=… AFTER=…                  # プロンプトを変えたときの前後比較
 make eval-repair                                    # 生成の自己修復の eval
 make e2e                                            # S1 を通しで実行（dry-run。PR=1 で本物の PR）

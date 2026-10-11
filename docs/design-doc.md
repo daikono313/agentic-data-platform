@@ -298,6 +298,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | POST | `/sync` | main の新しい変更を取り込み（`git pull --ff-only`）、dbt deps / build / parse と検査（Semantic Layer・オントロジー・クレンジング・チャート）をするジョブを始める。開始画面の「取り込んで更新する」から |
 | GET | `/sessions/{id}` | 会話と BEAM 成果物の現在状態を返す |
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |
+| POST | `/sessions/{id}/reopen` | 確定を取り消し、BEAM 成果物を直せるようにする。確定していないセッションと生成ジョブの実行中は 409、無いセッションは 404。もう一度確定すると新しい版で生成する |
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62）。元データごとに、使っている fact / dim（空なら未活用。#72）とオントロジーに無いか（未整理。#69） |
 | GET | `/ontology` | オントロジーの図（Mermaid）と、源泉・dbt のモデルとの食い違い、未整理の源泉（#67） |
@@ -310,6 +311,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | GET | `/feedback/categories`（v2） | フィードバックの分類（質問が重複している、専門用語がわからない など） |
 | GET | `/charts/options?job_id=`（v2） | 描画できる指標と切り口。`job_id` を渡すと、その生成 PR の内容（マージ前の worktree）で見る（#43） |
 | POST | `/charts/render?job_id=`（v2） | 指標・切り口・粒度・期間から SVG を描く（#43、ADR 0003） |
+| GET | `/health` | 死活確認（`{"status": "ok"}` を返す） |
 
 ### ファイル形式
 
