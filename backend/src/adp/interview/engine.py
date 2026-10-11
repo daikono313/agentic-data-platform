@@ -129,9 +129,12 @@ class Interviewer:
                     result = event
         except asyncio.CancelledError:
             # クライアントの切断など。途中までの応答を残してから中断する
+            partial, removed = strip_position_sentences("".join(reply))
             state.messages.append(
                 ChatMessage(
-                    role="assistant", text=("".join(reply) + "\n（中断されました）").strip()
+                    role="assistant",
+                    text=(partial + "\n（中断されました）").strip(),
+                    removed=removed,
                 )
             )
             raise

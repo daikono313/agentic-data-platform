@@ -28,7 +28,7 @@ from adp.catalog.tools import build_tools as catalog_tools
 from adp.design.check import design_issues
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
-from adp.interview.wording import POSITION
+from adp.interview.wording import is_position_sentence
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 
@@ -75,7 +75,7 @@ class EvalResult:
     turns: int
     duration_s: float
     first_token_s: list[float] = field(default_factory=list)
-    transcript: list[dict[str, str]] = field(default_factory=list)
+    transcript: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[list[dict[str, Any]]] = field(default_factory=list)
     """ターンごとのエージェントの tool 呼び出し（CI での再生テストに使う）。"""
     beam: dict[str, Any] | None = None
@@ -146,7 +146,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
 
 def _position_words(m: Any) -> bool:
     """画面の位置を指す言い方があったか（本文から取り除いた文も、モデルの振る舞いとして数える）。"""
-    return bool(POSITION.search(m.text) or getattr(m, "removed", None))
+    sentences = re.split(r"(?<=[。！？!?\n])", m.text)
+    return bool(getattr(m, "removed", None)) or any(is_position_sentence(x) for x in sentences)
 
 
 _PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()]")
@@ -261,7 +262,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
 def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
     position = [
-        ((getattr(m, "removed", None) or [""])[0] or m.text)[:60]
+        " / ".join(getattr(m, "removed", None) or [m.text])[:60]
         for m in assistant
         if _position_words(m)
     ]
@@ -406,7 +407,13 @@ async def run_scenario(
         duration_s=round(time.monotonic() - start, 1),
         first_token_s=[round(t, 2) for t in first_tokens],
         transcript=[
-            {"role": m.role, "text": m.text, **({"question": m.question} if m.question else {})}
+            {
+                "role": m.role,
+                "text": m.text,
+                **({"question": m.question} if m.question else {}),
+                # 取り除いた文も残す（eval-compare で数え直しても、モデルの振る舞いとして数える）
+                **({"removed": m.removed} if m.removed else {}),
+            }
             for m in state.messages
         ],
         metrics=transcript_metrics(state.messages),
