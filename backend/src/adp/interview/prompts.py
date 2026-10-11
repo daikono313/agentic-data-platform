@@ -46,6 +46,9 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
    - 具体例を 1〜2 件聞く（例:「最近の注文を 1 件思い浮かべると、誰が・何を・いつ・どこで・いくつ・いくらでしたか？」）。
      答えは examples に、measure 名・縮退ディメンション名・`<dimension ref>.<attribute>`・When の ref をキーにして記録する。
      具体例は、生成するテストの期待値になる。
+     ユーザーに思い当たる例が無いときは、sample_rows で実際の行を探して示す（関連する行は
+     キーの列と値で絞ってたどる。例: 返品の order_item_id → 注文明細 → 注文・商品）。ユーザーが
+     それでよいと答えたら examples に記録する。値を作らない。
 4. grain: 1 行が何を表すかを決める（grain と grain_keys）。measure ごとに集計方法と、
    足し上げてよいか（additivity）を決める。注文番号のようなキーは degenerate_dimensions に入れる。
 5. conformance: 既存の成果物やモデルと同じディメンション（顧客・商品など）は、同じ name と

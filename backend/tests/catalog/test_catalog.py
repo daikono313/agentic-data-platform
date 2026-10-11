@@ -369,3 +369,39 @@ def test_masked_columns_have_no_distinct_values(tmp_path: Path) -> None:
     con.close()
     info = ProjectInfo(tmp_path, Catalog(db))
     assert info.distinct_values("raw.people", "customer_name", 20) is None
+
+
+def test_sample_rows_follow_keys_and_mask_pii(catalog: Catalog) -> None:
+    """具体例のために実際の行を数件出す。キーで関連する行をたどれる。個人情報は伏せる（#80）。"""
+    from adp.catalog.catalog import MASKED, SAMPLE_MAX
+
+    returns = catalog.sample_rows("raw.returns", limit=1)
+    assert len(returns.rows) == 1 and "order_item_id" in returns.columns
+    item_id = returns.rows[0][returns.columns.index("order_item_id")]
+    assert item_id is not None
+    item = catalog.sample_rows("raw.order_items", "order_item_id", item_id)
+    assert [r[item.columns.index("order_item_id")] for r in item.rows] == [item_id]
+
+    customers = catalog.sample_rows("raw.customers", limit=100)
+    assert len(customers.rows) == SAMPLE_MAX  # 上限
+    assert "customer_name" in customers.masked_columns
+    names = [r[customers.columns.index("customer_name")] for r in customers.rows]
+    assert set(names) <= {MASKED, None}
+    with pytest.raises(ValueError, match="個人情報"):
+        catalog.sample_rows("raw.customers", "customer_name", "佐藤")
+
+
+def test_sample_rows_rejects_unsafe_input(catalog: Catalog) -> None:
+    with pytest.raises(ValueError):
+        catalog.sample_rows("raw.orders", 'order_id" from raw.orders --', "1")
+    # 値は SQL に埋め込まない（一致しないだけ）
+    assert catalog.sample_rows("raw.orders", "order_id", "1' or '1'='1").rows == []
+    with pytest.raises(ValueError, match="value"):
+        catalog.sample_rows("raw.orders", "order_id")
+
+
+async def test_sample_rows_tool(catalog: Catalog) -> None:
+    tools = {t.name: t for t in build_tools(catalog)}
+    result: dict[str, Any] = await tools["sample_rows"].handler({"table": "raw.stores", "limit": 2})
+    text = result["content"][0]["text"]
+    assert text.startswith("<source_data>") and "store_id" in text

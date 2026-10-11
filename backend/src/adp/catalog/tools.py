@@ -87,7 +87,36 @@ def build_tools(catalog: Catalog) -> list[SdkMcpTool[Any]]:
     async def search_columns(args: dict[str, Any]) -> dict[str, Any]:
         return await _call(lambda: catalog.search_columns(str(args["query"])))
 
-    return [list_sources, describe_table, profile_column, search_columns]
+    @tool(
+        "sample_rows",
+        "テーブルの実際の行を最大 5 件返す（個人情報の列は伏せる）。"
+        "具体例をユーザーに示すときに使う。"
+        "where_column と value を指定すると、その列の値が一致する行だけを返す"
+        "（例: 返品の order_item_id で注文明細をたどる）",
+        {
+            "type": "object",
+            "properties": {
+                "table": {"type": "string"},
+                "where_column": {"type": "string"},
+                "value": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["table"],
+        },
+    )
+    async def sample_rows(args: dict[str, Any]) -> dict[str, Any]:
+        where = args.get("where_column")
+        value = args.get("value")
+        return await _call(
+            lambda: catalog.sample_rows(
+                str(args["table"]),
+                str(where) if where else None,
+                None if value is None else str(value),
+                int(args.get("limit") or 3),
+            )
+        )
+
+    return [list_sources, describe_table, profile_column, search_columns, sample_rows]
 
 
 def build_server(catalog: Catalog) -> McpSdkServerConfig:
@@ -98,5 +127,11 @@ def allowed_tool_names() -> list[str]:
     """ClaudeAgentOptions.allowed_tools に渡す名前。"""
     return [
         f"mcp__{SERVER_NAME}__{n}"
-        for n in ("list_sources", "describe_table", "profile_column", "search_columns")
+        for n in (
+            "list_sources",
+            "describe_table",
+            "profile_column",
+            "search_columns",
+            "sample_rows",
+        )
     ]

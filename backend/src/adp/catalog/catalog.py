@@ -156,6 +156,19 @@ class ForeignKeyCandidate(BaseModel):
     """非 NULL 値のうち参照先に存在する割合。"""
 
 
+SAMPLE_MAX = 5
+MASKED = "（個人情報のため非表示）"
+
+
+class SampleRows(BaseModel):
+    """テーブルの実際の行（インタビューの具体例用。個人情報の列は伏せる。#80）。"""
+
+    table: str
+    columns: list[str]
+    rows: list[list[str | None]]
+    masked_columns: list[str] = []
+
+
 class TableDetail(TableInfo):
     columns: list[ColumnInfo]
     primary_key_candidates: list[str]
@@ -379,6 +392,49 @@ class Catalog:
             return _profile(
                 con, schema, name, info[column], top, masked=self.is_pii(schema, name, column)
             )
+
+    def sample_rows(
+        self,
+        table: str,
+        where_column: str | None = None,
+        value: str | None = None,
+        limit: int = 3,
+    ) -> SampleRows:
+        """テーブルの実際の行を数件返す。where_column = value で絞れる（キーで関連する行をたどる）。
+
+        値は文字列にして返す。個人情報の列（is_pii）は値を伏せる。絞り込みの値は SQL に埋め込まず
+        パラメータで渡し、個人情報の列での絞り込みは受け付けない（値の当て推量を防ぐ）。
+        """
+        schema, name = self._resolve(table)
+        limit = max(1, min(int(limit), SAMPLE_MAX))
+        with self._connect() as con:
+            columns = [c.name for c in self._columns(con, schema, name)]
+            if not columns:
+                raise ValueError(f"テーブルが見つかりません: {schema}.{name}")
+            masked = [c for c in columns if self.is_pii(schema, name, c)]
+            sql = f"select * from {_q(schema)}.{_q(name)}"
+            params: list[Any] = []
+            if where_column is not None:
+                if where_column not in columns:
+                    raise ValueError(f"列が見つかりません: {schema}.{name}.{where_column}")
+                if where_column in masked:
+                    raise ValueError("個人情報の列では絞り込めません")
+                if value is None:
+                    raise ValueError("where_column を指定したときは value も指定してください")
+                sql += f" where cast({_q(where_column)} as varchar) = ?"
+                params.append(str(value))
+            sql += f" limit {limit}"
+            rows = con.execute(sql, params).fetchall()
+        out = [
+            [
+                MASKED if col in masked and v is not None else (None if v is None else str(v))
+                for col, v in zip(columns, row, strict=True)
+            ]
+            for row in rows
+        ]
+        return SampleRows(
+            table=f"{schema}.{name}", columns=columns, rows=out, masked_columns=masked
+        )
 
     def profile_table(self, table: str, top: int = 5, detail: bool = False) -> TableProfile:
         """テーブルの全列のプロファイルと、主キー・外部キーの候補（源泉のプロファイル画面用）。
