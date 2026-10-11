@@ -148,3 +148,104 @@ def test_state_cache_is_bounded_but_keeps_busy_states(
     # 外したセッションも DB から読み直せる
     assert service.view(second)["id"] == second
     assert list(service._states) == [first, second]
+
+
+def test_history_prefers_running_job_in_memory_and_skips_stale_leftovers(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    store = service.store
+    for sid in ("a", "b"):
+        store.save_session(sid, _state(f"要求 {sid}"))
+    store.save_job("old", "a", "succeeded", [])
+    running = Job.new("a", [("x", "X")])
+    service._jobs[running.id] = running
+    # 保存に失敗して残った終わったジョブは、新しい DB の行を隠さない（#110 レビュー）
+    leftover = Job(id="left", session_id="b", status="failed")
+    service._jobs["left"] = leftover
+    store.save_job("newer", "b", "succeeded", [])
+    rows = {s["id"]: s for s in service.history()["sessions"]}
+    assert rows["a"]["job"]["id"] == running.id and rows["a"]["job"]["status"] == "running"
+    assert rows["b"]["job"]["id"] == "newer"
+
+
+def test_history_marks_rows_with_unknown_shape_unreadable(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    with Session(service.store.engine) as db:
+        db.add(SessionRow(id="array", state_json='{"beam": [], "phase": "review"}'))
+        db.add(SessionRow(id="bogus", state_json='{"beam": {"title": "t"}, "phase": "bogus"}'))
+        db.add(SessionRow(id="empty", state_json=""))
+        db.commit()
+    rows = service.history()["sessions"]
+    assert {r["id"]: r["phase"] for r in rows} == {
+        "array": "unknown",
+        "bogus": "unknown",
+        "empty": "unknown",
+    }
+
+
+def test_state_cache_is_safe_across_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """同期のエンドポイントはスレッドで動く。外すのと読むのが重なっても落ちない。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(service_module, "STATE_CACHE", 2)
+    service = _service(tmp_path)
+    ids = [service.create(f"要求 {i}") for i in range(8)]
+
+    def touch(i: int) -> str:
+        return str(service.view(ids[i % len(ids)])["id"])
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        assert sorted(set(pool.map(touch, range(400)))) == sorted(ids)
+    assert len(service._states) <= 2
+
+
+async def test_state_being_sent_is_not_evicted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """応答を始めたセッションは、応答のロックを取る前でもキャッシュから外さない。"""
+    monkeypatch.setattr(service_module, "STATE_CACHE", 1)
+    service = _service(tmp_path)
+    sid = service.create("一つ目")
+    state = service._states[sid]
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_send(session_id, st, text):  # type: ignore[no-untyped-def]
+        started.set()
+        await release.wait()
+        yield {"event": "done", "data": "{}"}
+
+    monkeypatch.setattr(service, "_send", fake_send)
+
+    async def consume() -> list[dict[str, str]]:
+        return [e async for e in service.send(sid, "こんにちは")]
+
+    task = asyncio.create_task(consume())
+    await started.wait()
+    service.create("二つ目")  # 上限 1 でも、送信中の一つ目は外さない
+    assert service._states.get(sid) is state
+    release.set()
+    assert len(await task) == 1
+    assert service._in_use == {}
+
+
+def test_interviewer_forgets_locks_of_evicted_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(service_module, "STATE_CACHE", 1)
+    service = _service(tmp_path)
+    first = service.create("一つ目")
+    state = service._states[first]
+    service.interviewer._locks[id(state)] = asyncio.Lock()
+    service.create("二つ目")
+    assert id(state) not in service.interviewer._locks
+
+
+def test_old_activity_is_pruned(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    import time
+
+    now = time.monotonic()
+    service._activity = {"old": now - 2 * service_module.ACTIVITY_KEEP_S, "new": now - 120}
+    assert service.interview_activity(60) is None and service._activity == {"new": now - 120}

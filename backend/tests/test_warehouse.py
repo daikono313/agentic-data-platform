@@ -90,3 +90,17 @@ def test_every_tool_subprocess_uses_tool_env(
     sync._check([str(tmp_path / "mf"), "validate-configs"], tmp_path / "backend", tmp_path)
     assert len(seen) == 5
     assert all(env == tool_env(tmp_path) for env in seen)
+
+
+def test_tool_env_is_the_only_place_that_builds_the_env() -> None:
+    """新しく子プロセスを足しても、環境変数を自前で組み立てない（tool_env を使う。#110）。"""
+    src = Path(__file__).parents[1] / "src" / "adp"
+    offenders = [
+        str(p.relative_to(src))
+        for p in src.rglob("*.py")
+        if p.name != "warehouse.py"
+        and (
+            '"NO_COLOR"' in (text := p.read_text(encoding="utf-8")) or '"DBT_PROFILES_DIR":' in text
+        )
+    ]
+    assert offenders == []

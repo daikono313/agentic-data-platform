@@ -2,7 +2,6 @@ import { RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { api, errorText, trackJob } from '@/api/client'
-
 import type { JobView, SyncView } from '@/api/types'
 import { JobProgress } from '@/components/JobProgress'
 import { Button } from '@/components/ui/button'

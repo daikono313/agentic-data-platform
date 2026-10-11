@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -15,7 +16,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from adp.api.store import FeedbackRow, Store
+from adp.api.store import FeedbackRow, Store, job_view
 from adp.beam import BeamModel, build_event_matrix
 from adp.feedback import FeedbackIn
 from adp.interview import (
@@ -57,6 +58,8 @@ PR_STATE_DEADLINE_S = 15.0
 """PR の状態の問い合わせを待つ時間の上限。過ぎたら残りは「不明」で一覧を返す（#88 レビュー）。"""
 PR_STATE_WORKERS = 5
 STATE_CACHE = 64
+ACTIVITY_KEEP_S = 3600.0
+"""インタビューの操作の時刻を覚えておく長さ（自動反映を控える判定にだけ使う）。"""
 """メモリに置くインタビューの状態の数の上限。超えたら使っていないものから外す（DB から読める）。"""
 
 
@@ -96,14 +99,7 @@ class Job:
         )
 
     def view(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "status": self.status,
-            "steps": self.steps,
-            "pr_url": self.pr_url,
-            "error": self.error,
-            "branch": self.branch,
-        }
+        return job_view(self.id, self.status, self.steps, self.pr_url, self.error, self.branch)
 
 
 EXCERPT = 2000
@@ -141,7 +137,11 @@ class SessionService:
         self.sync = sync
         self._pr_cache: dict[str, tuple[float, str | None]] = {}
         self._states: OrderedDict[str, InterviewState] = OrderedDict()
-        """最近使った順（STATE_CACHE 件まで）。"""
+        """最近使った順（STATE_CACHE 件まで）。同期のエンドポイントはスレッドで動くので、
+        触るときは _states_lock を持つ。"""
+        self._states_lock = threading.Lock()
+        self._in_use: dict[str, int] = {}
+        """応答（send）の途中のセッション。ロックを取る前に外されないように数える。"""
         self._jobs: dict[str, Job] = {}
         """実行中のジョブ。終わって保存したら外す（以後は DB から読む）。"""
         self._tasks: set[asyncio.Task[None]] = set()
@@ -152,38 +152,44 @@ class SessionService:
     # --- セッション ------------------------------------------------------------------------
 
     def _state(self, session_id: str) -> InterviewState:
-        if session_id in self._states:
-            self._states.move_to_end(session_id)
-        else:
-            try:
-                state = self.store.load_session(session_id)
-            except ValidationError as e:  # 検証が厳しくなる前に保存した成果物など（500 にしない）
-                raise NotFound(
-                    f"セッション {session_id} は今の形式で読めません（成果物の検証に通りません）。"
-                    "新しく要求を始めてください"
-                ) from e
-            if state is None:
-                raise NotFound(f"セッション {session_id} がありません")
-            self._cache_state(session_id, state)
-        return self._states[session_id]
+        with self._states_lock:
+            cached = self._states.get(session_id)
+            if cached is not None:
+                self._states.move_to_end(session_id)
+                return cached
+        try:
+            state = self.store.load_session(session_id)
+        except ValidationError as e:  # 検証が厳しくなる前に保存した成果物など（500 にしない）
+            raise NotFound(
+                f"セッション {session_id} は今の形式で読めません（成果物の検証に通りません）。"
+                "新しく要求を始めてください"
+            ) from e
+        if state is None:
+            raise NotFound(f"セッション {session_id} がありません")
+        return self._cache_state(session_id, state)
 
-    def _cache_state(self, session_id: str, state: InterviewState) -> None:
-        """状態をメモリに置き、上限を超えたら古いものから外す。
+    def _cache_state(self, session_id: str, state: InterviewState) -> InterviewState:
+        """状態をメモリに置き（別のスレッドが先に置いていればそちら）、上限を超えたら古いものから外す。
 
-        応答の途中の状態は外さない（応答の排他は状態のオブジェクトごとのため）。外した状態は
-        保存済みなので、次に使うときに DB から読み直す。
+        応答の途中・応答を始めるところの状態は外さない（応答の排他は状態のオブジェクトごとのため）。
+        外した状態は保存済みなので、次に使うときに DB から読み直す。
         """
-        self._states[session_id] = state
-        for sid in list(self._states):
-            if len(self._states) <= STATE_CACHE:
-                break
-            if sid != session_id and not self.interviewer.is_busy(self._states[sid]):
+        with self._states_lock:
+            state = self._states.setdefault(session_id, state)
+            self._states.move_to_end(session_id)
+            for sid in list(self._states):
+                if len(self._states) <= STATE_CACHE:
+                    break
+                old = self._states[sid]
+                if sid == session_id or sid in self._in_use or self.interviewer.is_busy(old):
+                    continue
                 del self._states[sid]
+                self.interviewer.forget(old)
+            return state
 
     def create(self, request: str) -> str:
         session_id = uuid.uuid4().hex[:12]
-        state = new_state(request.strip())
-        self._cache_state(session_id, state)
+        state = self._cache_state(session_id, new_state(request.strip()))
         self.store.save_session(session_id, state)
         self._activity[session_id] = time.monotonic()
         return session_id
@@ -320,11 +326,18 @@ class SessionService:
 
     async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
         state = self._state(session_id)
+        with self._states_lock:  # 応答のロックを取るまでの間に、キャッシュから外されないように
+            self._in_use[session_id] = self._in_use.get(session_id, 0) + 1
         self._activity[session_id] = time.monotonic()
         try:
             async for event in self._send(session_id, state, text):
                 yield event
         finally:  # 切断で中断されても、ここまでの会話と成果物を残す
+            with self._states_lock:
+                if (n := self._in_use[session_id] - 1) > 0:
+                    self._in_use[session_id] = n
+                else:
+                    del self._in_use[session_id]
             self._activity[session_id] = time.monotonic()
             self.store.save_session(session_id, state)
 
@@ -333,9 +346,14 @@ class SessionService:
 
         自動反映（#106）の dbt build の間はカタログを読めず、インタビューの tool が失敗するため。
         """
-        if any(self.interviewer.is_busy(s) for s in list(self._states.values())):
+        with self._states_lock:
+            states = list(self._states.values())
+        if any(self.interviewer.is_busy(s) for s in states):
             return "インタビューの応答の途中です"
         now = time.monotonic()
+        for sid, t in list(self._activity.items()):  # 古い操作の記録は溜めない
+            if now - t >= max(idle_s, ACTIVITY_KEEP_S):
+                self._activity.pop(sid, None)
         if any(now - t < idle_s for t in list(self._activity.values())):
             return f"インタビューの途中です（直近 {idle_s / 60:g} 分に操作がありました）"
         return None
@@ -525,7 +543,12 @@ class SessionService:
     def _job_views(self, session_ids: list[str]) -> dict[str, dict[str, Any]]:
         """セッションごとの最新のジョブ。実行中はメモリ、終わったものは DB（1 回の問い合わせ）。"""
         # 一覧はスレッドで作るので、ループ側で増えても壊れないよう写しを見る
-        live = {j.session_id: j.view() for j in list(self._jobs.values())}
+        # 実行中のものだけ（保存に失敗して残った終わったジョブが、新しい DB の行を隠さないように）
+        live = {
+            j.session_id: j.view()
+            for j in list(self._jobs.values())
+            if j.status == "running" and j.session_id in session_ids
+        }
         wanted = [sid for sid in session_ids if sid not in live]
         views = {sid: row.view() for sid, row in self.store.latest_jobs(wanted).items()}
         return views | {sid: live[sid] for sid in session_ids if sid in live}

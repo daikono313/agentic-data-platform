@@ -41,8 +41,10 @@ describe('API のエラー', () => {
     await expect(api.history()).rejects.toThrow('502 Bad Gateway')
   })
 
-  it('detail が一覧（入力の検証エラー）なら msg をつなぐ。JSON でなければそのまま', () => {
-    expect(detailText('{"detail":[{"msg":"必須です"},{"msg":"短すぎます"}]}')).toBe('必須です / 短すぎます')
+  it('detail が一覧（入力の検証エラー）なら項目名と msg をつなぐ。JSON でなければそのまま', () => {
+    expect(detailText('{"detail":[{"loc":["body","request"],"msg":"Field required"},{"msg":"短すぎます"}]}')).toBe(
+      '入力が正しくありません（request: Field required / 短すぎます）',
+    )
     expect(detailText('Internal Server Error')).toBe('Internal Server Error')
     expect(detailText('{"other":1}')).toBe('{"other":1}')
   })

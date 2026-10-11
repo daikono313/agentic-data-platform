@@ -9,13 +9,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, text
 from sqlalchemy import select as sa_select
 from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 from adp.beam import BeamModel, to_yaml
 from adp.feedback import RETENTION_DAYS
 from adp.interview import InterviewState
+from adp.interview.state import Phase
 
 
 def _now() -> datetime:
@@ -55,15 +56,28 @@ class JobRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
     def view(self) -> dict[str, Any]:
-        """画面に返すジョブ（実行中のものは service.Job.view と同じ形）。"""
-        return {
-            "id": self.id,
-            "status": self.status,
-            "steps": json.loads(self.steps_json),
-            "pr_url": self.pr_url,
-            "error": self.error,
-            "branch": self.branch,
-        }
+        return job_view(
+            self.id, self.status, json.loads(self.steps_json), self.pr_url, self.error, self.branch
+        )
+
+
+def job_view(
+    id: str,
+    status: str,
+    steps: list[dict[str, Any]],
+    pr_url: str | None,
+    error: str | None,
+    branch: str | None,
+) -> dict[str, Any]:
+    """画面に返すジョブの形（実行中の service.Job も、保存した JobRow もこれで作る）。"""
+    return {
+        "id": id,
+        "status": status,
+        "steps": steps,
+        "pr_url": pr_url,
+        "error": error,
+        "branch": branch,
+    }
 
 
 @dataclass(frozen=True)
@@ -78,6 +92,9 @@ class SessionSummary:
     metrics: list[str]
 
 
+_PHASES = {p.value for p in Phase}
+
+
 def _labels(metrics_json: Any) -> list[str]:
     try:
         metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else []
@@ -85,7 +102,7 @@ def _labels(metrics_json: Any) -> list[str]:
         return []
     if not isinstance(metrics, list):
         return []
-    return [str(m["label"]) for m in metrics if isinstance(m, dict) and "label" in m]
+    return [m["label"] for m in metrics if isinstance(m, dict) and isinstance(m.get("label"), str)]
 
 
 class FeedbackRow(SQLModel, table=True):
@@ -147,7 +164,8 @@ class Store:
     def session_summaries(self, limit: int = 200) -> list[SessionSummary]:
         """一覧に出す項目だけを、状態の JSON を検証せずに SQLite の JSON 関数で取り出す。
 
-        新しく更新された順。JSON として読めない・形の違う行は phase を None にする。
+        新しく更新された順。JSON として読めない・beam が無い・段階が今の値でない行は phase を
+        None にする（それ以外の項目の検証はしない。開くときに検証する）。
         """
         state = col(SessionRow.state_json)
 
@@ -172,7 +190,7 @@ class Store:
             rows = conn.execute(stmt).all()
         result = []
         for id_, updated_at, beam_type, phase, title, request, metrics in rows:
-            if beam_type != "object" or not isinstance(phase, str):
+            if beam_type != "object" or phase not in _PHASES:
                 result.append(SessionSummary(id_, updated_at, "", "", None, []))
                 continue
             result.append(
@@ -258,7 +276,7 @@ class Store:
             rows = db.exec(
                 select(JobRow)
                 .where(col(JobRow.session_id).in_(session_ids))
-                .order_by(col(JobRow.created_at))
+                .order_by(col(JobRow.created_at), text("jobs.rowid"))
             ).all()
         return {row.session_id: row for row in rows}  # 後の（新しい）行で上書きする
 

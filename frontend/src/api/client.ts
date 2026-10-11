@@ -7,7 +7,7 @@ const BASE = '/api'
 
 /**
  * API のエラーの本文（FastAPI の {"detail": ...}）から、画面に出す文を取り出す。
- * detail が文字列でなければ（入力の検証エラーの一覧など）、各項目の msg をつなぐ。JSON でなければそのまま
+ * detail が入力の検証エラーの一覧なら、項目名と msg をつなぐ。JSON でなければそのまま
  */
 export function detailText(body: string): string {
   let detail: unknown
@@ -18,8 +18,13 @@ export function detailText(body: string): string {
   }
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
-    const msgs = detail.map((d) => (d && typeof d === 'object' && 'msg' in d ? String(d.msg) : JSON.stringify(d)))
-    if (msgs.length) return msgs.join(' / ')
+    // 入力の検証エラー（422）。どの項目かが分かるように loc の末尾を付ける
+    const msgs = detail.map((d: unknown) => {
+      if (!d || typeof d !== 'object' || !('msg' in d)) return JSON.stringify(d)
+      const loc = 'loc' in d && Array.isArray(d.loc) ? d.loc.at(-1) : undefined
+      return loc !== undefined ? `${String(loc)}: ${String(d.msg)}` : String(d.msg)
+    })
+    if (msgs.length) return `入力が正しくありません（${msgs.join(' / ')}）`
   }
   return body
 }

@@ -184,6 +184,12 @@ class Interviewer:
         lock = self._locks.get(id(state))
         return lock is not None and lock.locked()
 
+    def forget(self, state: InterviewState) -> None:
+        """メモリから外した状態の排他のロックを捨てる（応答中なら残す）。"""
+        lock = self._locks.get(id(state))
+        if lock is not None and not lock.locked():
+            del self._locks[id(state)]
+
     def reopen(self, state: InterviewState) -> None:
         """確定を取り消して確認の段階に戻す（修正して確定し直すため）。"""
         if state.phase != Phase.FINALIZED:
