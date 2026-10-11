@@ -132,6 +132,8 @@ class SessionService:
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._activity: dict[str, float] = {}
+        """インタビューの直近の操作（time.monotonic）。自動反映を控えるため（#106）。"""
         store.fail_stale_jobs()
 
     # --- セッション ------------------------------------------------------------------------
@@ -155,6 +157,7 @@ class SessionService:
         state = new_state(request.strip())
         self._states[session_id] = state
         self.store.save_session(session_id, state)
+        self._activity[session_id] = time.monotonic()
         return session_id
 
     def view(self, session_id: str) -> dict[str, Any]:
@@ -293,11 +296,25 @@ class SessionService:
 
     async def send(self, session_id: str, text: str) -> AsyncIterator[SSEEvent]:
         state = self._state(session_id)
+        self._activity[session_id] = time.monotonic()
         try:
             async for event in self._send(session_id, state, text):
                 yield event
         finally:  # 切断で中断されても、ここまでの会話と成果物を残す
+            self._activity[session_id] = time.monotonic()
             self.store.save_session(session_id, state)
+
+    def interview_activity(self, idle_s: float) -> str | None:
+        """インタビューの途中なら理由を返す（応答中か、直近 idle_s 秒に操作があった）。
+
+        自動反映（#106）の dbt build の間はカタログを読めず、インタビューの tool が失敗するため。
+        """
+        if any(self.interviewer.is_busy(s) for s in list(self._states.values())):
+            return "インタビューの応答の途中です"
+        now = time.monotonic()
+        if any(now - t < idle_s for t in list(self._activity.values())):
+            return f"インタビューの途中です（直近 {idle_s / 60:g} 分に操作がありました）"
+        return None
 
     async def _send(
         self, session_id: str, state: InterviewState, text: str
