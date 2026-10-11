@@ -70,10 +70,27 @@ describe('DatasetsPanel', () => {
       { ...base, name: 'raw.inventory', used_by: [], unmapped: true },
     ]
     render(<DatasetsPanel datasets={{ ...datasets, sources }} />)
-    expect(screen.getByTestId('source-coverage')).toHaveTextContent('活用 1・未活用 1・未整理 1')
+    expect(screen.getByTestId('source-coverage')).toHaveTextContent('fact / dim に使われている 1・未活用 1・未整理（オントロジーに無い） 1')
     expect(screen.getByTestId('source-raw.orders')).toHaveTextContent('fct_order_lines')
     expect(screen.getByTestId('source-raw.returns')).toHaveTextContent('未活用')
     expect(screen.getByTestId('source-raw.inventory')).not.toHaveTextContent('未活用（')
+  })
+
+  it('使われているか分からない（manifest が無い）ときは、未活用と言わない', () => {
+    const sources = [{ ...datasets.sources[0], used_by: null }]
+    render(<DatasetsPanel datasets={{ ...datasets, sources }} />)
+    expect(screen.queryByTestId('source-coverage')).not.toBeInTheDocument()
+    expect(screen.getByTestId('source-raw.returns')).not.toHaveTextContent('未活用')
+  })
+
+  it('バスマトリクスの fact に元の源泉を出す', () => {
+    const bus = {
+      groups: [{ name: 'dim_store', label: '店舗', kind: 'dim', attributes: [{ name: 'store__channel', label: 'チャネル' }], sources: ['raw.stores'] }],
+      rows: [{ name: 'fct_order_lines', label: '注文', groups: ['dim_store'], sources: ['raw.order_items', 'raw.orders'] }],
+    }
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} />)
+    expect(screen.getByTestId('bus-fct_order_lines')).toHaveTextContent('← raw.order_items, raw.orders')
+    expect(screen.getByRole('columnheader', { name: /店舗/ })).toHaveAttribute('title', expect.stringContaining('元の源泉: raw.stores'))
   })
 
   it('未整理の源泉には取り込みへのリンクを出す', () => {

@@ -89,7 +89,7 @@ export function BusMatrixView({
                     key={g.name}
                     colSpan={g.attributes.length}
                     scope="colgroup"
-                    title={`${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}`}
+                    title={`${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}${g.sources?.length ? `（元の源泉: ${g.sources.join(', ')}）` : ''}`}
                     className={cn('border px-1 py-1 text-center font-semibold break-all', shade(i))}
                   >
                     {g.kind === 'dim' ? g.label : 'fact 内の属性'}
@@ -127,11 +127,14 @@ export function BusMatrixView({
                 className="sticky left-0 z-10 border bg-background px-2 py-1.5 text-left font-normal"
                 title={description.get(r.name)}
               >
-                <span className="block font-mono font-medium">
+                <span className="block font-mono font-medium" title={r.sources?.length ? `元の源泉: ${r.sources.join(', ')}` : undefined}>
                   {r.name}
                   {r.candidate && <span className="ml-1 font-sans text-[10px] text-primary">（候補）</span>}
                 </span>
                 <span className="block text-muted-foreground">{r.label}</span>
+                {!compact && r.sources && r.sources.length > 0 && (
+                  <span className="block font-mono text-[10px] text-muted-foreground">← {r.sources.join(', ')}</span>
+                )}
               </th>
               {bus.groups.flatMap((g, i) =>
                 columns(g).map((a) => {

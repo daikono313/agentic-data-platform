@@ -170,8 +170,8 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
         <h2 className="border-b pb-1 text-base font-bold">
           使える源泉（元データ）
           <span className="ml-1.5 text-xs font-normal text-muted-foreground">{sources.length}</span>
-          <SourceCoverage sources={datasets.sources} />
         </h2>
+        <SourceCoverage sources={sources} />
         <ul className={compact ? 'divide-y' : 'grid divide-y md:grid-cols-2 md:gap-x-6'}>
           {sources.map((s) => (
             <SourceItem key={s.name} source={s} linkProps={linkProps} />
@@ -215,7 +215,7 @@ function SourceItem({
                 {m}
               </Badge>
             ))}
-            {!source.unmapped && (source.used_by ?? []).length === 0 && (
+            {!source.unmapped && Array.isArray(source.used_by) && source.used_by.length === 0 && (
               <Badge variant="outline" className="text-[10px] text-muted-foreground">
                 未活用（fact / dim に使われていない）
               </Badge>
@@ -282,13 +282,15 @@ function ModelItem({ model }: { model: Datasets['models'][number] }) {
 
 /** 源泉の活用状況の要約（#72）: fact / dim に使われている・未活用・未整理（オントロジーに無い）の数 */
 function SourceCoverage({ sources }: { sources: Datasets['sources'] }) {
+  // dbt の manifest が無いと、使われているかは分からない（未活用とは言わない）
+  if (sources.some((s) => s.used_by === null || s.used_by === undefined)) return null
   const unmapped = sources.filter((s) => s.unmapped).length
   const used = sources.filter((s) => !s.unmapped && (s.used_by ?? []).length > 0).length
   const unused = sources.length - used - unmapped
   return (
-    <span className="ml-3 text-xs font-normal text-muted-foreground" data-testid="source-coverage">
-      活用 {used}・未活用 {unused}
-      {unmapped > 0 && `・未整理 ${unmapped}`}
-    </span>
+    <p className="text-xs text-muted-foreground" data-testid="source-coverage">
+      fact / dim に使われている {used}・未活用 {unused}
+      {unmapped > 0 && `・未整理（オントロジーに無い） ${unmapped}`}
+    </p>
   )
 }
