@@ -27,6 +27,7 @@ from adp.generation.dbt import staging_files
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import verify
 from adp.llm import AgentRunner, LLMSettings
+from adp.markdown import safe
 from adp.onboarding.agent import propose_with_agent
 from adp.onboarding.plan import OnboardingDraft, bus_with_candidates
 from adp.onboarding.proposal import (
@@ -50,7 +51,6 @@ from adp.pipeline import (
     prepare_warehouse,
 )
 from adp.vcs import GitHub, GitWorkspace
-from adp.vcs.pr_body import _safe
 from adp.warehouse import warehouse_db
 
 
@@ -255,12 +255,12 @@ class OnboardingPipeline:
         # 表示名・動詞は LLM やユーザーの文章。#N・@name・コードブロックを無効にする（guardrails）
         kinds = {"event": "出来事", "entity": "もの・人"}
         concepts = "\n".join(
-            f"- **{_safe(c.label)}**（`{c.name}`、{kinds[c.kind]}）: "
-            + "、".join(_safe(a.label) for a in c.attributes)
+            f"- **{safe(c.label)}**（`{c.name}`、{kinds[c.kind]}）: "
+            + "、".join(safe(a.label) for a in c.attributes)
             for c in patch.concepts
         )
         relations = "\n".join(
-            f"- {r.from_} →{_safe(r.verb)}→ {r.to}（`{r.via}`）" for r in patch.relations
+            f"- {r.from_} →{safe(r.verb)}→ {r.to}（`{r.via}`）" for r in patch.relations
         )
         listed = "\n".join(f"- `{f}`" for f in files)
         return (

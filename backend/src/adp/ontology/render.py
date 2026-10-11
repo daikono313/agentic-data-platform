@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from adp.markdown import cell, mermaid_label
 from adp.ontology.models import Concept, Ontology, mermaid_id
 
 MAX_ATTRS_IN_DIAGRAM = 4
@@ -12,30 +13,9 @@ HEADER = (
 )
 
 
-_ENTITIES = [
-    ("#", "#35;"),  # 先に置き換える（後の実体参照の # を壊さないため）
-    ('"', "#quot;"),
-    ("<", "#lt;"),
-    (">", "#gt;"),
-    ("%", "#37;"),  # %%{init: …}%% の設定・%% のコメントを無効にする
-    ("{", "#123;"),
-    ("}", "#125;"),
-    ("`", "#96;"),  # markdown の文字列
-]
-
-
-def _label(text: str) -> str:
-    """Mermaid のラベルに入れる文字列。構文・設定（%%{init}%%）・コメントとして解釈される文字を
-    実体参照にし、改行は空白にする（ontology.yml はエージェントも書くため、データとして扱う）。"""
-    text = " ".join(text.split())
-    for raw, entity in _ENTITIES:
-        text = text.replace(raw, entity)
-    return text
-
-
 def _node(c: Concept) -> str:
     # 出来事（event）は角丸の長円、もの・人（entity）は角丸の四角
-    label = _label(c.label)
+    label = mermaid_label(c.label)
     return (
         f'{mermaid_id(c.name)}(["{label}"])'
         if c.kind == "event"
@@ -49,11 +29,11 @@ def mermaid(ontology: Ontology) -> str:
         members = [c for c in ontology.concepts if c.domain == d.name]
         if not members:
             continue
-        lines.append(f'  subgraph d_{d.name}["{_label(d.label)}"]')
+        lines.append(f'  subgraph d_{d.name}["{mermaid_label(d.label)}"]')
         for c in members:
             lines.append(f"    {_node(c)}")
             if c.attributes:
-                shown = [_label(a.label) for a in c.attributes[:MAX_ATTRS_IN_DIAGRAM]]
+                shown = [mermaid_label(a.label) for a in c.attributes[:MAX_ATTRS_IN_DIAGRAM]]
                 rest = len(c.attributes) - len(shown)
                 if rest > 0:
                     shown.append(f"ほか {rest}")
@@ -63,9 +43,9 @@ def mermaid(ontology: Ontology) -> str:
         if c.attributes:
             lines.append(f"  {mermaid_id(c.name)} -.- a_{c.name}")
     for r in ontology.relations:
-        lines.append(f'  {mermaid_id(r.from_)} -- "{_label(r.verb)}" --> {mermaid_id(r.to)}')
+        lines.append(f'  {mermaid_id(r.from_)} -- "{mermaid_label(r.verb)}" --> {mermaid_id(r.to)}')
     for i, x in enumerate(ontology.constraints):
-        lines.append(f'  k_{i}["{_label(x.text)}"]:::constraint')
+        lines.append(f'  k_{i}["{mermaid_label(x.text)}"]:::constraint')
         lines.append(f"  k_{i} -.- {mermaid_id(x.concept)}")
     events = [mermaid_id(c.name) for c in ontology.concepts if c.kind == "event"]
     lines += [
@@ -80,10 +60,6 @@ def mermaid(ontology: Ontology) -> str:
     if entities:
         lines.append(f"  class {','.join(entities)} entity")
     return "\n".join(lines) + "\n"
-
-
-def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")
 
 
 def markdown(ontology: Ontology) -> str:
@@ -113,17 +89,17 @@ def markdown(ontology: Ontology) -> str:
         attrs = "、".join(f"{a.label}（`{a.column}`）" for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(
-            f"| {_cell(c.label)} `{c.name}` | {kind} | {_cell(domain[c.domain])} "
-            f"| `{c.source}`（`{c.key}`） | {model} | {_cell(attrs)} |"
+            f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
+            f"| `{c.source}`（`{c.key}`） | {model} | {cell(attrs)} |"
         )
     labels = {c.name: c.label for c in ontology.concepts}
     if ontology.relations:
         out += ["", "## 関係", "", "| から | 関係 | へ | 列 |", "|---|---|---|---|"]
         for r in ontology.relations:
-            ends = (_cell(labels[r.from_]), _cell(labels[r.to]))
-            out.append(f"| {ends[0]} | {_cell(r.verb)} | {ends[1]} | `{r.via}` |")
+            ends = (cell(labels[r.from_]), cell(labels[r.to]))
+            out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` |")
     if ontology.constraints:
         out += ["", "## 制約", "", "| 概念 | 制約 |", "|---|---|"]
         for x in ontology.constraints:
-            out.append(f"| {_cell(labels[x.concept])} | {_cell(x.text)} |")
+            out.append(f"| {cell(labels[x.concept])} | {cell(x.text)} |")
     return "\n".join(out) + "\n"

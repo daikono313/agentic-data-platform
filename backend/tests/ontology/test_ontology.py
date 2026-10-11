@@ -109,6 +109,20 @@ def test_mermaid_neutralizes_directives_comments_and_entities(text: str) -> None
     assert "`" not in line and "#lt;" not in line.replace("#35;lt;", "")
 
 
+def test_markdown_cells_are_sanitized_like_pr_body() -> None:
+    """docs/ontology.md の表のセルも PR 本文と同じく無害化する（#110）。"""
+    data = _data(
+        constraints=[
+            {"concept": "order", "text": "Closes #12 cc @someone /Users/me/x.txt ```a``` | b\nc"}
+        ]
+    )
+    out = markdown(Ontology.model_validate(data))
+    row = next(x for x in out.splitlines() if x.startswith("| 注文 | Closes"))
+    assert "#\u200b12" in row and "@\u200bsomeone" in row
+    assert "/Users/me" not in row and "<path>" in row
+    assert "```" not in row and "\\|" in row and "\n" not in row
+
+
 def test_duplicates_are_rejected() -> None:
     data = _data()
     data["relations"].append(dict(data["relations"][0]))

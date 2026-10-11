@@ -149,6 +149,17 @@ def test_er_diagram(design: PhysicalDesign) -> None:
     assert "order_line_id PK" in er
 
 
+def test_er_diagram_labels_are_escaped_like_ontology(design: PhysicalDesign) -> None:
+    """ER 図のラベルもオントロジーの図と同じく、構文・設定・コメントの文字を無効にする（#110）。"""
+    design = design.model_copy(deep=True)
+    design.dims[0].label = 'a "b" %%{init: {"theme":"dark"}}%% `c`\nd'
+    er = er_diagram(design)
+    line = next(x for x in er.splitlines() if " PK " in x and "#quot;" in x)
+    label = line.split(" PK ", 1)[1]
+    assert label.startswith('"a #quot;b#quot;') and label.endswith(' d"')
+    assert "%" not in label and "{" not in label and "`" not in label
+
+
 def test_with_real_catalog(beam: BeamModel, tmp_path: Path) -> None:
     spec = importlib.util.spec_from_file_location("generate_sample_data", SCRIPT)
     assert spec and spec.loader
