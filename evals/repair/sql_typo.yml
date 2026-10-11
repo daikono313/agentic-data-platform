@@ -1,0 +1,7 @@
+name: sql_typo
+description: fct の SQL の構文の誤り（dbt build が失敗する）
+beam: backend/tests/fixtures/beam/sales_by_store.yml
+fault:
+  file: models/marts/fct_order_lines.sql
+  replace: ["select\n", "selec\n"]
+expect: fixed

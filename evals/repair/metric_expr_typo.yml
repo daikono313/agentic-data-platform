@@ -1,0 +1,7 @@
+name: metric_expr_typo
+description: Semantic Layer の指標の expr が列名と違う（mf validate-configs / mf query が失敗する）
+beam: backend/tests/fixtures/beam/sales_by_store.yml
+fault:
+  file: models/marts/fct_order_lines.yml
+  replace: ["expr: sales_amount", "expr: sales_amout"]
+expect: fixed

@@ -1,0 +1,7 @@
+name: wrong_relationship_field
+description: relationships テストの参照先の列が無い（テストを消さずに直せるか）
+beam: backend/tests/fixtures/beam/sales_by_store.yml
+fault:
+  file: models/marts/fct_order_lines.yml
+  replace: ["field: customer_key", "field: customer_id"]
+expect: fixed

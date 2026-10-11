@@ -23,3 +23,20 @@
 | `no_unexplained_jargon` | 「粒度」「ディメンション」などを、最初に使うときに説明する（括弧・「とは」で前後に説明があればよい） | 専門用語がわからない |
 
 シナリオの `checks` に `max_assistant_turns: N`・`max_assistant_chars: N` を書くと、会話の長さの上限も確かめる（質問が長い・多い）。前後比較の表には、ターン数・質問の数・発言の平均文字数・説明なしの専門用語・重複した質問・位置を指す言葉の数が出る。
+
+## 生成の自己修復の eval（#78）
+
+生成で実際に起きた失敗の型を `evals/repair/<name>.yml` に書き、生成した dbt プロジェクトにわざと入れて、
+自己修復（`adp.generation.repair.Repairer`）が直せるかを実際の LLM で測る。
+
+```
+make eval-repair                      # 全シナリオ
+make eval-repair SCENARIO=sql_typo REPEAT=3
+```
+
+- シナリオ: `beam`（生成に使う BEAM 成果物）、`fault`（`file` と `replace: [old, new]` か `delete_lines_with`）、
+  `expect`（`fixed` か `handed_to_human`）
+- 結果: `.adp/evals/repair-<日時>/`（シナリオごとの JSON と `summary.md`。期待どおりの割合・修復の試行回数・時間）
+- 新しい失敗の型が出たら、シナリオを足す。生成器が変わって失敗が入らなくなったシナリオは、CI
+  （`tests/evals/test_repair_eval.py`）で気づく
+- 自己修復のプロンプト・テンプレートを変える PR は、前後で `make eval-repair REPEAT=3` を回して表を貼る

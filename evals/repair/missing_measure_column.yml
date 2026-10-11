@@ -1,0 +1,7 @@
+name: missing_measure_column
+description: 指標が使う measure の列が fct に無い（mf validate-configs が失敗する。v2 の実際の LLM の E2E で起きた型）
+beam: backend/tests/fixtures/beam/sales_by_store.yml
+fault:
+  file: models/marts/fct_order_lines.sql
+  delete_lines_with: " as sales_amount,"
+expect: fixed
