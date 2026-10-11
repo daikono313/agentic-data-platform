@@ -50,7 +50,8 @@ describe('DatasetsPanel', () => {
     }
     expect(order[2].compareDocumentPosition(source) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     // 開始画面の指標は表示名と切り口のまとまり（dimension）だけ。すべては ?metrics で（#107）
-    expect(screen.getByTestId('metric-revenue')).toHaveTextContent('売上金額期間・store')
+    // バスマトリクスが無いので entity 名は出さず「その他」。「期間」は一行の要約には出さない
+    expect(screen.getByTestId('metric-revenue')).toHaveTextContent(/^売上金額その他チャートで見る$/)
     expect(screen.getByRole('link', { name: /すべての指標/ })).toHaveAttribute('href', '?metrics')
     expect(within(order[1]).getByText('fct_order_lines')).toBeInTheDocument()
     expect(within(order[2]).getByText('dim_store')).toBeInTheDocument()
@@ -60,6 +61,9 @@ describe('DatasetsPanel', () => {
     expect(source).toHaveTextContent('return_reason 返品理由')
     fireEvent.change(screen.getByLabelText('使えるデータを検索'), { target: { value: '返品' } })
     expect(screen.queryByTestId('metric-revenue')).not.toBeInTheDocument()
+    expect(screen.getByText('検索に合う指標はありません。')).toBeInTheDocument()
+    expect(screen.queryByText('まだありません。要求すると作れます。')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /すべての指標/ })).toHaveAttribute('href', '?metrics&q=%E8%BF%94%E5%93%81')
     expect(screen.queryByText('dim_store')).not.toBeInTheDocument()
     expect(screen.getByText('返品')).toBeInTheDocument()
   })
@@ -117,7 +121,18 @@ describe('DatasetsPanel', () => {
   it('インタビュー中（compact）はリンクを別タブで開く', () => {
     render(<DatasetsPanel datasets={datasets} compact />)
     expect(screen.getByRole('link', { name: /プロファイル/ })).toHaveAttribute('target', '_blank')
-    expect(screen.getByRole('link', { name: 'チャートで見る' })).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: 'チャートで見る（別のタブ）' })).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: /すべての指標.*（別のタブ）/ })).toHaveAttribute('target', '_blank')
+  })
+
+  it('compact では代表の 3 件だけを出し、指標の一覧は別のタブで開く（#107）', () => {
+    const metrics = Array.from({ length: 5 }, (_, i) => ({ ...datasets.metrics[0], name: `m${i}`, label: `指標${i}` }))
+    render(<DatasetsPanel datasets={{ ...datasets, metrics }} compact />)
+    const section = screen.getByRole('region', { name: '指標（metrics）' })
+    expect(within(section).getAllByRole('listitem')).toHaveLength(3)
+    const link = within(section).getByRole('link', { name: 'ほか 2 件。すべての指標（説明・切り口）を見る（別のタブ）' })
+    expect(link).toHaveAttribute('href', '?metrics')
+    expect(link).toHaveAttribute('target', '_blank')
   })
 
   it('読み込みエラーを表示する', () => {

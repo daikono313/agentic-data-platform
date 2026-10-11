@@ -266,33 +266,91 @@ export interface DimensionGroup {
   dimensions: DimensionInfo[]
 }
 
+const TIME_GROUP = '__time'
+const OTHER_GROUP = '__other'
+const GRAIN = /__(day|week|month|quarter|year)$/
+
+/** `<entity>__<dimension>` の entity と dimension の部分（entity が無ければ null） */
+function splitDimension(name: string): [string | null, string] {
+  const i = name.indexOf('__')
+  return i < 0 ? [null, name] : [name.slice(0, i), name.slice(i + 2).replace(GRAIN, '')]
+}
+
 /**
- * 指標の切り口を、dimension（entity）ごとにまとめる（#107）。
- * 時間の切り口は「期間」に、それ以外は entity ごと（バスマトリクスに表示名があればそれを使う）に分ける。
- * 並びは「期間」→ 切り口の多い順（同数なら表示名順）で、各グループの中は rankDimensions の順。
+ * 指標の切り口を、バスマトリクスの dimension ごとにまとめる（#107）。
+ *
+ * - バスマトリクスの属性と同じ名前 → その dimension（時間の切り口も。例: customer__registered_on は「顧客」）
+ * - 同じ entity の属性がある dimension → その dimension（粒度の付いた時間の切り口など）
+ * - 別名の entity（role-playing・unique entity）で、同じ属性名を持つ dimension がある → その dimension の
+ *   「（別の役割）」として別にまとめる
+ * - どれでもない時間の切り口（metric_time など）→「期間」、それ以外 →「その他」
+ *
+ * 並びは「期間」→ 日付（dim_date）→ バスマトリクスの列の順（dim → fact 自身の属性）→「その他」。
+ * どの指標のカードでも同じ順になる。グループの中は rankDimensions の順。
  */
 export function groupDimensions(dims: DimensionInfo[], bus?: BusMatrix | null): DimensionGroup[] {
-  const groupOf = new Map<string, BusGroup>()
-  for (const g of bus?.groups ?? []) for (const a of g.attributes) groupOf.set(a.name, g)
-  const groups = new Map<string, DimensionGroup>()
-  for (const d of rankDimensions(dims)) {
-    const bg = groupOf.get(d.name)
-    const key = d.kind === 'time' ? '__time' : bg ? bg.name : (d.entity ?? '__other')
-    const label = d.kind === 'time' ? '期間' : bg ? bg.label : (d.entity ?? 'その他')
-    const group = groups.get(key) ?? { key, label, dimensions: [] }
+  const busGroups = [...(bus?.groups ?? [])].sort((a, b) => Number(b.name === 'dim_date') - Number(a.name === 'dim_date'))
+  const byAttribute = new Map<string, { group: BusGroup; label: string }>()
+  const byEntity = new Map<string, BusGroup>()
+  const bySuffix = new Map<string, { group: BusGroup; label: string }>()
+  for (const g of busGroups) {
+    for (const a of g.attributes) {
+      byAttribute.set(a.name, { group: g, label: a.label })
+      const [entity, rest] = splitDimension(a.name)
+      if (entity && !byEntity.has(entity)) byEntity.set(entity, g)
+      if (!bySuffix.has(rest)) bySuffix.set(rest, { group: g, label: a.label })
+    }
+  }
+  const order = new Map<string, number>()
+  busGroups.forEach((g, i) => order.set(g.name, i))
+  const ownEntity = (g: BusGroup) => splitDimension(g.attributes[0]?.name ?? '')[0]
+
+  const groups = new Map<string, DimensionGroup & { rank: number }>()
+  const add = (key: string, label: string, rank: number, d: DimensionInfo) => {
+    const group = groups.get(key) ?? { key, label, rank, dimensions: [] }
     group.dimensions.push(d)
     groups.set(key, group)
   }
-  const rest = [...groups.values()].filter((g) => g.key !== '__time')
-  rest.sort((a, b) => b.dimensions.length - a.dimensions.length || a.label.localeCompare(b.label, 'ja'))
-  const time = groups.get('__time')
-  return time ? [time, ...rest] : rest
+  for (const d of rankDimensions(dims)) {
+    const [entity, rest] = splitDimension(d.name)
+    const exact = byAttribute.get(d.name)
+    const sameEntity = entity ? byEntity.get(entity) : undefined
+    const sameDim = entity && !exact && !sameEntity ? bySuffix.get(rest) : undefined
+    const group = exact?.group ?? sameEntity ?? sameDim?.group
+    // 表示名が名前のまま（backend で引けなかった）なら、同じ dimension の属性の表示名を使う
+    const known = exact?.label ?? sameDim?.label
+    const label = d.label === d.name && known ? { ...d, label: known } : d
+    if (group && sameDim && entity !== ownEntity(group)) {
+      add(`${group.name}:${entity}`, `${group.label}（別の役割）`, (order.get(group.name) ?? 0) + 0.5, label)
+    } else if (group) {
+      add(group.name, group.label, order.get(group.name) ?? 0, label)
+    } else if (d.kind === 'time') {
+      add(TIME_GROUP, '期間', -1, label)
+    } else {
+      add(OTHER_GROUP, 'その他', Number.MAX_SAFE_INTEGER, label)
+    }
+  }
+  return [...groups.values()]
+    .sort((a, b) => a.rank - b.rank || a.key.localeCompare(b.key))
+    .map(({ key, label, dimensions }) => ({ key, label, dimensions }))
 }
 
-/** 指標の一覧のページ（#107） */
-export const METRICS_URL = '?metrics'
+/** 指標の一覧のページ（#107）。検索語があれば引き継ぐ */
+export function metricsUrl(query?: string): string {
+  const q = query?.trim()
+  return q ? `?metrics&${new URLSearchParams({ q }).toString()}` : '?metrics'
+}
 
-/** 検索語に合う指標（表示名・名前・説明・切り口の表示名で絞り込む） */
-export function filterMetrics(metrics: MetricInfo[], query: string): MetricInfo[] {
-  return metrics.filter((m) => matches(query, m.label, m.name, m.description, ...m.dimensions.map((d) => d.label)))
+/** 検索語に合う指標（表示名・名前・説明・切り口の表示名・切り口のまとまりの見出しで絞り込む） */
+export function filterMetrics(metrics: MetricInfo[], query: string, bus?: BusMatrix | null): MetricInfo[] {
+  return metrics.filter((m) =>
+    matches(
+      query,
+      m.label,
+      m.name,
+      m.description,
+      ...m.dimensions.map((d) => d.label),
+      ...groupDimensions(m.dimensions, bus).map((g) => g.label),
+    ),
+  )
 }

@@ -15,6 +15,14 @@ describe('App', () => {
     expect(screen.getByLabelText('見たい指標')).toBeInTheDocument()
   })
 
+  it('?metrics で指標の一覧のページを開き、q を検索語の初期値にする（#107）', async () => {
+    window.history.replaceState(null, '', '/?metrics&q=%E5%A3%B2%E4%B8%8A')
+    render(<App />)
+    expect(screen.getByRole('heading', { name: '指標の一覧' })).toBeInTheDocument()
+    expect(await screen.findByText('まだありません。要求すると作れます。')).toBeInTheDocument()
+    expect(screen.getByLabelText('指標を検索')).toHaveValue('売上')
+  })
+
   it('デモでは BEAM Canvas と Event Matrix を表示する', () => {
     window.history.replaceState(null, '', '/?demo')
     render(<App />)
