@@ -8,6 +8,7 @@ DuckDB の information_schema とデータのプロファイル、dbt の manife
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from collections.abc import Iterator
@@ -278,12 +279,15 @@ class Catalog:
                 raise ValueError(f"列が見つかりません: {schema}.{name}.{column}")
             return _profile(con, schema, name, info[column], top)
 
-    def profile_table(self, table: str, top: int = 5) -> TableProfile:
-        """テーブルの全列のプロファイルと、主キー・外部キーの候補（源泉のプロファイル画面用）。"""
+    def profile_table(self, table: str, top: int = 5, detail: bool = False) -> TableProfile:
+        """テーブルの全列のプロファイルと、主キー・外部キーの候補（源泉のプロファイル画面用）。
+
+        detail: 月ごとの件数・分布も出す（プロファイル画面だけ。#71）。
+        """
         schema, name = self._resolve(table)
         with self._connect() as con:
             columns = self._columns(con, schema, name)
-            profiles = [_profile(con, schema, name, c, top, detail=True) for c in columns]
+            profiles = [_profile(con, schema, name, c, top, detail=detail) for c in columns]
             count = profiles[0].row_count if profiles else 0
             fks = self._foreign_keys(con, schema, name, columns)
         return TableProfile(
@@ -369,14 +373,20 @@ def _profile(
     )
     if detail and total > nulls:
         kind = column.data_type.upper()
-        if kind == "DATE" or kind.startswith("TIMESTAMP"):
-            profile.monthly = _monthly(con, q, col)
-        elif kind.startswith(_NUMERIC):
-            profile.histogram = _histogram(con, q, col)
+        try:
+            if kind == "DATE" or kind.startswith("TIMESTAMP"):
+                profile.monthly = _monthly(con, q, col)
+            elif kind.startswith(_NUMERIC):
+                profile.histogram = _histogram(con, q, col)
+        except duckdb.Error:  # 図が作れなくても、プロファイル全体は返す
+            pass
     return profile
 
 
 _NUMERIC = (
+    "UTINYINT",
+    "USMALLINT",
+    "UHUGEINT",
     "TINYINT",
     "SMALLINT",
     "INTEGER",
@@ -395,7 +405,7 @@ def _monthly(con: duckdb.DuckDBPyConnection, q: str, col: str) -> list[tuple[str
     """月ごとの件数。件数の無い月（欠けている期間）も 0 で出す。"""
     rows = con.execute(
         f"with m as (select date_trunc('month', {col}) as month, count(*) as n from {q}"
-        f" where {col} is not null group by 1),"
+        f" where {col} is not null and isfinite({col}) group by 1),"
         " span as (select min(month) lo, max(month) hi from m)"
         " select strftime(g.month, '%Y-%m'), coalesce(m.n, 0)"
         " from span, generate_series(span.lo, span.hi, interval 1 month) as g(month)"
@@ -411,18 +421,23 @@ def _histogram(
     con: duckdb.DuckDBPyConnection, q: str, col: str
 ) -> list[tuple[float, float, int]] | None:
     """等幅の区間ごとの件数。"""
-    bounds = con.execute(f"select min({col})::double, max({col})::double from {q}").fetchone()
+    # NaN・±inf は数えない（区間の幅が決まらないため）
+    finite = f"{col} is not null and isfinite({col}::double)"
+    bounds = con.execute(
+        f"select min({col})::double, max({col})::double, count(*) from {q} where {finite}"
+    ).fetchone()
     if bounds is None or bounds[0] is None:
         return None
     lo, hi = float(bounds[0]), float(bounds[1])
     if lo == hi:
-        n = con.execute(f"select count({col}) from {q}").fetchone()
-        return [(lo, hi, int(n[0]) if n else 0)]
+        return [(lo, hi, int(bounds[2]))]
     width = (hi - lo) / HISTOGRAM_BINS
+    if not math.isfinite(width) or width <= 0:
+        return None
     counts = dict(
         con.execute(
             f"select least(floor(({col}::double - ?) / ?)::int, ?) b, count(*) from {q}"
-            f" where {col} is not null group by 1",
+            f" where {finite} group by 1",
             [lo, width, HISTOGRAM_BINS - 1],
         ).fetchall()
     )

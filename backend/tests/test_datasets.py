@@ -174,7 +174,7 @@ def test_source_profile_db_error_is_fixed_text(repo: Path, monkeypatch: pytest.M
     async def noop(beam, on_step):  # type: ignore[no-untyped-def]
         raise AssertionError
 
-    def broken(self, table, top=5):  # type: ignore[no-untyped-def]
+    def broken(self, table, top=5, detail=False):  # type: ignore[no-untyped-def]
         raise duckdb.BinderException("secret detail")
 
     monkeypatch.setattr(Catalog, "profile_table", broken)

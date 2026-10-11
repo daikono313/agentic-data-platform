@@ -247,7 +247,11 @@ export function Distribution({ profile: p }: { profile: ColumnProfile }) {
     const gaps = p.monthly.filter(([, n]) => n === 0).map(([m]) => m)
     return (
       <div className="w-40 space-y-0.5" data-testid={`monthly-${p.column}`}>
-        <Bars values={p.monthly.map(([m, n]) => ({ label: `${m}: ${n.toLocaleString()} 行`, n, gap: n === 0 }))} max={max} />
+        <Bars
+          values={p.monthly.map(([m, n]) => ({ label: `${m}: ${n.toLocaleString()} 行`, n, gap: n === 0 }))}
+          max={max}
+          summary={`月別の件数: ${p.monthly[0][0]} 〜 ${p.monthly[p.monthly.length - 1][0]}、最大 ${max.toLocaleString()} 行、欠け ${gaps.length} か月`}
+        />
         <p className="text-[10px] text-muted-foreground">
           {p.monthly[0][0]} 〜 {p.monthly[p.monthly.length - 1][0]}（月別）
           {gaps.length > 0 && <span className="ml-1 text-amber-600">欠け {gaps.length} か月</span>}
@@ -263,26 +267,41 @@ export function Distribution({ profile: p }: { profile: ColumnProfile }) {
         <Bars
           values={p.histogram.map(([lo, hi, n]) => ({ label: `${fmt(lo)} 〜 ${fmt(hi)}: ${n.toLocaleString()} 行`, n, gap: false }))}
           max={max}
+          summary={`分布: ${fmt(p.histogram[0][0])} 〜 ${fmt(p.histogram[p.histogram.length - 1][1])}、${p.histogram.length} 区間`}
         />
       </div>
     )
   }
+  if (isTime(p.data_type) && p.row_count > p.null_count) {
+    return <span className="text-[10px] text-muted-foreground">期間が長いため月別は省略</span>
+  }
   return <span className="text-muted-foreground">-</span>
 }
+
+const isTime = (t: string) => /^(DATE|TIMESTAMP)/i.test(t)
 
 function fmt(v: number): string {
   return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
-function Bars({ values, max }: { values: { label: string; n: number; gap: boolean }[]; max: number }) {
+function Bars({
+  values,
+  max,
+  summary,
+}: {
+  values: { label: string; n: number; gap: boolean }[]
+  max: number
+  summary: string
+}) {
   return (
-    <div className="flex h-8 items-end gap-px" role="img" aria-label={values.map((v) => v.label).join('、')}>
+    <div className="flex h-8 items-end gap-px" role="img" aria-label={summary}>
       {values.map((v, i) => (
         <span
           key={i}
           title={v.label}
-          className={v.gap ? 'h-full flex-1 bg-amber-500/40' : 'flex-1 bg-primary/70'}
-          style={v.gap ? undefined : { height: `${max ? Math.max(4, (v.n / max) * 100) : 0}%` }}
+          // 欠けた月は下に短い印（山と見間違えないよう）、件数 0 の区間は高さ 0
+          className={v.gap ? 'h-1 flex-1 bg-amber-500' : 'flex-1 bg-primary/70'}
+          style={v.gap ? undefined : { height: `${max && v.n ? Math.max(4, (v.n / max) * 100) : 0}%` }}
         />
       ))}
     </div>
@@ -293,7 +312,9 @@ const MANAGEMENT = new Set(['updated_at', 'loaded_at', 'created_at'])
 
 /** データの鮮度: 業務の日時の列のうち、いちばん新しい値（#71） */
 function Freshness({ profile }: { profile: SourceProfile }) {
-  const times = profile.profiles.filter((p) => p.monthly && p.max)
+  // 日付・日時の型の列（月別が省略された長い期間の列も含む）。未来の日時（予定・期限など）は除く
+  const now = new Date().toISOString().replace('T', ' ')
+  const times = profile.profiles.filter((p) => isTime(p.data_type) && p.max && p.max <= now)
   const business = times.filter((p) => !MANAGEMENT.has(p.column))
   const pick = (business.length ? business : times).reduce<ColumnProfile | null>(
     (a, b) => (a && (a.max ?? '') >= (b.max ?? '') ? a : b),

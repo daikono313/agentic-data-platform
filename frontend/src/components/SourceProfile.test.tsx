@@ -153,13 +153,29 @@ describe('SourceProfileScreen', () => {
     render(<SourceProfileScreen table="raw.returns" />)
     const monthly = await screen.findByTestId('monthly-returned_at')
     expect(monthly).toHaveTextContent('欠け 1 か月')
-    expect(within(monthly).getByRole('img')).toHaveAttribute('aria-label', expect.stringContaining('2025-02: 0 行'))
+    expect(within(monthly).getByRole('img')).toHaveAttribute('aria-label', expect.stringContaining('欠け 1 か月'))
+    expect(within(monthly).getByTitle('2025-02: 0 行')).toBeInTheDocument()
     expect(screen.getByTestId('histogram-quantity')).toBeInTheDocument()
     // 管理用の更新日時ではなく、業務の日時の最新を出す
     expect(screen.getByTestId('freshness')).toHaveTextContent('returned_at')
     expect(screen.getByTestId('freshness')).toHaveTextContent('2025-03-10 10:00:00')
     const link = screen.getByRole('link', { name: '返品理由別の返品の返品数量を見たい' })
     expect(link).toHaveAttribute('href', '/?request=' + encodeURIComponent('返品理由別の返品の返品数量を見たい').replace(/%20/g, '+'))
+  })
+
+  it('鮮度は型で日時の列を選び、月別が省略された長い期間の列も、未来の日時は除く', async () => {
+    vi.spyOn(api, 'sourceProfile').mockResolvedValue({
+      ...profile,
+      profiles: [
+        col('ordered_at', { data_type: 'TIMESTAMP', is_unique: false, max: '2025-06-01 00:00:00', monthly: null }),
+        col('expires_at', { data_type: 'TIMESTAMP', is_unique: false, max: '2999-01-01 00:00:00', monthly: null }),
+      ],
+    })
+    render(<SourceProfileScreen table="raw.returns" />)
+    const fresh = await screen.findByTestId('freshness')
+    expect(fresh).toHaveTextContent('ordered_at')
+    expect(fresh).toHaveTextContent('2025-06-01 00:00:00')
+    expect(screen.getByTestId('column-ordered_at')).toHaveTextContent('期間が長いため月別は省略')
   })
 
   it('取得に失敗したらエラーを表示する', async () => {
