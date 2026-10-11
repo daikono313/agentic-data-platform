@@ -182,3 +182,22 @@ def test_untrusted_host_is_rejected(setup) -> None:  # type: ignore[no-untyped-d
     client, *_ = setup
     assert client.get("/health", headers={"host": "evil.example"}).status_code == 400
     assert client.get("/health", headers={"host": "localhost:8000"}).status_code == 200
+
+
+def test_unreadable_stored_session_is_404_not_500(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """今の形式で読めない（検証が厳しくなる前に保存した）セッションは 500 にしない。"""
+    from sqlmodel import Session
+
+    from adp.api.store import SessionRow
+
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    store = Store(tmp_path / "app.db")
+    with Session(store.engine) as db:
+        db.add(SessionRow(id="old", state_json='{"beam": {"name": 1}}'))
+        db.commit()
+    interviewer = Interviewer(None, LLMSettings())  # type: ignore[arg-type]
+    client = TestClient(create_app(SessionService(store, interviewer, pipeline)))
+    res = client.get("/sessions/old")
+    assert res.status_code == 404 and "今の形式で読めません" in res.text

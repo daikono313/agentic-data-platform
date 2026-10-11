@@ -166,6 +166,11 @@ def test_pr_body_shows_charts() -> None:
     assert (
         "![チャート](https://github.com/o/r/blob/abc/pr_assets/sales_by_store.png?raw=true)" in body
     )
+    partial = ChartPreview(
+        "warehouse/chart_specs/x.yml", [("売上金額", "line")], omitted=["壊れた指標"]
+    )
+    body = pr_body(beam, design, [], Verification(True), chart=partial)
+    assert "売上金額（折れ線）" in body and "描けなかったため除いた指標: 壊れた指標" in body
     failed = ChartPreview("warehouse/chart_specs/x.yml", error="描画できませんでした")
     body = pr_body(beam, design, [], Verification(True), chart=failed)
     assert "❌ チャートを作れませんでした: 描画できませんでした" in body and "![" not in body

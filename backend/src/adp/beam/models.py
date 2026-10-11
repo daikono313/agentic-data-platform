@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -144,6 +144,122 @@ def _check_row_expr(expr: str) -> None:
     forbidden = (exp.Query, exp.Subquery, exp.Table, exp.AggFunc, exp.Window, exp.Star)
     if any(tree.find_all(*forbidden)) or any(c.table for c in tree.find_all(exp.Column)):
         raise ValueError(hint)
+    # 関数は許可したものだけ（ファイルの読み込み・設定や環境の読み出しなどを書かせない。#79）。
+    # 名前は DuckDB の SQL での名前で比べる（sqlglot の内部の型の名前は版で変わりうる）。
+    # AND / OR・比較・JSON の矢印などの演算子は sqlglot では関数の型だが、関数ではないので見ない
+    unknown = sorted(
+        {
+            name
+            for f in tree.find_all(exp.Func)
+            if not isinstance(f, (exp.Binary, exp.Predicate))
+            and (name := _func_name(f)) not in ALLOWED_FUNCTIONS
+        }
+    )
+    if unknown:
+        raise ValueError(
+            f"expr に使えない関数があります: {', '.join(unknown)}"
+            "（四則演算・CASE・COALESCE・CAST・日付・文字列・数値の基本的な関数だけ使えます）"
+        )
+
+
+def _func_name(f: Any) -> str:
+    from sqlglot import exp
+
+    if isinstance(f, exp.Anonymous):
+        return str(f.name).lower()
+    m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", f.sql(dialect="duckdb"))
+    return m.group(0).lower() if m else type(f).__name__.lower()
+
+
+ALLOWED_FUNCTIONS = frozenset(
+    {
+        # 条件・NULL・型
+        "case",
+        "if",
+        "iff",
+        "coalesce",
+        "nullif",
+        "ifnull",
+        "cast",
+        "try_cast",
+        # 数値
+        "abs",
+        "round",
+        "floor",
+        "ceil",
+        "ceiling",
+        "trunc",
+        "greatest",
+        "least",
+        "sqrt",
+        "pow",
+        "power",
+        "ln",
+        "log",
+        "log10",
+        "log2",
+        "exp",
+        "sign",
+        # 日付・日時
+        "date_trunc",
+        "time_bucket",
+        "extract",
+        "date_part",
+        "datepart",
+        "date_diff",
+        "datediff",
+        "date_add",
+        "date_sub",
+        "year",
+        "month",
+        "day",
+        "quarter",
+        "week",
+        "weekofyear",
+        "dayofweek",
+        "dayofmonth",
+        "dayofyear",
+        "isodow",
+        "hour",
+        "minute",
+        "second",
+        "last_day",
+        "make_date",
+        "dayname",
+        "monthname",
+        "epoch",
+        "strftime",
+        "strptime",
+        # 文字列
+        "lower",
+        "upper",
+        "trim",
+        "ltrim",
+        "rtrim",
+        "length",
+        "substring",
+        "substr",
+        "concat",
+        "concat_ws",
+        "left",
+        "right",
+        "replace",
+        "split_part",
+        "strpos",
+        "instr",
+        "position",
+        "lpad",
+        "rpad",
+        "contains",
+        "starts_with",
+        "ends_with",
+        "reverse",
+        "regexp_matches",
+        "regexp_replace",
+        "regexp_extract",
+    }
+)
+"""expr で使える関数（DuckDB の名前）。名前の分からない関数・ファイルや設定を読む関数は不可。"""
 
 
 class Measure(_Base):

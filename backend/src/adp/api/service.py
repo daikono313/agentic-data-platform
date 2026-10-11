@@ -132,7 +132,13 @@ class SessionService:
 
     def _state(self, session_id: str) -> InterviewState:
         if session_id not in self._states:
-            state = self.store.load_session(session_id)
+            try:
+                state = self.store.load_session(session_id)
+            except ValidationError as e:  # 検証が厳しくなる前に保存した成果物など（500 にしない）
+                raise NotFound(
+                    f"セッション {session_id} は今の形式で読めません（成果物の検証に通りません）。"
+                    "新しく要求を始めてください"
+                ) from e
             if state is None:
                 raise NotFound(f"セッション {session_id} がありません")
             self._states[session_id] = state
