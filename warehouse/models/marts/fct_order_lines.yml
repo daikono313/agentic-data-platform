@@ -19,6 +19,20 @@ models:
     agg: sum
     expr: sales_amount
     filter: '{{ Dimension(''order_line__order_status'') }} <> ''cancelled'''
+  - name: sales_amount_by_product
+    label: 商品別売上金額
+    description: 商品別の売上金額（税抜・値引後、キャンセルと返品を除く）はいくらか？
+    type: simple
+    agg: sum
+    expr: sales_amount
+    filter: '{{ Dimension(''order_line__order_status'') }} not in (''cancelled'', ''returned'')'
+  - name: quantity_by_product
+    label: 商品別販売数量
+    description: 商品別の販売数量（キャンセルと返品を除く）は何個か？
+    type: simple
+    agg: sum
+    expr: quantity
+    filter: '{{ Dimension(''order_line__order_status'') }} not in (''cancelled'', ''returned'')'
   columns:
   - name: order_item_id
     description: 注文明細ID（縮退ディメンション）
@@ -98,8 +112,14 @@ models:
           - returned
         config:
           severity: warn
+  - name: payment_method
+    description: 支払方法（マスタなし）
+    dimension:
+      type: categorical
   - name: sales_amount
     description: 売上金額(税抜)（円）
+  - name: quantity
+    description: 販売数量（個）
 unit_tests:
 - name: test_fct_order_lines_example_1
   description: BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する
