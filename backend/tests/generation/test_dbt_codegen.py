@@ -137,8 +137,13 @@ def test_new_dimension_and_staging_are_generated(tmp_path: Path) -> None:
     """既存モデルが無い場合は staging と dim も生成し、build が通る。"""
     warehouse = _warehouse_copy(tmp_path)
     for name in ("dim_store", "stg_stores"):
-        for p in (warehouse / "models").rglob(f"{name}.sql"):
+        for p in [
+            *(warehouse / "models").rglob(f"{name}.sql"),
+            *(warehouse / "models").rglob(f"{name}.yml"),
+        ]:
             p.unlink()
+    # クレンジングの定義も無い状態から（既定の定義を一緒に生成する。#68）
+    (warehouse / "cleansing" / "raw.stores.yml").unlink()
     for yml in (warehouse / "models").rglob("_*.yml"):
         text = yml.read_text(encoding="utf-8")
         for name in ("dim_store", "stg_stores"):
@@ -153,6 +158,9 @@ def test_new_dimension_and_staging_are_generated(tmp_path: Path) -> None:
     generation = generate_models(design, info)
     paths = [f.path for f in generation.files]
     assert "models/staging/stg_stores.sql" in paths and "models/marts/dim_store.sql" in paths
+    assert "cleansing/raw.stores.yml" in paths
+    stg = next(f.content for f in generation.files if f.path.endswith("stg_stores.sql"))
+    assert stg.startswith("-- adp.cleansing により生成") and "nullif(trim(store_name), '')" in stg
     dim_sql = next(f.content for f in generation.files if f.path.endswith("dim_store.sql"))
     assert "'不明'" in dim_sql and "{{ unknown_key() }}" in dim_sql
     info.write(generation.files)

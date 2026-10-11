@@ -29,7 +29,8 @@ PROTECTED_FILES = {
     "dbt_charts.yml",
 }
 # チャートは生成後に adp.charts が書き出す。エージェントには書かせない（手書きの SQL を入れない）
-PROTECTED_DIRS = {"charts", "chart_specs"}
+# クレンジングの定義も同様（定義から adp.cleansing がクレンジング層を生成する。#68）
+PROTECTED_DIRS = {"charts", "chart_specs", "cleansing"}
 _DBT = {"parse", "build", "compile", "test", "ls", "list"}
 _MF = {"validate-configs", "query", "list"}
 # 値を取るオプション（値にパスを渡せないものだけ）
@@ -52,6 +53,17 @@ def allowed_patterns() -> list[str]:
         for tool, subs in (("dbt", _DBT), ("mf", _MF))
         for sub in sorted(subs)
     ]
+
+
+def _is_cleansing_output(target: Path) -> bool:
+    """adp.cleansing が定義から生成したファイル（先頭行に印がある）。"""
+    from adp.cleansing.render import GENERATED
+
+    try:
+        with target.open(encoding="utf-8") as f:
+            return GENERATED in f.readline()
+    except OSError:
+        return False
 
 
 class WorkspaceGuard:
@@ -111,7 +123,12 @@ class WorkspaceGuard:
                     f"{target.name} は書き換えられません（書けるのは SQL / YAML / Markdown だけ）"
                 )
             if PROTECTED_DIRS & {p.lower() for p in target.relative_to(self.root).parts[:1]}:
-                return "チャート（charts/ と chart_specs/）は書き換えられません"
+                return (
+                    "チャート（charts/ と chart_specs/）と"
+                    "クレンジングの定義（cleansing/）は書き換えられません"
+                )
+            if _is_cleansing_output(target):
+                return "クレンジング層（stg）は定義から生成します。直接は書き換えられません"
             if _SECRET_ACCESS.search(self._resulting_content(tool, target, data)):
                 return "env_var や run_query を含む内容は書けません"
         return None

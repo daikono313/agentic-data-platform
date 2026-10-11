@@ -2,7 +2,7 @@ import { ArrowLeft, KeyRound, Link2, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { api } from '@/api/client'
-import { errorText, type ColumnProfile, type SourceProfile } from '@/api/datasets'
+import { errorText, type CleansingView, type ColumnProfile, type SourceProfile } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -41,6 +41,7 @@ export function SourceProfileScreen({ table }: { table: string }) {
         </p>
       )}
       {profile && <ProfileBody profile={profile} />}
+      {profile && <CleansingCard table={table} />}
     </main>
   )
 }
@@ -170,5 +171,63 @@ function ColumnRow({
         )}
       </TableCell>
     </TableRow>
+  )
+}
+
+/** クレンジングの定義（#68）。今の定義か、プロファイルから作った雛形を出す */
+function CleansingCard({ table }: { table: string }) {
+  const [view, setView] = useState<CleansingView | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showDraft, setShowDraft] = useState(false)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    api
+      .sourceCleansing(table)
+      .then(setView)
+      .catch((e) => setError(errorText(e)))
+  }, [table])
+  if (error) return <p className="text-xs text-destructive">クレンジングの定義を取得できませんでした: {error}</p>
+  if (!view) return null
+  const text = view.existing && !showDraft ? view.existing : view.draft
+  const copy = () => {
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => setCopied(true))
+      .catch(() => setCopied(false))
+  }
+  return (
+    <Card className="gap-2 py-3" aria-label="クレンジングの定義">
+      <CardHeader className="px-4">
+        <CardTitle className="text-sm">クレンジングの定義</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          {view.existing ? (
+            <>
+              <code className="font-mono">{view.path}</code> から、クレンジング層（stg）を生成しています。
+            </>
+          ) : (
+            <>
+              まだ定義がありません。下の雛形（プロファイルから作成）を確認して{' '}
+              <code className="font-mono">{view.path}</code> に置き、<code className="font-mono">make cleansing</code>{' '}
+              を実行すると、クレンジング層（stg）ができます。
+            </>
+          )}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2 px-4">
+        <div className="flex gap-2 text-xs">
+          {view.existing && (
+            <button type="button" className="underline" onClick={() => setShowDraft((d) => !d)}>
+              {showDraft ? '今の定義を見る' : 'プロファイルからの雛形を見る'}
+            </button>
+          )}
+          <button type="button" className="underline" onClick={copy}>
+            {copied ? 'コピーしました' : 'コピー'}
+          </button>
+        </div>
+        <pre className="max-h-96 overflow-auto rounded bg-muted p-3 font-mono text-xs" data-testid="cleansing-yaml">
+          {text}
+        </pre>
+      </CardContent>
+    </Card>
   )
 }

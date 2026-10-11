@@ -67,6 +67,20 @@ def create_app(
         except ValueError as e:  # yml の形式の誤り（pydantic の ValidationError を含む）
             raise HTTPException(422, f"ontology.yml の形式が正しくありません: {e}") from e
 
+    @app.get("/sources/{table}/cleansing")
+    def source_cleansing(table: str) -> dict[str, Any]:
+        """源泉のクレンジングの定義と、プロファイルから作った雛形（#68）。"""
+        if datasets is None:
+            raise HTTPException(503, "データ一覧は利用できません")
+        try:
+            return datasets.cleansing(table).model_dump(mode="json")
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        except CatalogUnavailable as e:
+            raise HTTPException(503, str(e)) from e
+        except duckdb.Error as e:  # DB の例外の本文は返さない（guardrails §3）
+            raise HTTPException(503, "雛形を作れませんでした") from e
+
     @app.get("/sources/{table}/profile")
     def source_profile(table: str) -> dict[str, Any]:
         """源泉 1 つのデータプロファイル（列ごとの統計・キーの候補・使っているモデル。#62）。"""

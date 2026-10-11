@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.order_items.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_order_items
+  description: 注文明細（raw.order_items を整形）
+  columns:
+  - name: order_item_id
+    data_tests:
+    - unique
+    - not_null

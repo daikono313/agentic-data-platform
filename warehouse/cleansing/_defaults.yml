@@ -1,0 +1,4 @@
+# クレンジングの既定（型ごと）。各源泉の定義（<schema>.<table>.yml）の列ごとの指定で上書きできる。#68
+text:            # VARCHAR の列
+  trim: true             # 前後の空白を除く
+  empty_to_null: true    # 空文字を NULL にする

@@ -1,0 +1,3 @@
+source: raw.products
+description: 商品（raw.products を整形）
+key: product_id

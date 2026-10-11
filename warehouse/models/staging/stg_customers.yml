@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.customers.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_customers
+  description: 顧客（raw.customers を整形）
+  columns:
+  - name: customer_id
+    data_tests:
+    - unique
+    - not_null

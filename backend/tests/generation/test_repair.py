@@ -203,3 +203,26 @@ def test_decimal_measures_are_yaml_safe() -> None:
 
     value = _evaluate("a * 2", {"a": "300.50"}, {"a": "DECIMAL(10,2)"})
     assert value == 601 and isinstance(value, int)
+
+
+def test_guard_protects_cleansing(tmp_path: Path) -> None:
+    """クレンジングの定義と、定義から生成したクレンジング層は、エージェントが書き換えられない（#68）。"""
+    guard = WorkspaceGuard(tmp_path)
+    (tmp_path / "models" / "staging").mkdir(parents=True)
+    (tmp_path / "models" / "staging" / "stg_x.sql").write_text(
+        "-- adp.cleansing により生成（warehouse/cleansing/raw.x.yml）\nselect 1\n"
+    )
+    (tmp_path / "models" / "staging" / "stg_hand.sql").write_text("select 1\n")
+    for path in ("cleansing/raw.x.yml", "Cleansing/_defaults.yml", "models/staging/stg_x.sql"):
+        assert guard("Write", {"file_path": path, "content": "x: 1"}) is not None, path
+    assert (
+        guard(
+            "Edit", {"file_path": "models/staging/stg_x.sql", "old_string": "1", "new_string": "2"}
+        )
+        is not None
+    )
+    # 手書きの stg は従来どおり
+    assert (
+        guard("Edit", {"file_path": "models/staging/stg_hand.sql", "new_string": "select 2"})
+        is None
+    )

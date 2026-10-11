@@ -1,0 +1,9 @@
+source: raw.orders
+description: 注文ヘッダ（raw.orders を整形）
+key: order_id
+columns:
+  - name: ordered_at
+    derive:
+      - {name: ordered_on, as: date, description: 注文日}
+  - name: order_status
+    accepted_values: [completed, cancelled, returned]

@@ -1,5 +1,5 @@
-import { render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/api/client'
 import type { SourceProfile } from '@/api/datasets'
@@ -47,12 +47,22 @@ const profile: SourceProfile = {
   used_by: ['fct_returns'],
 }
 
+beforeEach(() => {
+  vi.spyOn(api, 'sourceCleansing').mockResolvedValue({ path: 'warehouse/cleansing/x.yml', existing: null, draft: 'source: x\n' })
+})
 afterEach(() => vi.restoreAllMocks())
 
 describe('SourceProfileScreen', () => {
   it('列ごとの統計・キーの候補・使っているモデルを表示する', async () => {
     vi.spyOn(api, 'sourceProfile').mockResolvedValue(profile)
+    vi.spyOn(api, 'sourceCleansing').mockResolvedValue({
+      path: 'warehouse/cleansing/raw.returns.yml',
+      existing: null,
+      draft: 'source: raw.returns\nkey: return_id\n',
+    })
     render(<SourceProfileScreen table="raw.returns" />)
+    expect(await screen.findByTestId('cleansing-yaml')).toHaveTextContent('key: return_id')
+    expect(screen.getByText(/まだ定義がありません/)).toBeInTheDocument()
     const reason = await screen.findByTestId('column-return_reason')
     expect(api.sourceProfile).toHaveBeenCalledWith('raw.returns')
     expect(screen.getByRole('heading', { name: '返品' })).toBeInTheDocument()
@@ -63,6 +73,19 @@ describe('SourceProfileScreen', () => {
     expect(screen.getByTestId('column-return_id')).toHaveTextContent('すべて異なる値')
     expect(screen.getByTestId('column-order_id')).toHaveTextContent('→ raw.orders.order_id')
     expect(screen.getByText('fct_returns')).toBeInTheDocument()
+  })
+
+  it('定義があれば今の定義を出し、雛形に切り替えられる', async () => {
+    vi.spyOn(api, 'sourceProfile').mockResolvedValue(profile)
+    vi.spyOn(api, 'sourceCleansing').mockResolvedValue({
+      path: 'warehouse/cleansing/raw.returns.yml',
+      existing: 'source: raw.returns\ndescription: 今の定義\n',
+      draft: 'source: raw.returns\ndescription: 雛形\n',
+    })
+    render(<SourceProfileScreen table="raw.returns" />)
+    expect(await screen.findByTestId('cleansing-yaml')).toHaveTextContent('今の定義')
+    fireEvent.click(screen.getByRole('button', { name: 'プロファイルからの雛形を見る' }))
+    expect(screen.getByTestId('cleansing-yaml')).toHaveTextContent('雛形')
   })
 
   it('NULL だけの列・NULL 以外がすべて違う列・ほぼすべて違う列では上位の値を出さない', async () => {

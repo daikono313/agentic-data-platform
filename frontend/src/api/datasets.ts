@@ -86,6 +86,13 @@ export interface OntologyView {
   errors: string[]
 }
 
+/** GET /sources/{table}/cleansing の型（#68） */
+export interface CleansingView {
+  path: string
+  existing: string | null
+  draft: string
+}
+
 export function sourceUrl(table: string): string {
   return `?${new URLSearchParams({ source: table }).toString()}`
 }
