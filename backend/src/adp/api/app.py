@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
 from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
 from adp.onboarding.proposal import OntologyPatch
-from adp.sync import AutoSync, Sync
+from adp.sync import INTERVIEW_IDLE_S, AutoSync, Sync, auto_interval
 from adp.warehouse import warehouse_db, warehouse_kind
 
 
@@ -67,6 +67,8 @@ def create_app(
         finally:
             if task:
                 task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     app = FastAPI(title="ADP", lifespan=lifespan)
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
@@ -368,9 +370,12 @@ def build_default_app() -> FastAPI:
         pr_state=pipeline.github.pr_state,
         sync=sync.run,
     )
-    from adp.sync import auto_interval
-
-    auto = AutoSync(sync, service.start_sync, auto_interval(env))
+    auto = AutoSync(
+        sync,
+        service.start_sync,
+        auto_interval(env),
+        blocked=lambda: service.interview_activity(INTERVIEW_IDLE_S),
+    )
     return create_app(
         service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding, sync, auto
     )

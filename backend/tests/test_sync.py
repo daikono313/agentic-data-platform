@@ -201,9 +201,9 @@ def test_auto_sync_starts_only_when_it_can_pull(tmp_path: Path) -> None:
 
 
 def test_merged_fact_appears_in_the_bus_matrix_automatically(tmp_path: Path) -> None:
-    """生成 PR を main にマージすると、開いている画面の一覧（バスマトリクス）に fact が出る（#106）。
+    """生成 PR を main にマージすると、開いている画面の一覧（バスマトリクス）に fact が出る。
 
-    origin で生成した fct を main に足し、アプリの自動反映が取り込んで dbt build するまで待つ。
+    #106: origin で生成した fct を main に足し、自動反映が取り込んで dbt build するまで待つ。
     """
     import shutil
     import time
@@ -280,13 +280,118 @@ def test_merged_fact_appears_in_the_bus_matrix_automatically(tmp_path: Path) -> 
     with TestClient(app) as client:
         before = {r["name"] for r in client.get("/datasets").json()["bus"]["rows"]}
         assert "fct_order_lines" not in before
-        deadline = time.monotonic() + 600
+        started = time.monotonic()
+        deadline = started + 180
         while time.monotonic() < deadline:
-            job = client.get("/sync").json()["job"]
+            view = client.get("/sync").json()
+            job = view["job"]
             if job and job["status"] != "running":
                 break
+            # 反映が始まらないなら長く待たない（取り込めない理由を出して止める）
+            assert job or time.monotonic() - started < 60, view["auto"]["last_note"]
             time.sleep(1)
         assert job and job["status"] == "succeeded", job
         after = {r["name"] for r in client.get("/datasets").json()["bus"]["rows"]}
         assert "fct_order_lines" in after
     shutil.rmtree(other)
+
+
+async def test_run_merges_only_the_commit_it_checked(tmp_path: Path) -> None:
+    """確かめた後に別の fetch で origin/main が進んでも、確かめたコミットまでにする（#106）。"""
+    work, remote = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    checked = sync.status()
+    assert checked.behind == 1 and checked.can_pull and checked.target
+
+    # 確かめた直後に、アプリのコードを含むコミットが main に入り、別の確認が fetch した
+    other = tmp_path / "other"
+    (other / "backend" / "app.py").parent.mkdir(exist_ok=True)
+    (other / "backend" / "app.py").write_text("x")
+    git(other, "add", ".")
+    git(other, "commit", "-m", "app change")
+    git(other, "push", "origin", "main")
+    git(work, "fetch", "-q", "origin", "main")
+    sync.status = lambda fetch=True: checked  # type: ignore[method-assign]
+
+    result = await sync.run()
+    assert result.ok, result.error
+    assert git(work, "rev-parse", "HEAD").strip() == checked.target
+    assert not (work / "backend" / "app.py").exists()
+
+
+def test_concurrent_status_calls_fetch_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /sync・自動反映の確認・反映ジョブが同時に状態を見ても、fetch は 1 回だけ（#106）。"""
+    import threading
+    import time
+
+    work, _ = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    calls: list[int] = []
+
+    def slow_fetch() -> None:
+        calls.append(1)
+        time.sleep(0.2)
+        sync._cache.fetched_at = time.monotonic()
+
+    monkeypatch.setattr(sync, "_fetch", slow_fetch)
+    threads = [threading.Thread(target=sync.status) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert calls == [1]
+
+
+def test_auto_sync_waits_while_an_interview_is_in_progress(tmp_path: Path) -> None:
+    """インタビューの途中は自動で反映を始めず、理由を残す（#106）。
+
+    dbt build の間はカタログを読めず、インタビューの tool が失敗するため。
+    """
+    from adp.api.service import SessionService
+    from adp.api.store import Store
+    from adp.interview import Interviewer
+    from adp.llm import LLMSettings
+    from adp.sync import AutoSync
+
+    work, _ = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    service = SessionService(
+        Store(tmp_path / "app.db"),
+        Interviewer(None, LLMSettings()),  # type: ignore[arg-type]
+        pipeline,
+    )
+    assert service.interview_activity(300) is None
+    service.create("店舗別の売上を見たい")
+    reason = service.interview_activity(300)
+    assert reason and "インタビューの途中" in reason
+    assert service.interview_activity(0) is None  # 操作から時間が経てば始めてよい
+
+    started: list[int] = []
+    auto = AutoSync(
+        sync,
+        lambda: started.append(1),
+        interval_s=1,
+        blocked=lambda: service.interview_activity(300),
+    )
+    assert not auto.tick() and started == []
+    assert "インタビューの途中" in (auto.state.last_note or "")
+    auto.blocked = lambda: None
+    assert auto.tick() and started == [1]
+
+
+def test_auto_sync_records_fetch_error(tmp_path: Path) -> None:
+    """origin の最新を取れなかったことも、自動反映の状態に残す（#106）。"""
+    from adp.sync import AutoSync
+
+    work, _ = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    auto = AutoSync(sync, lambda: None, interval_s=1)
+    status = sync.status(fetch=False).model_copy(update={"behind": 0, "fetch_error": "timeout"})
+    assert not auto.tick(status)
+    assert "origin の最新を取れませんでした: timeout" in (auto.state.last_note or "")
