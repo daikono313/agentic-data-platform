@@ -33,6 +33,35 @@ describe('App', () => {
   })
 })
 
+describe('App の開始画面（似た指標）', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('要求を入力すると、似た既にある指標のチャートへのリンクを出す（#75）', async () => {
+    const body = {
+      metrics: [
+        {
+          name: 'sales',
+          label: '売上金額',
+          description: '店舗別の売上金額',
+          type: 'simple',
+          model: 'fct_order_lines',
+          beam: null,
+          dimensions: [],
+        },
+      ],
+      models: [],
+      beams: [],
+      errors: [],
+      sources: [],
+    }
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify(body)))))
+    render(<App />)
+    const input = screen.getByLabelText('見たい指標')
+    fireEvent.change(input, { target: { value: '店舗ごとの売上を見たい' } })
+    expect(await screen.findByRole('link', { name: '売上金額をチャートで見る' })).toHaveAttribute('href', '?chart=sales')
+  })
+})
+
 describe('App の開始画面', () => {
   it('要求の例をクリックすると入力欄に入る', async () => {
     const body = {

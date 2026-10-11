@@ -213,3 +213,34 @@ export function matches(query: string, ...texts: string[]): boolean {
   const q = query.trim().toLowerCase()
   return !q || texts.some((t) => t.toLowerCase().includes(q))
 }
+
+const STOP = /(を|の|が|は|に|で|と|ごと|別|見たい|知りたい|みたい|したい|ほしい|欲しい|毎|[、。\s「」（）()])/g
+
+function bigrams(text: string): Set<string> {
+  const t = text.replace(STOP, ' ')
+  const out = new Set<string>()
+  for (const word of t.split(' ')) {
+    for (let i = 0; i < word.length - 1; i++) out.add(word.slice(i, i + 2))
+    if (word.length === 1) out.add(word)
+  }
+  return out
+}
+
+/**
+ * 要求の文に似た既にある指標（#75）。要求の 2 文字の並びのうち、指標の表示名・説明・切り口に
+ * 含まれる割合で並べる。同じ指標を作り直さず、チャートで見られることを知らせるため。
+ */
+export function similarMetrics(request: string, metrics: MetricInfo[], limit = 3, threshold = 0.4): MetricInfo[] {
+  const want = bigrams(request)
+  if (want.size < 2) return []
+  return metrics
+    .map((m) => {
+      const have = bigrams([m.label, m.description, ...m.dimensions.map((d) => d.label)].join(' '))
+      const hit = [...want].filter((b) => have.has(b)).length
+      return { m, score: hit / want.size }
+    })
+    .filter((x) => x.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.m)
+}

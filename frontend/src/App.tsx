@@ -3,7 +3,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import { errorText, exampleRequests, type Datasets } from '@/api/datasets'
+import { errorText, exampleRequests, similarMetrics, type Datasets } from '@/api/datasets'
+import { chartUrl } from '@/api/charts'
 import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
 import { ChartScreen } from '@/components/ChartScreen'
@@ -390,6 +391,8 @@ function StartScreen({
   })
   const input = useRef<HTMLInputElement>(null)
   const examples = datasets ? exampleRequests(datasets.sources) : []
+  // 似た指標が既にあれば知らせる（同じ指標を作り直さない。#75）
+  const similar = datasets && request.trim().length >= 4 ? similarMetrics(request, datasets.metrics) : []
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
       <section className="space-y-3" aria-label="要求の入力">
@@ -443,6 +446,20 @@ function StartScreen({
             デモを見る
           </a>
         </p>
+        {similar.length > 0 && (
+          <div className="rounded-md border border-sky-500/50 p-2 text-xs" aria-label="似ている既にある指標">
+            <p className="text-muted-foreground">既にある指標で見られるかもしれません:</p>
+            <ul className="mt-1 flex flex-wrap gap-2">
+              {similar.map((m) => (
+                <li key={m.name}>
+                  <a href={chartUrl(m.name)} className="text-primary underline">
+                    {m.label}をチャートで見る
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {error && <p className="text-sm text-destructive">{error}</p>}
       </section>
       <DatasetsPanel

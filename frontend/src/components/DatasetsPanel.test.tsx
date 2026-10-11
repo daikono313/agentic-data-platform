@@ -206,3 +206,16 @@ describe('errorText', () => {
     expect(errorText(new Error('{"detail":"データ一覧は利用できません"}'))).toBe('データ一覧は利用できません')
   })
 })
+
+describe('similarMetrics', () => {
+  it('要求の文に似た既にある指標を出す（#75）', async () => {
+    const { similarMetrics } = await import('@/api/datasets')
+    const metrics = [
+      { ...datasets.metrics[0], name: 'sales', label: '売上金額(税抜)', description: '店舗別の売上金額', dimensions: [] },
+      { ...datasets.metrics[0], name: 'returns', label: '返品数量', description: '返品された数量', dimensions: [] },
+    ]
+    expect(similarMetrics('店舗ごとの売上を見たい', metrics).map((m) => m.name)).toEqual(['sales'])
+    expect(similarMetrics('顧客の年齢層別の会員数を知りたい', metrics)).toEqual([])
+    expect(similarMetrics('売', metrics)).toEqual([])
+  })
+})
