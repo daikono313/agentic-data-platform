@@ -3,6 +3,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -225,3 +226,65 @@ def test_bus_matrix_from_manifest() -> None:
     assert [(g.name, g.label) for g in bus.groups] == [("dim_a", "A"), ("dim_b", "dim_b")]
     assert bus.groups[0].attributes[0].label == "属性X"
     assert [(r.name, r.label, r.groups) for r in bus.rows] == [("fct_f", "出来事", ["dim_a"])]
+
+
+def test_bus_matrix_join_rules() -> None:
+    """unique entity・1 段の snowflake・同じ entity の dim 2 つ・primary の無い fct（#62）。"""
+    index = DatasetIndex(Path("."), None)
+
+    def dim(name: str, *ents: tuple[str, str]) -> dict[str, Any]:
+        return {
+            "name": name,
+            "entities": [{"name": n, "type": t} for n, t in ents],
+            "dimensions": [{"name": "attr", "type": "categorical"}],
+        }
+
+    manifest = {
+        "semantic_models": [
+            dim("dim_product", ("product", "primary"), ("category", "foreign")),
+            dim("dim_category", ("category", "primary")),
+            dim("dim_customer", ("customer", "primary")),
+            dim("dim_customer_scd", ("customer", "primary")),
+            dim("dim_sku", ("sku_row", "primary"), ("sku", "unique")),
+            dim("dim_unrelated", ("x", "primary")),
+            {
+                "name": "fct_sales",
+                "entities": [
+                    {"name": "sale", "type": "primary"},
+                    {"name": "product", "type": "foreign"},
+                    {"name": "customer", "type": "foreign"},
+                    {"name": "sku", "type": "foreign"},
+                ],
+                "dimensions": [{"name": "status", "type": "categorical"}],
+            },
+            {
+                "name": "fct_noprimary",
+                "entities": [{"name": "customer", "type": "foreign"}],
+                "dimensions": [{"name": "status", "type": "categorical"}],
+            },
+            {"description": "name の無いモデルは無視する"},
+        ]
+    }
+    bus = index.bus_matrix(manifest)
+    rows = {r.name: r.groups for r in bus.rows}
+    assert set(rows["fct_sales"]) == {
+        "dim_product",
+        "dim_category",
+        "dim_customer",
+        "dim_customer_scd",
+        "dim_sku",
+        "fct_sales",
+    }
+    assert rows["fct_noprimary"] == ["dim_customer", "dim_customer_scd"]
+    assert [g.name for g in bus.groups if g.kind == "degenerate"] == ["fct_sales"]
+
+
+def test_broken_bus_matrix_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = DatasetIndex(Path("."), None)
+
+    def broken(manifest=None):  # type: ignore[no-untyped-def]
+        raise KeyError("name")
+
+    monkeypatch.setattr(index, "bus_matrix", broken)
+    errors: list[str] = []
+    assert index._bus(errors).rows == [] and errors

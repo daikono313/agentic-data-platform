@@ -340,15 +340,29 @@ class DatasetIndex:
         models = {c.rsplit(".", 1)[-1] for c in seen}
         return sorted(m for m in models if m.startswith(("dim_", "fct_")))
 
-    def bus_matrix(self) -> BusMatrix:
-        """fct の foreign entity と、dim の primary entity の対応から fact × dimension の表を作る。
+    def bus_matrix(self, manifest: dict[str, Any] | None = None) -> BusMatrix:
+        """entity の結合関係から fact × dimension の表を作る。
 
+        fct の foreign entity が、dim の primary / unique entity と一致すれば結合できる
+        （MetricFlow と同じく entity 名で結合する）。
+        dim の foreign entity の先の dim（1 段の snowflake）も含める。
+        role-playing（別名の entity）は別の切り口として扱われ、ここでは ✓ にしない。
         semantic manifest が無ければ空（理由は metrics() が errors に入れる）。
         """
-        manifest = self._semantic_manifest()
+        manifest = manifest if manifest is not None else self._semantic_manifest()
         if manifest is None:
             return BusMatrix()
-        models = manifest.get("semantic_models", [])
+        models = sorted(
+            (m for m in manifest.get("semantic_models", []) if m.get("name")),
+            key=lambda m: m["name"],
+        )
+
+        def entities(sm: dict[str, Any], *types: str) -> list[str]:
+            return [e["name"] for e in sm.get("entities", []) if e.get("type") in types]
+
+        def primary(sm: dict[str, Any]) -> str | None:
+            found = entities(sm, "primary")
+            return found[0] if found else sm.get("primary_entity")
 
         def attributes(sm: dict[str, Any], entity: str) -> list[BusAttribute]:
             return [
@@ -357,19 +371,19 @@ class DatasetIndex:
                     label=d.get("label") or _short(d.get("description") or "") or d["name"],
                 )
                 for d in sm.get("dimensions", [])
+                if d.get("name")
             ]
 
-        def primary(sm: dict[str, Any]) -> str | None:
-            found = [e["name"] for e in sm.get("entities", []) if e.get("type") == "primary"]
-            return found[0] if found else sm.get("primary_entity")
-
         groups: list[BusGroup] = []
-        dim_of_entity: dict[str, str] = {}
-        for sm in sorted(models, key=lambda m: m["name"]):
+        dims_of_entity: dict[str, list[str]] = {}
+        dim_foreign: dict[str, list[str]] = {}
+        for sm in models:
             entity = primary(sm)
             if not sm["name"].startswith("dim_") or entity is None:
                 continue
-            dim_of_entity[entity] = sm["name"]
+            for e in [entity, *entities(sm, "unique")]:
+                dims_of_entity.setdefault(e, []).append(sm["name"])
+            dim_foreign[sm["name"]] = entities(sm, "foreign")
             groups.append(
                 BusGroup(
                     name=sm["name"],
@@ -379,16 +393,17 @@ class DatasetIndex:
                 )
             )
         rows: list[BusRow] = []
-        for sm in sorted(models, key=lambda m: m["name"]):
+        for sm in models:
             if not sm["name"].startswith("fct_"):
                 continue
             label = sm.get("label") or _short(sm.get("description") or "") or sm["name"]
-            joined = [
-                dim_of_entity[e["name"]]
-                for e in sm.get("entities", [])
-                if e.get("type") == "foreign" and e["name"] in dim_of_entity
+            joined = [d for e in entities(sm, "foreign") for d in dims_of_entity.get(e, [])]
+            joined += [
+                d for j in list(joined) for e in dim_foreign[j] for d in dims_of_entity.get(e, [])
             ]
-            own = attributes(sm, primary(sm) or sm["name"]) if sm.get("dimensions") else []
+            entity = primary(sm)
+            # primary entity の無い fct の属性は MetricFlow から参照できないので出さない
+            own = attributes(sm, entity) if entity else []
             if own:
                 groups.append(
                     BusGroup(name=sm["name"], label=label, kind="degenerate", attributes=own)
@@ -399,13 +414,20 @@ class DatasetIndex:
         groups.sort(key=lambda g: g.kind != "dim")
         return BusMatrix(groups=groups, rows=rows)
 
+    def _bus(self, errors: list[str]) -> BusMatrix:
+        try:
+            return self.bus_matrix()
+        except Exception as e:  # 壊れた manifest でも一覧の他の部分は返す
+            errors.append(f"バスマトリクスを作れませんでした: {type(e).__name__}")
+            return BusMatrix()
+
     def all(self) -> Datasets:
         errors: list[str] = []
         beams = self.beams(errors)
         return Datasets(
             metrics=self.metrics(beams, errors),
             models=self.models(errors),
-            bus=self.bus_matrix(),
+            bus=self._bus(errors),
             sources=self.sources(errors),
             beams=beams,
             errors=errors,

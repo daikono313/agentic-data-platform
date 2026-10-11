@@ -85,7 +85,8 @@ describe('バスマトリクス', () => {
   }
 
   it('fact × dimension の表を出し、結合できる属性に ✓ を付ける', () => {
-    render(<DatasetsPanel datasets={{ ...datasets, bus }} />)
+    const extra = { name: 'dim_unregistered', kind: 'dim', description: '未登録', columns: [] }
+    render(<DatasetsPanel datasets={{ ...datasets, models: [...datasets.models, extra], bus }} />)
     const table = screen.getByRole('table', { name: 'バスマトリクス' })
     expect(within(table).getByRole('columnheader', { name: /店舗/ })).toHaveAttribute('colspan', '1')
     expect(within(table).getByRole('columnheader', { name: '販売チャネル' })).toBeInTheDocument()
@@ -93,8 +94,31 @@ describe('バスマトリクス', () => {
     expect(within(row).getByLabelText('fct_order_lines × 販売チャネル')).toBeInTheDocument()
     expect(within(row).getByLabelText('fct_order_lines × 注文ステータス')).toBeInTheDocument()
     expect(within(row).queryByLabelText('fct_order_lines × 種類')).not.toBeInTheDocument()
-    // バスマトリクスがあるときは fact / dimension の一覧は出さない
+    // バスマトリクスがあるときは fact / dimension の一覧は出さない。マトリクスに無いモデルだけ一覧にする
     expect(screen.queryByRole('region', { name: 'dimension' })).not.toBeInTheDocument()
+    expect(screen.getByText('dim_unregistered')).toBeInTheDocument()
+    expect(screen.queryByText('dim_store', { selector: 'li span' })).not.toBeInTheDocument()
+  })
+
+  it('検索で fact と、結合できる dimension に絞り込む', () => {
+    const two = {
+      ...bus,
+      rows: [...bus.rows, { name: 'fct_returns', label: '返品', groups: ['dim_promotion'] }],
+    }
+    render(<DatasetsPanel datasets={{ ...datasets, bus: two }} />)
+    expect(screen.getByTestId('bus-fct_returns')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('使えるデータを検索'), { target: { value: '販売チャネル' } })
+    expect(screen.getByTestId('bus-fct_order_lines')).toBeInTheDocument()
+    expect(screen.queryByTestId('bus-fct_returns')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '種類' })).not.toBeInTheDocument()
+  })
+
+  it('compact では dimension ごとに 1 列にする', () => {
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
+    const row = screen.getByTestId('bus-fct_order_lines')
+    expect(within(row).getByLabelText('fct_order_lines × 店舗')).toBeInTheDocument()
+    expect(within(row).queryByLabelText('fct_order_lines × プロモーション')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '販売チャネル' })).not.toBeInTheDocument()
   })
 })
 

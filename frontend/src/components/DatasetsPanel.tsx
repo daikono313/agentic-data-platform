@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
 import { matches, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
-import { BusMatrixView } from '@/components/BusMatrix'
+import { BusMatrixView, filterBus } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 
@@ -58,6 +58,10 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
   )
   const facts = models.filter((m) => m.kind === 'fct')
   const dims = models.filter((m) => m.kind !== 'fct')
+  // バスマトリクスがあれば fact / dimension の一覧の代わりに出す。無ければ一覧（#62）
+  const bus = datasets.bus && datasets.bus.rows.length > 0 ? filterBus(datasets.bus, query, datasets.models) : null
+  const inBus = new Set([...(datasets.bus?.groups.map((g) => g.name) ?? []), ...(datasets.bus?.rows.map((r) => r.name) ?? [])])
+  const unlisted = models.filter((m) => !inBus.has(m.name))
   const sources = datasets.sources.filter((s) => matches(query, s.name, s.description, ...s.columns.map((c) => c.description)))
   const maxDims = compact ? 6 : 10
   const linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement> = compact ? { target: '_blank', rel: 'noreferrer' } : {}
@@ -113,14 +117,20 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
           </ul>
         </Section>
 
-        {datasets.bus && datasets.bus.rows.length > 0 ? (
+        {bus ? (
           <Section
             icon={<Table2 className="size-4" />}
             title="fact × dimension"
-            count={datasets.bus.rows.length}
-            note="バスマトリクス。✓ の切り口で fact を集計できる"
+            count={bus.rows.length}
+            note="バスマトリクス。✓ の dimension の属性で fact を集計できる"
           >
-            <BusMatrixView bus={datasets.bus} models={datasets.models} />
+            <BusMatrixView bus={bus} models={datasets.models} compact={compact} />
+            {unlisted.length > 0 && (
+              <div className="space-y-1 pt-2">
+                <p className="text-xs text-muted-foreground">Semantic Layer に未登録のモデル（バスマトリクスに出ない）</p>
+                <ModelList models={unlisted} />
+              </div>
+            )}
           </Section>
         ) : (
           <div className={compact ? 'space-y-4' : 'grid gap-4 lg:grid-cols-2'}>
