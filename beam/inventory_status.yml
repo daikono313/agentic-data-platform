@@ -1,0 +1,181 @@
+schema_version: 1
+name: inventory_status
+title: 在庫状況の把握
+request: 在庫状況を把握したい
+events:
+- name: store_moves_product_stock
+  table_name: stock_movements
+  label: 店舗が商品の在庫を動かす（入庫・棚卸・移動出庫・廃棄）
+  subject: 店舗
+  verb: moves
+  object: 商品在庫
+  story_type: discrete
+  grain: 在庫の動き 1 件（入庫・棚卸・移動出庫・廃棄の記録 1 行）
+  grain_keys:
+  - inventory_id
+  measures:
+  - name: movement_qty
+    label: 数量
+    description: 在庫の動きの数量。入庫・移動出庫・廃棄は増減量で、棚卸（count）は数えた在庫数そのもの（残高）。棚卸は増減量と足せないため、集計時は棚卸を除く。
+    aggregation: sum
+    additivity: additive
+    unit: 個
+    source:
+      table: raw.inventory
+      column: quantity
+    availability: available
+  dimensions:
+  - w: when
+    name: moved_at
+    label: 動いた日時
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: day
+    fact_key:
+      table: raw.inventory
+      column: moved_at
+  - w: where
+    name: store
+    label: 店舗
+    description: ''
+    attributes:
+    - name: store_name
+      label: 店舗名
+      description: ''
+      examples: []
+      source:
+        table: raw.stores
+        column: store_name
+      availability: available
+      history_required: true
+    - name: region
+      label: 地方
+      description: online / app の店舗は元データが空。「地方なし」として表示する
+      examples: []
+      source:
+        table: raw.stores
+        expr: coalesce(region, '地方なし')
+      availability: available
+      history_required: true
+    hierarchy:
+    - region
+    - store_name
+    business_key:
+      table: raw.stores
+      column: store_id
+    fact_key:
+      table: raw.inventory
+      column: store_id
+  - w: what
+    name: product
+    label: 商品
+    description: ''
+    attributes:
+    - name: category
+      label: 商品カテゴリ
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: true
+    - name: product_name
+      label: 商品名
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: product_name
+      availability: available
+      history_required: true
+    hierarchy:
+    - category
+    - product_name
+    business_key:
+      table: raw.products
+      column: product_id
+    fact_key:
+      table: raw.inventory
+      column: product_id
+  - w: how
+    name: movement_type
+    label: 動きの種類
+    description: receipt（入庫）/ count（棚卸）/ transfer_out（移動出庫）/ disposal（廃棄）
+    attributes:
+    - name: movement_type
+      label: 動きの種類
+      description: ''
+      examples: []
+      source:
+        table: raw.inventory
+        column: movement_type
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.inventory
+      column: movement_type
+    fact_key:
+      table: raw.inventory
+      column: movement_type
+  degenerate_dimensions:
+  - name: inventory_id
+    label: 在庫記録ID
+    source:
+      table: raw.inventory
+      column: inventory_id
+  agg_time_dimension: moved_at
+  examples:
+  - values:
+      store.store_name: 北海道05号店
+      product.product_name: あおば お菓子 0001
+      moved_at: '2025-03-15'
+      movement_type.movement_type: receipt
+      movement_qty: 10
+  priority: high
+  impact: high
+  effort: medium
+  source_tables:
+  - raw.inventory
+  - raw.stores
+  - raw.products
+metrics:
+- name: monthly_stock_change_qty
+  label: 月別の在庫増減数
+  question: 月末時点の在庫数の推移はどうか
+  framed_question: 月ごとの在庫の増減数（棚卸を除く）はいくつか（商品カテゴリ・店舗・地方別）。月末在庫数はここから後で計算する
+  type: simple
+  event: store_moves_product_stock
+  measure: movement_qty
+  filter: 棚卸（count）を除く
+  filters:
+  - ref: movement_type.movement_type
+    operator: '!='
+    values:
+    - count
+  group_by:
+  - moved_at.month
+  - product.category
+  - store.region
+  - store.store_name
+  - movement_type.movement_type
+  status: draft
+gaps:
+- kind: deferred
+  description: 月末在庫数はユーザーの本命の問いだが、定期スナップショットは MVP で生成できない。在庫の動き 1 件ずつのモデルを先に作り、棚卸を起点にした月末残高（動きがない月は前月末を引き継ぎ）は後で計算する
+  event: store_moves_product_stock
+  related: month_end_stock_qty
+- kind: deferred
+  description: 具体例（北海道05号店・あおば お菓子 0001・2025-03-15・入庫 10 個）はモデラーが仮置きしたもので、実データでは未検証。ユーザーが実例を知らないためおまかせ。実装後に実データで確認・差し替える
+  event: store_moves_product_stock
+  related: movement_qty
+- kind: deferred
+  description: 工数（medium）はモデラーの見積もり。在庫の動き 1 件ずつのモデルは単純だが、属性の履歴保持が必要なため
+  event: store_moves_product_stock
+- kind: deferred
+  description: 棚卸（count）の数量を残高と見なすと、マイナス値（最小 -10）の意味が不明。ユーザーの了承のもと実装後に確認する。棚卸の数量が本当に残高かをデータで確認する
+  event: store_moves_product_stock
+  related: movement_qty
+finalized_at: '2026-10-11T13:18:39.866482Z'
