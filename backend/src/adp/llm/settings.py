@@ -74,8 +74,13 @@ def read_dotenv(path: Path) -> dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip("'\"")
+        key, _, value = line.removeprefix("export ").partition("=")
+        value = value.strip()
+        if value[:1] in {"'", '"'}:
+            value = value[1:].split(value[0], 1)[0]
+        else:  # 引用符の外の「 #」以降はコメント
+            value = value.split(" #", 1)[0].strip()
+        values[key.strip()] = value
     return values
 
 

@@ -136,13 +136,21 @@ function ColumnRow({
   isKey: boolean
   references?: string
 }) {
+  const nameCell = (
+        <TableCell className="whitespace-normal">
+          <p className="flex items-center gap-1 font-mono text-xs">
+            {p.column}
+            {isKey && <KeyRound className="size-3 text-primary" aria-label="主キー候補" />}
+            {references && <Link2 className="size-3 text-primary" aria-label={`外部キー候補: ${references}`} />}
+          </p>
+          {description && <p className="text-xs text-muted-foreground">{description}</p>}
+          {references && <p className="text-xs text-muted-foreground">→ {references}</p>}
+        </TableCell>
+  )
   if (p.masked) {
     return (
       <TableRow data-testid={`column-${p.column}`} className="align-top">
-        <TableCell className="whitespace-normal">
-          <p className="font-mono text-xs">{p.column}</p>
-          {description && <p className="text-xs text-muted-foreground">{description}</p>}
-        </TableCell>
+        {nameCell}
         <TableCell className="font-mono text-xs">{p.data_type}</TableCell>
         <TableCell className="text-right text-xs">{pct(p.null_count, p.row_count)}</TableCell>
         <TableCell className="text-right text-xs">{p.distinct_count.toLocaleString()}</TableCell>
@@ -161,15 +169,7 @@ function ColumnRow({
   const showTop = p.distinct_count > 0 && !allDistinct && !mostlyDistinct
   return (
     <TableRow data-testid={`column-${p.column}`} className="align-top">
-      <TableCell className="whitespace-normal">
-        <p className="flex items-center gap-1 font-mono text-xs">
-          {p.column}
-          {isKey && <KeyRound className="size-3 text-primary" aria-label="主キー候補" />}
-          {references && <Link2 className="size-3 text-primary" aria-label={`外部キー候補: ${references}`} />}
-        </p>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
-        {references && <p className="text-xs text-muted-foreground">→ {references}</p>}
-      </TableCell>
+      {nameCell}
       <TableCell className="font-mono text-xs">{p.data_type}</TableCell>
       <TableCell className="text-right text-xs">{pct(p.null_count, p.row_count)}</TableCell>
       <TableCell className="text-right text-xs">{p.distinct_count.toLocaleString()}</TableCell>

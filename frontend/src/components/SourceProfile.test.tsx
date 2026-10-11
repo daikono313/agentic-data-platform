@@ -187,6 +187,17 @@ describe('SourceProfileScreen', () => {
     expect(await screen.findByTestId('column-customer_name')).toHaveTextContent('個人情報のため、値は表示しません')
   })
 
+  it('個人情報の列でも、主キー候補の印は出す（#96 レビュー）', async () => {
+    vi.spyOn(api, 'sourceProfile').mockResolvedValue({
+      ...profile,
+      primary_key_candidates: ['email'],
+      profiles: [col('email', { masked: true, min: null, max: null, top_values: [], is_unique: true })],
+    })
+    render(<SourceProfileScreen table="raw.customers" />)
+    const row = await screen.findByTestId('column-email')
+    expect(within(row).getByLabelText('主キー候補')).toBeInTheDocument()
+  })
+
   it('取得に失敗したらエラーを表示する', async () => {
     vi.spyOn(api, 'sourceProfile').mockRejectedValue(new Error('{"detail":"対象外のテーブルです: x.y"}'))
     render(<SourceProfileScreen table="x.y" />)
