@@ -213,3 +213,41 @@ export function matches(query: string, ...texts: string[]): boolean {
   const q = query.trim().toLowerCase()
   return !q || texts.some((t) => t.toLowerCase().includes(q))
 }
+
+const STOP = /(を|が|は|に|で|と|ごと|見たい|知りたい|みたい|したい|ほしい|欲しい|毎|[、。・\s「」（）()])/g
+
+/** 単独では「同じものを測る」根拠にならない言葉（返品数量と販売数量、返品金額と売上金額は別の指標） */
+const GENERIC = new Set(['数量', '金額', '件数', '個数', '人数', '合計', '税抜', '税込'])
+
+function bigrams(text: string): Set<string> {
+  const out = new Set<string>()
+  for (const word of text.replace(STOP, ' ').split(' ')) {
+    for (let i = 0; i < word.length - 1; i++) out.add(word.slice(i, i + 2))
+  }
+  return out
+}
+
+/** 表示名のうち、何を測るかの部分（「商品別販売数量」→「販売数量」。「◯◯別」は切り口） */
+function measurePart(label: string): string {
+  const i = label.lastIndexOf('別')
+  return i >= 0 ? label.slice(i + 1) : label
+}
+
+/**
+ * 要求の文に似た既にある指標（#75）。指標の表示名のうち何を測るかの部分と、要求の 2 文字の並びが
+ * 重なるものを、重なりの多い順に出す。切り口（「◯◯別」）・説明（「除く」などの条件を含む）は
+ * 比べない。数量・金額のような汎用の言葉だけが重なるものは出さない。
+ */
+export function similarMetrics(request: string, metrics: MetricInfo[], limit = 3): MetricInfo[] {
+  const want = bigrams(request.replace(/別/g, ' '))
+  if (want.size === 0) return []
+  return metrics
+    .map((m) => {
+      const hits = [...bigrams(measurePart(m.label))].filter((b) => want.has(b))
+      return { m, hits: hits.length, specific: hits.some((b) => !GENERIC.has(b)) }
+    })
+    .filter((x) => x.specific)
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, limit)
+    .map((x) => x.m)
+}

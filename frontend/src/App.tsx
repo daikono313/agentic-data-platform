@@ -3,7 +3,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import { errorText, exampleRequests, type Datasets } from '@/api/datasets'
+import { errorText, exampleRequests, rankDimensions, similarMetrics, type Datasets } from '@/api/datasets'
+import { chartUrl } from '@/api/charts'
 import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
 import { ChartScreen } from '@/components/ChartScreen'
@@ -292,6 +293,13 @@ function InterviewApp() {
               </div>
             </details>
           )}
+          {!isDemo && !finalized && sharedDatasets.datasets && (
+            <SimilarExisting
+              texts={[session.beam.request, ...(session.beam.metrics ?? []).map((m) => m.label)]}
+              beam={session.beam.name}
+              datasets={sharedDatasets.datasets}
+            />
+          )}
           <section aria-label="BEAM Canvas">
             <BeamCanvas event={event} />
           </section>
@@ -390,6 +398,8 @@ function StartScreen({
   })
   const input = useRef<HTMLInputElement>(null)
   const examples = datasets ? exampleRequests(datasets.sources) : []
+  // 似た指標が既にあれば知らせる（同じ指標を作り直さない。#75）
+  const similar = datasets && request.trim().length >= 4 ? similarMetrics(request, datasets.metrics) : []
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
       <section className="space-y-3" aria-label="要求の入力">
@@ -443,6 +453,20 @@ function StartScreen({
             デモを見る
           </a>
         </p>
+        {similar.length > 0 && (
+          <div className="rounded-md border border-sky-500/50 p-2 text-xs" aria-live="polite" aria-label="似ている既にある指標">
+            <p className="text-muted-foreground">既にある指標で見られるかもしれません:</p>
+            <ul className="mt-1 flex flex-wrap gap-2">
+              {similar.map((m) => (
+                <li key={m.name}>
+                  <a href={chartUrl(m.name)} className="text-primary underline">
+                    {m.label}をチャートで見る
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {error && <p className="text-sm text-destructive">{error}</p>}
       </section>
       <DatasetsPanel
@@ -456,5 +480,51 @@ function StartScreen({
         }}
       />
     </main>
+  )
+}
+
+/**
+ * インタビュー中に、似た既にある指標を参考として出す（#75）。確定は止めない（インタビューの
+ * 振る舞いは変えない）。同じ指標ならチャートで見られること、切り口を足すだけならそう伝えれば
+ * 既存の fct に足せること（#46）を知らせる。
+ */
+function SimilarExisting({ texts, beam, datasets }: { texts: string[]; beam: string; datasets: Datasets }) {
+  // この BEAM 成果物自身が作った指標（確定し直し）は除く
+  const others = datasets.metrics.filter((m) => !beam || m.beam !== beam)
+  // 同じ名前の BEAM 成果物が既にある: 確定すると beam/<name>.yml と、その指標を置き換える
+  const sameName = beam ? datasets.metrics.filter((m) => m.beam === beam) : []
+  const found = new Map<string, Datasets['metrics'][number]>()
+  for (const t of texts) if (t) for (const m of similarMetrics(t, others)) found.set(m.name, m)
+  if (found.size === 0 && sameName.length === 0) return null
+  return (
+    <div className="rounded-lg border border-sky-500/50 p-3 text-xs" role="status" aria-label="似ている既にある指標">
+      {sameName.length > 0 && (
+        <p className="mb-1 text-amber-600">
+          同じ名前（{beam}）の要求が既にあります（{sameName.map((m) => m.label).join('、')}
+          ）。確定すると、その要求と指標を置き換えます。別の要求なら、インタビューで「別の名前にしてほしい」と伝えてください。
+        </p>
+      )}
+      {found.size > 0 && (
+        <>
+          <p className="font-semibold">似ている指標が既にあります</p>
+          <ul className="mt-1 space-y-1">
+            {[...found.values()].map((m) => (
+              <li key={m.name}>
+                <a href={chartUrl(m.name)} target="_blank" rel="noreferrer" className="text-primary underline">
+                  {m.label}をチャートで見る（別のタブ）
+                </a>
+                <span className="ml-1 text-muted-foreground">
+                  （切り口: {rankDimensions(m.dimensions).slice(0, 5).map((d) => d.label).join('、') || 'なし'}）
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-muted-foreground">
+            同じ指標なら、作らずにチャートで見られます。切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えると、既存の
+            fact に足して作れます。
+          </p>
+        </>
+      )}
+    </div>
   )
 }
