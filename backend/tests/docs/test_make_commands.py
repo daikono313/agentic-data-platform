@@ -1,8 +1,8 @@
-"""CLAUDE.md・README などに書いた `make` のコマンドと、Makefile のターゲットの照合。"""
+"""ドキュメントに書いた `make` の呼び出しと、Makefile のターゲット・変数の照合。"""
 
 import re
 
-from tests.docs import REPO_ROOT, code_blocks, doc_files, rel, section
+from tests.docs._docs import REPO_ROOT, doc_files, doc_text, make_invocations, rel, section
 
 # CLAUDE.md の「コマンド」に書かなくてよい、内部用のターゲット（他のターゲットから呼ばれる部品）
 INTERNAL_TARGETS = {
@@ -13,17 +13,13 @@ INTERNAL_TARGETS = {
 }
 
 
-def makefile() -> str:
-    return (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-
-
 def recipes() -> dict[str, str]:
     """ターゲット名 → レシピ（次のターゲットまでの行）。"""
     out: dict[str, str] = {}
     current: str | None = None
-    for line in makefile().splitlines():
+    for line in doc_text(REPO_ROOT / "Makefile").splitlines():
         m = re.match(r"^([A-Za-z0-9][A-Za-z0-9_-]*)\s*:(?!=)", line)
-        if m and m.group(1) != "PHONY":
+        if m:
             current = m.group(1)
             out[current] = ""
         elif current is not None and line.startswith("\t"):
@@ -31,55 +27,56 @@ def recipes() -> dict[str, str]:
     return out
 
 
-def claude_md_commands() -> list[str]:
-    text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    blocks = code_blocks(section(text, "コマンド"))
-    assert blocks, "CLAUDE.md の「コマンド」にコードブロックが無い"
-    return [line for b in blocks for line in b.splitlines() if line.startswith("make ")]
-
-
 def test_makefile_parser_sees_phony_targets() -> None:
     # パーサの確認: .PHONY に書いたターゲットはすべて定義として読めている
-    m = re.search(r"^\.PHONY:(.*)$", makefile(), re.MULTILINE)
+    m = re.search(r"^\.PHONY:(.*)$", doc_text(REPO_ROOT / "Makefile"), re.MULTILINE)
     assert m, "Makefile に .PHONY が無い"
-    phony = set(m.group(1).split())
-    assert phony <= set(recipes())
+    unparsed = set(m.group(1).split()) - set(recipes())
+    assert not unparsed, f"Makefile の .PHONY にあるが定義として読めないターゲット: {unparsed}"
 
 
 def test_claude_md_lists_every_public_target() -> None:
-    documented = {line.split()[1] for line in claude_md_commands()}
+    text = doc_text(REPO_ROOT / "CLAUDE.md")
+    documented = {t for inv in make_invocations(section(text, "コマンド")) for t in inv.targets}
+    assert documented, "CLAUDE.md の「コマンド」から make の行を読み取れない"
     public = set(recipes()) - INTERNAL_TARGETS
     assert not (public - documented), (
-        f"CLAUDE.md の「コマンド」に無いターゲット（足すか、内部用なら INTERNAL_TARGETS へ）: "
+        "CLAUDE.md の「コマンド」に無いターゲット（足すか、内部用なら INTERNAL_TARGETS へ）: "
         f"{sorted(public - documented)}"
     )
-    assert not (documented & INTERNAL_TARGETS), "内部用のターゲットが CLAUDE.md に書かれている"
-
-
-def test_make_commands_in_docs_exist() -> None:
-    targets = set(recipes())
-    stale = sorted(
-        f"{rel(path)}: make {target}"
-        for path in doc_files()
-        for target in re.findall(r"\bmake ([a-z][a-z0-9-]*)", path.read_text(encoding="utf-8"))
-        if target not in targets
+    assert not (documented & INTERNAL_TARGETS), (
+        f"内部用（INTERNAL_TARGETS）のターゲットが CLAUDE.md にある: "
+        f"{sorted(documented & INTERNAL_TARGETS)}（公開するなら INTERNAL_TARGETS から外す）"
     )
-    assert not stale, f"Makefile に無いターゲットを書いている: {stale}"
 
 
-def test_documented_variables_are_used_by_the_target() -> None:
-    """`make e2e V2=1` や「REPEAT=N で」と書いた変数を、そのターゲットのレシピが読んでいる。"""
-    lines = list(claude_md_commands())
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    lines += [ln for b in code_blocks(readme) for ln in b.splitlines() if ln.startswith("make ")]
+def test_make_invocations_in_docs_are_valid() -> None:
+    """すべてのドキュメントの `make X VAR=…` について、X がターゲットにあり、VAR をレシピが読む。"""
     all_recipes = recipes()
-    unused: list[str] = []
-    for line in lines:
-        words = line.split()
-        # `make lint test` のように複数のターゲットを並べた行もある
-        line_targets = [w for w in words[1:] if w in all_recipes]
-        recipe = "".join(all_recipes[t] for t in line_targets)
-        for var in re.findall(r"\b([A-Z][A-Z0-9_]*)=", line):
-            if f"$({var})" not in recipe:
-                unused.append(f"{line.strip()} → {var}")
-    assert not unused, f"ターゲットが読んでいない変数を書いている: {unused}"
+    errors: list[str] = []
+    for path in doc_files():
+        for inv in make_invocations(doc_text(path)):
+            where = f"{rel(path)}:{inv.line} `{inv.raw}`"
+            if not inv.targets:
+                errors.append(f"{where}: ターゲットを読み取れない")
+            unknown = [t for t in inv.targets if t not in all_recipes]
+            if unknown:
+                errors.append(f"{where}: Makefile に無いターゲット {unknown}")
+            recipe = "".join(all_recipes.get(t, "") for t in inv.targets)
+            unused = [v for v in inv.variables if f"$({v})" not in recipe]
+            if unused:
+                errors.append(f"{where}: {list(inv.targets)} のレシピが読まない変数 {unused}")
+    assert not errors, "ドキュメントの make の呼び出しが Makefile と合わない:\n" + "\n".join(errors)
+
+
+def test_make_invocation_parser() -> None:
+    text = (
+        "```\nmake lint test  # 両方 REPEAT=1\nmake e2e SCENARIO=x V2=1\n```\n"
+        "本文の `make eval REPEAT=3` も読む\n"
+    )
+    got = [(inv.line, inv.targets, inv.variables) for inv in make_invocations(text)]
+    assert got == [
+        (2, ("lint", "test"), ()),
+        (3, ("e2e",), ("SCENARIO", "V2")),
+        (5, ("eval",), ("REPEAT",)),
+    ]
