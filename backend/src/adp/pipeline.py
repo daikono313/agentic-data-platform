@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import duckdb
 import yaml
@@ -44,7 +44,10 @@ from adp.vcs import (
     pr_body,
     pr_title,
 )
+from adp.vcs.git import GIT_LOCK
 from adp.warehouse import warehouse_db
+
+T = TypeVar("T")
 
 ONTOLOGY = Path("ontology") / "ontology.yml"
 """オントロジーの正本（リポジトリのルートから）。"""
@@ -110,7 +113,9 @@ class JobSteps:
 
     git・DB のコピー・dbt などの重い処理はスレッドで行い、イベントループ（ほかの要求や
     進捗の SSE）を止めない。push する前に失敗したら、作業ブランチを片付けて同じ要求で
-    再実行できるようにする。
+    再実行できるようにする。git を変更する操作（worktree の追加・削除、stage・commit・画像の
+    commit・push）は、すべてのジョブで共通の `GIT_LOCK` の中で行い、ジョブ同士で重ねない。
+    dbt などの検証は lock の外で行うので、ジョブ同士で並行に動く。
     """
 
     def __init__(
@@ -133,8 +138,18 @@ class JobSteps:
         self.current = name
         self.on_step(StepUpdate(name, self.labels[name], status, detail))
 
+    @staticmethod
+    async def _git(fn: Callable[..., T], *args: Any) -> T:
+        """git を変更する処理を、スレッドで GIT_LOCK を持って実行する。"""
+
+        def locked() -> T:
+            with GIT_LOCK:
+                return fn(*args)
+
+        return await asyncio.to_thread(locked)
+
     async def create_worktree(self, branch: str, base: str) -> Worktree:
-        wt = await asyncio.to_thread(self.workspace.create_worktree, branch, base)
+        wt = await self._git(self.workspace.create_worktree, branch, base)
         self.worktree = wt
         return wt
 
@@ -149,13 +164,13 @@ class JobSteps:
 
         before_push は commit の後・push の前に（スレッドで）呼ぶ（PR 本文の画像の commit など）。
         """
-        files = await asyncio.to_thread(self.workspace.stage, wt, paths)
+        files = await self._git(self.workspace.stage, wt, paths)
         if not files:
             raise PipelineError("commit するファイルがありません")
-        await asyncio.to_thread(self.workspace.commit, wt, message)
+        await self._git(self.workspace.commit, wt, message)
         if before_push is not None:
-            await asyncio.to_thread(before_push)
-        await asyncio.to_thread(self.workspace.push, wt)
+            await self._git(before_push)
+        await self._git(self.workspace.push, wt)
         self.pushed = True
         return files
 
@@ -169,7 +184,7 @@ class JobSteps:
             self.step(self.current, StepStatus.FAILED, detail)
         if self.worktree is not None and not self.pushed:
             try:
-                await asyncio.to_thread(self.workspace.remove_worktree, self.worktree, True)
+                await self._git(self.workspace.remove_worktree, self.worktree, True)
                 result.branch = None
             except Exception:
                 pass
