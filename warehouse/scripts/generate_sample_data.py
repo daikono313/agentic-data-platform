@@ -64,6 +64,8 @@ class Tables:
     payments: list[tuple[object, ...]]
     shipments: list[tuple[object, ...]]
     returns: list[tuple[object, ...]]
+    inventory: list[tuple[object, ...]]
+    """在庫の入出庫（実店舗）。dbt の sources に未宣言の「後から追加された源泉」の例（#69）。"""
 
 
 # カテゴリごとの返品しやすさ（明細単位の確率）と返品理由の重み
@@ -261,9 +263,47 @@ def generate(n_orders: int, seed: int) -> Tables:
                 )
             )
 
+    inventory = _inventory(seed, max(100, n_orders // 3), products, stores)
     return Tables(
-        customers, products, stores, promotions, orders, items, payments, shipments, returns
+        customers,
+        products,
+        stores,
+        promotions,
+        orders,
+        items,
+        payments,
+        shipments,
+        returns,
+        inventory,
     )
+
+
+MOVEMENT_TYPES = [("receipt", 0.55), ("transfer_out", 0.15), ("disposal", 0.05), ("count", 0.25)]
+
+
+def _inventory(
+    seed: int, n: int, products: list[tuple[object, ...]], stores: list[tuple[object, ...]]
+) -> list[tuple[object, ...]]:
+    """実店舗の在庫の入出庫（入荷・他店への移動・廃棄・棚卸の差異）。"""
+    rng = _rng(seed, "inventory")
+    shops = [s[0] for s in stores if s[2] == "store"]
+    rows: list[tuple[object, ...]] = []
+    for i in range(1, n + 1):
+        product = rng.choice(products)
+        moved_at = datetime.combine(rand_date(rng, START, END), datetime.min.time()) + timedelta(
+            hours=rng.randint(7, 21), minutes=rng.choice([0, 15, 30, 45])
+        )
+        kind = weighted(rng, MOVEMENT_TYPES)
+        qty = {
+            "receipt": rng.randint(5, 60),
+            "transfer_out": -rng.randint(1, 10),
+            "disposal": -rng.randint(1, 5),
+            "count": rng.randint(-3, 3),
+        }[kind]
+        rows.append(
+            (i, rng.choice(shops), product[0], moved_at, kind, qty, moved_at + timedelta(hours=1))
+        )
+    return rows
 
 
 DDL = {
@@ -288,6 +328,8 @@ DDL = {
         shipped_at TIMESTAMP, delivered_at TIMESTAMP""",
     "returns": """return_id INTEGER, order_item_id INTEGER, returned_at TIMESTAMP,
         quantity INTEGER, return_reason VARCHAR""",
+    "inventory": """inventory_id INTEGER, store_id INTEGER, product_id INTEGER,
+        moved_at TIMESTAMP, movement_type VARCHAR, quantity INTEGER, updated_at TIMESTAMP""",
 }
 
 

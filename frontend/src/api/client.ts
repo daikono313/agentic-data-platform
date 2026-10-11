@@ -1,7 +1,7 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
-import type { CleansingView, Datasets, OntologyView, SourceProfile } from './datasets'
+import type { CleansingView, Datasets, OnboardingDraft, OntologyPatch, OntologyView, SourceProfile } from './datasets'
 import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
-import type { InterviewEvent, JobEvent, SessionView } from './types'
+import type { InterviewEvent, JobEvent, JobView, SessionView } from './types'
 
 const BASE = '/api'
 
@@ -45,6 +45,27 @@ export const api = {
   },
   async ontology(): Promise<OntologyView> {
     return json(await fetch(`${BASE}/ontology`))
+  },
+  async onboardingDraft(table: string, agent: boolean): Promise<OnboardingDraft> {
+    return json(
+      await fetch(`${BASE}/sources/${encodeURIComponent(table)}/onboarding/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent }),
+      }),
+    )
+  },
+  async startOnboarding(table: string, patch: OntologyPatch, cleansing: string): Promise<JobView> {
+    return json(
+      await fetch(`${BASE}/sources/${encodeURIComponent(table)}/onboarding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patch, cleansing }),
+      }),
+    )
+  },
+  async onboardingStatus(table: string): Promise<{ job: JobView | null }> {
+    return json(await fetch(`${BASE}/sources/${encodeURIComponent(table)}/onboarding`))
   },
   async sourceCleansing(table: string): Promise<CleansingView> {
     return json(await fetch(`${BASE}/sources/${encodeURIComponent(table)}/cleansing`))

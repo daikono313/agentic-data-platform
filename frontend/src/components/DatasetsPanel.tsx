@@ -2,7 +2,7 @@ import { BarChart3, Boxes, Database, Table2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
-import { matches, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
+import { matches, onboardUrl, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
 import { BusMatrixView, filterBus } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -192,10 +192,20 @@ function SourceItem({
             <span className="font-mono">{source.name}</span>・{source.row_count.toLocaleString()} 行・{source.columns.length} 列
           </span>
         </button>
-        <a href={sourceUrl(source.name)} className="shrink-0 text-primary underline" {...linkProps}>
-          <Database className="mr-0.5 inline size-3" />
-          プロファイル
-        </a>
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          <a href={sourceUrl(source.name)} className="text-primary underline" {...linkProps}>
+            <Database className="mr-0.5 inline size-3" />
+            プロファイル
+          </a>
+          {source.unmapped && (
+            <a href={onboardUrl(source.name)} className="text-primary underline" {...linkProps}>
+              <Badge variant="outline" className="mr-1 border-amber-500 text-amber-600">
+                未整理
+              </Badge>
+              取り込む
+            </a>
+          )}
+        </span>
       </div>
       {open && (
         <ul className="mt-1 ml-3 list-disc space-y-0.5 pl-3 text-muted-foreground">

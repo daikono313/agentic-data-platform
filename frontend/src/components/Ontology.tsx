@@ -2,7 +2,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { api } from '@/api/client'
-import { errorText, sourceUrl, type OntologyView } from '@/api/datasets'
+import { errorText, onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -110,8 +110,8 @@ function OntologyBody({ view }: { view: OntologyView }) {
               <p>
                 未整理の源泉（どの概念にもなっていない）:{' '}
                 {view.unmapped_sources.map((s) => (
-                  <a key={s} href={sourceUrl(s)} className="mr-2 font-mono text-primary underline">
-                    {s}
+                  <a key={s} href={onboardUrl(s)} className="mr-2 font-mono text-primary underline">
+                    {s}（取り込む）
                   </a>
                 ))}
               </p>

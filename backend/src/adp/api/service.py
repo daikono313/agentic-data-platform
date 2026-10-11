@@ -24,12 +24,20 @@ from adp.interview import (
 )
 from adp.interview.prompts import prompt_version
 from adp.llm import TextDelta, ToolCall
+from adp.onboarding.pipeline import ONBOARD_STEPS
+from adp.onboarding.proposal import OntologyPatch
 from adp.pipeline import STEPS, PipelineResult, StepUpdate
 
 SSEEvent = dict[str, str]
 """sse-starlette に渡す {"event": ..., "data": <JSON 文字列>}。"""
 
 PipelineRunner = Callable[[BeamModel, Callable[[StepUpdate], None]], Awaitable[PipelineResult]]
+OnboardingRunner = Callable[
+    [str, OntologyPatch, str, Callable[[StepUpdate], None]], Awaitable[PipelineResult]
+]
+"""(源泉, 追加案, クレンジングの定義の YAML, on_step) → 結果（#69）。"""
+ONBOARD_PREFIX = "onboard:"
+"""取り込みジョブの session_id（セッションの代わりに源泉で引く）。"""
 
 
 def _sse(event: str, data: Any) -> SSEEvent:
@@ -88,10 +96,17 @@ def feedback_view(row: FeedbackRow) -> dict[str, Any]:
 
 
 class SessionService:
-    def __init__(self, store: Store, interviewer: Interviewer, pipeline: PipelineRunner) -> None:
+    def __init__(
+        self,
+        store: Store,
+        interviewer: Interviewer,
+        pipeline: PipelineRunner,
+        onboarding: OnboardingRunner | None = None,
+    ) -> None:
         self.store = store
         self.interviewer = interviewer
         self.pipeline = pipeline
+        self.onboarding = onboarding
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -238,12 +253,42 @@ class SessionService:
         self.store.save_session(session_id, state)
         self.store.add_version(session_id, beam)
         job = Job(id=uuid.uuid4().hex[:12], session_id=session_id)
+        self._start(job, lambda on_step: self.pipeline(beam, on_step))
+        return self.view(session_id)
+
+    def _start(
+        self,
+        job: Job,
+        run: Callable[[Callable[[StepUpdate], None]], Awaitable[PipelineResult]],
+    ) -> None:
         self._jobs[job.id] = job
-        self.store.save_job(job.id, session_id, job.status, job.steps)
-        task = asyncio.get_running_loop().create_task(self._run_job(job, beam))
+        self.store.save_job(job.id, job.session_id, job.status, job.steps)
+        task = asyncio.get_running_loop().create_task(self._run_job(job, run))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return self.view(session_id)
+
+    # --- 源泉の取り込み（#69） ----------------------------------------------------------------
+
+    def start_onboarding(self, source: str, patch: OntologyPatch, cleansing: str) -> dict[str, Any]:
+        if self.onboarding is None:
+            raise Conflict("源泉の取り込みは使えません")
+        running = self._job_view(ONBOARD_PREFIX + source)
+        if running and running["status"] == "running":
+            raise Conflict("この源泉の取り込みを実行中です")
+        job = Job(
+            id=uuid.uuid4().hex[:12],
+            session_id=ONBOARD_PREFIX + source,
+            steps=[
+                {"step": s, "label": label, "status": "pending", "detail": ""}
+                for s, label in ONBOARD_STEPS
+            ],
+        )
+        runner = self.onboarding
+        self._start(job, lambda on_step: runner(source, patch, cleansing, on_step))
+        return job.view()
+
+    def onboarding_job(self, source: str) -> dict[str, Any] | None:
+        return self._job_view(ONBOARD_PREFIX + source)
 
     def reopen(self, session_id: str) -> dict[str, Any]:
         """確定を取り消して修正できるようにする。生成ジョブの実行中はできない。"""
@@ -269,7 +314,11 @@ class SessionService:
     def has_job(self, job_id: str) -> bool:
         return job_id in self._jobs or self.store.job(job_id) is not None
 
-    async def _run_job(self, job: Job, beam: BeamModel) -> None:
+    async def _run_job(
+        self,
+        job: Job,
+        run: Callable[[Callable[[StepUpdate], None]], Awaitable[PipelineResult]],
+    ) -> None:
         def on_step(update: StepUpdate) -> None:
             data = {
                 "step": update.step,
@@ -282,7 +331,7 @@ class SessionService:
             self._publish(job, _sse("step", data))
 
         try:
-            result = await self.pipeline(beam, on_step)
+            result = await run(on_step)
             job.status = "succeeded" if result.ok else "failed"
             job.pr_url, job.error, job.branch = result.pr_url, result.error, result.branch
         except Exception as e:

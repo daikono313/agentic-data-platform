@@ -53,7 +53,7 @@ describe('OntologyScreen', () => {
     expect(screen.getByRole('table', { name: '関係' })).toHaveTextContent('顧客注文する注文raw.orders.customer_id')
     expect(screen.getByText(/dim_date/)).toBeInTheDocument()
     expect(screen.getByText(/キー raw.orders.order_id が無い/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'raw.inventory' })).toHaveAttribute('href', '?source=raw.inventory')
+    expect(screen.getByRole('link', { name: 'raw.inventory（取り込む）' })).toHaveAttribute('href', '?onboard=raw.inventory')
     expect(screen.getByRole('link', { name: /ホーム/ })).toHaveAttribute('href', '/')
   })
 

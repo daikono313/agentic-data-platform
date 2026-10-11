@@ -1,0 +1,90 @@
+schema_version: 1
+name: inventory_receipts
+title: 店舗・商品カテゴリ別の入荷数量
+request: 店舗ごと・商品カテゴリごとの入荷数量を月別に見たい
+events:
+  - name: store_moves_inventory
+    table_name: inventory_movements
+    label: 店舗が商品を入出庫する
+    subject: 店舗
+    verb: 入出庫する
+    object: 商品
+    story_type: discrete
+    grain: 入出庫 1 件
+    grain_keys: [inventory_movement_id]
+    degenerate_dimensions:
+      - name: inventory_movement_id
+        label: 入出庫番号
+        source: {table: raw.inventory, column: inventory_id}
+    source_tables: [raw.inventory]
+    priority: high
+    impact: medium
+    effort: low
+    measures:
+      - name: moved_quantity
+        label: 入出庫数量
+        aggregation: sum
+        unit: 個
+        source: {table: raw.inventory, column: quantity}
+        availability: available
+    dimensions:
+      - w: what
+        name: product
+        label: 商品
+        business_key: {table: raw.products, column: product_id}
+        fact_key: {table: raw.inventory, column: product_id}
+        attributes:
+          - name: category
+            label: カテゴリ
+            examples: [食品]
+            source: {table: raw.products, column: category}
+            availability: available
+      - w: when
+        name: date
+        label: 入出庫日
+        time_grain: day
+        fact_key: {table: raw.inventory, column: moved_at}
+      - w: where
+        name: store
+        label: 店舗
+        business_key: {table: raw.stores, column: store_id}
+        fact_key: {table: raw.inventory, column: store_id}
+        attributes:
+          - name: store_name
+            label: 店舗名
+            examples: [東京都01号店]
+            source: {table: raw.stores, column: store_name}
+            availability: available
+      - w: how
+        name: movement_type
+        label: 入出庫の種類
+        business_key: {table: raw.inventory, column: movement_type}
+        fact_key: {table: raw.inventory, column: movement_type}
+        attributes:
+          - name: movement_type
+            label: 入出庫の種類
+            examples: [receipt, disposal]
+            source: {table: raw.inventory, column: movement_type}
+            availability: available
+    examples:
+      - values:
+          inventory_movement_id: 1
+          product.category: 食品
+          date: "2024-03-01"
+          store.store_name: 東京都01号店
+          movement_type.movement_type: receipt
+          moved_quantity: 20
+metrics:
+  - name: received_quantity
+    label: 入荷数量
+    question: 店舗ごと・商品カテゴリごとの入荷数量を月別に見たい
+    framed_question: 月別・店舗別・商品カテゴリ別の入荷数量はいくつか
+    type: simple
+    event: store_moves_inventory
+    measure: moved_quantity
+    filter: 入荷（receipt）だけ
+    filters:
+      - {ref: movement_type.movement_type, operator: '=', values: [receipt]}
+    group_by: [date.month, store.store_name, product.category]
+    status: confirmed
+gaps: []

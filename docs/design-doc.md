@@ -80,6 +80,13 @@ S1 の後、別のユーザーが「商品カテゴリ別の返品率」を求�
 2. 開発者は `make feedback-report` で、段階ごとの低評価と該当する会話を確認する。
 3. 低評価の会話から eval のチェックを作り、プロンプトを直して eval の前後比較で改善を確かめ、PR にする。
 
+### S5（v3）: 新しい源泉を取り込み、オントロジーから fact / dim を整理する
+
+1. 在庫の入出庫（`raw.inventory`）が DuckDB に増える。開始画面の源泉一覧とオントロジー画面に「未整理」と出る（オントロジーのどの概念にもなっていない）。
+2. 「取り込む」から取り込み画面を開く。エージェント（またはプロファイルからの決定的な規則）が、オントロジーへの追加案（概念「在庫の入出庫」= 出来事、属性、既存の「店舗」「商品」との関係）を出す。表示名・種類・関係の動詞を直せる。クレンジングの定義の雛形と、取り込んだ後に作れる fact / dim の候補（バスマトリクスの点線の行）も見られる（#69）。
+3. 確定すると、オントロジー（`ontology/ontology.yml` と図）・クレンジングの定義・クレンジング層（stg）の PR ができる（`dbt build` で検証済み）。
+4. マージ後に「店舗ごと・商品カテゴリごとの入荷数量を月別に見たい」と要求すると、インタビュー → `fct_inventory_movements`（既存の `dim_store` / `dim_product` を再利用）・指標・チャートの PR ができ、作った fct がオントロジーの概念に書き込まれる。ディメンションの名前がオントロジーの概念の dim と食い違うと、確定前の課題に出る。
+
 ## Diagrams
 
 ```mermaid
@@ -109,6 +116,7 @@ flowchart LR
 | `adp.interview` | `backend/src/adp/interview/` | BEAM インタビューの状態機械とプロンプト |
 | `adp.catalog` | `backend/src/adp/catalog/` | DuckDB と dbt のメタデータをプロファイリングし、tool として公開 |
 | `adp.cleansing` | `backend/src/adp/cleansing/` | クレンジングの定義（`warehouse/cleansing/`）の型・検証と、定義からのクレンジング層（stg）の決定的な生成、プロファイルからの雛形（#68、ADR 0004） |
+| `adp.onboarding` | `backend/src/adp/onboarding/` | 源泉の取り込み: オントロジーへの追加案（エージェント / プロファイル）・検証・バスマトリクスの差分、確定後の PR（オントロジー・クレンジングの定義・stg）（#69） |
 | `adp.ontology` | `backend/src/adp/ontology/` | オントロジー（業務の概念・属性・関係・制約）の型・検証・Mermaid の図の生成、源泉と dbt との照合（#67） |
 | `adp.design` | `backend/src/adp/design/` | Event Matrix → スター設計への変換 |
 | `adp.generation` | `backend/src/adp/generation/` | dbt / Semantic Layer / テストの生成と自己修復ループ |
@@ -173,6 +181,7 @@ MVP の段階では手動で計測する。
 | v2-1 | データ一覧 | 開始画面で使えるデータ・指標が見られる。源泉のデータプロファイル | #38, #39, #62 |
 | v2-2 | 可視化 | dbt Charts で Semantic Layer の指標を描画できる画面、生成 PR にチャート定義 | #40〜#43 |
 | v2-3 | フィードバック | 発言ごとの評価と、eval・プロンプト改善のサイクル | #44, #45 |
+| v3-2 | データ基盤の整理 | オントロジー、クレンジング層、源泉の取り込み（S5） | #67, #68, #69 |
 | v2-E2E | 通し | S3 と S4 の 1〜2（フィードバックが集計に出るまで）が通しで動く。S4 の 3（改善）は開発者の手順 | #46 |
 
 ## Interfaces
@@ -200,6 +209,9 @@ MVP の段階では手動で計測する。
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62） |
 | GET | `/ontology` | オントロジーの図（Mermaid）と、源泉・dbt のモデルとの食い違い、未整理の源泉（#67） |
+| POST | `/sources/{table}/onboarding/draft` | 源泉の取り込みの下書き（`{"agent": bool}`。追加案・クレンジングの定義・追加後の図・バスマトリクスの候補。#69） |
+| POST | `/sources/{table}/onboarding` | 確定した追加案とクレンジングの定義で、取り込みの PR を作るジョブを始める（進捗は `/jobs/{id}/events`） |
+| GET | `/sources/{table}/onboarding` | その源泉の最新の取り込みジョブ |
 | GET | `/sources/{table}/cleansing` | 源泉のクレンジングの定義と、プロファイルから作った雛形（#68） |
 | GET | `/sources/{table}/profile` | 源泉 1 つのデータプロファイル（列ごとの型・NULL 率・ユニーク数・最小/最大・上位の値、主キー/外部キーの候補、使っている整備済みモデル。#62）。読み取り専用の Catalog 経由で、対象スキーマ外は 404 |
 | POST | `/sessions/{id}/feedback`（v2） | 発言ごとの評価（👍 / 👎・分類・コメント）、セッション全体の評価（5 段階・コメント）。同じ発言への送り直しは上書き（#44） |
