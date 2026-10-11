@@ -203,6 +203,7 @@ MVP の段階では手動で計測する。
 | Method | Path | 内容 |
 |---|---|---|
 | POST | `/sessions` | セッションを開始する（最初の要求文を渡す） |
+| GET | `/sessions` | これまでの要求の一覧（タイトル・段階・生成ジョブ・PR と GitHub 上の状態（レビュー待ち / マージ済み / クローズ）・作った指標）。開始画面の「これまでの要求と PR」（`?history`）から開く（#73）。PR の状態は gh で問い合わせ、5 分間・マージ済みは以後ずっと使い回す |
 | POST | `/sessions/{id}/messages` | 回答を送る。応答は SSE で返す（テキストと BEAM 成果物の差分） |
 | GET | `/sessions/{id}` | 会話と BEAM 成果物の現在状態を返す |
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |

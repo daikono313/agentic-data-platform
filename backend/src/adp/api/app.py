@@ -194,6 +194,11 @@ def create_app(
     def create_session(body: CreateSession) -> dict[str, Any]:
         return service.view(service.create(body.request))
 
+    @app.get("/sessions")
+    async def list_sessions() -> dict[str, Any]:
+        """これまでの要求と生成ジョブ・PR の状態の一覧（#73）。"""
+        return await asyncio.to_thread(service.history)
+
     @app.get("/sessions/{session_id}")
     def get_session(session_id: str) -> dict[str, Any]:
         try:
@@ -314,5 +319,7 @@ def build_default_app() -> FastAPI:
         retention_days = RETENTION_DAYS
     store = Store(REPO_ROOT / ".adp" / "app.db", feedback_retention_days=retention_days)
     onboarding = OnboardingPipeline(pipeline.config, runner, settings)
-    service = SessionService(store, interviewer, pipeline.run, onboarding.run)
+    service = SessionService(
+        store, interviewer, pipeline.run, onboarding.run, pr_state=pipeline.github.pr_state
+    )
     return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding)

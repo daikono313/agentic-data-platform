@@ -79,3 +79,16 @@ export type InterviewEvent =
 export type JobEvent =
   | { event: 'step'; data: JobStep }
   | { event: 'done'; data: JobView }
+
+/** GET /sessions の 1 件（#73） */
+export interface SessionSummary {
+  id: string
+  title: string
+  request: string
+  phase: Phase
+  updated_at: string
+  metrics: string[]
+  job: JobView | null
+  /** GitHub の PR の状態（取れなければ null） */
+  pr_state: 'OPEN' | 'MERGED' | 'CLOSED' | null
+}
