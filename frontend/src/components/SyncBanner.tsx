@@ -134,7 +134,7 @@ export function SyncBanner({ onDone, pollMs = SYNC_POLL_MS }: { onDone?: () => v
       setError(errorText(e))
       // 別のタブ・自動反映で実行中なら、それを表示する
       const now = await api.syncStatus().catch(() => null)
-      if (now?.job?.status === 'running' && !following.current) follow(now.job)
+      if (now?.job?.status === 'running' && !following.current && !followed.current.has(now.job.id)) follow(now.job)
       return
     }
     await follow(started)
