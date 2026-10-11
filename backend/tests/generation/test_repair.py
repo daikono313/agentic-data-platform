@@ -255,3 +255,33 @@ def test_guard_protects_macros(tmp_path: Path) -> None:
     """マクロ（汎用テストの上書きでいつも通るようにできる）は書かせない（#95 レビュー）。"""
     guard = WorkspaceGuard(tmp_path)
     assert guard("Write", {"file_path": "macros/test_relationships.sql", "content": "x"})
+
+
+def test_repair_prompt_commands_match_the_guard(tmp_path: Path) -> None:
+    """プロンプトが使ってよいと書くコマンドは、すべてガードが通し、その逆も成り立つ（#126）。"""
+    import re
+
+    from adp.generation.guard import _DBT, _MF
+    from adp.generation.repair import repair_prompt
+
+    prompt = repair_prompt()
+    listed = re.search(r"使えるコマンドは (.+) だけ", prompt)
+    assert listed, "プロンプトに使えるコマンドの一覧が無い"
+    mentioned = {
+        (tool, sub.strip())
+        for tool, subs in re.findall(r"(dbt|mf)（([^）]*)）", listed.group(1))
+        for sub in subs.split("/")
+    }
+    # 一覧の外で触れている `dbt xxx` / `mf xxx` も対象にする
+    mentioned |= set(re.findall(r"\b(dbt|mf) ([a-z][a-z-]*)", prompt))
+    assert {t for t, _ in mentioned} == {"dbt", "mf"}
+
+    guard = WorkspaceGuard(tmp_path)
+    for tool, sub in sorted(mentioned):
+        assert guard("Bash", {"command": f"{tool} {sub}"}) is None, f"{tool} {sub} を拒否する"
+    shown = {s for t, s in mentioned if t == "dbt"}
+    assert shown >= _DBT - {"list"}
+    assert {s for t, s in mentioned if t == "mf"} >= _MF
+    for cmd in ("dbt run", "dbt show", "dbt deps", "dbt seed", "dbt run-operation x"):
+        assert guard("Bash", {"command": cmd}) is not None, cmd
+        assert cmd.split()[1] not in shown

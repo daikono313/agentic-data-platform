@@ -108,7 +108,44 @@ async def test_run_refuses_dirty_main_and_diverged_history(tmp_path: Path) -> No
     before = git(work, "rev-parse", "HEAD")
     result = await Sync(work, _bin(tmp_path / "y"), GitWorkspace(work)).run()
     assert not result.ok  # 早送りできない（手元にだけあるコミット）
+    assert result.error and "origin に無いコミット" in result.error  # merge を試す前に止める
     assert git(work, "rev-parse", "HEAD") == before
+
+
+def test_diverged_main_cannot_be_pulled_and_auto_sync_does_not_start(tmp_path: Path) -> None:
+    """手元の main にだけあるコミットがあると取り込めない。自動反映もジョブを始めない（#126）。"""
+    from adp.sync import AutoSync
+
+    work, _ = _repos(tmp_path)
+    (work / "warehouse" / "c.txt").write_text("local")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "local")
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    status = sync.status()
+    assert status.behind == 1 and status.clean and status.branch == "main"
+    assert not status.can_pull
+    assert status.reason
+    assert "手元の main に origin に無いコミットがあります（1 件）" in status.reason
+    assert status.can_rebuild  # dbt の作り直しの条件（main で変更なし）は変えない
+
+    started: list[int] = []
+    auto = AutoSync(sync, lambda: started.append(1), interval_s=1)
+    for _ in range(2):  # 毎回の確認でも始めない
+        assert not auto.tick()
+    assert started == []
+    assert "origin に無いコミット" in (auto.state.last_note or "")
+
+
+def test_local_commits_already_pushed_do_not_block_pull(tmp_path: Path) -> None:
+    """origin/main に含まれるコミットは「手元だけ」ではない（取り込める）。"""
+    work, _ = _repos(tmp_path)
+    git(work, "pull", "-q", "--ff-only", "origin", "main")
+    (work / "warehouse" / "c.txt").write_text("local")
+    git(work, "add", ".")
+    git(work, "commit", "-q", "-m", "local")
+    git(work, "push", "-q", "origin", "main")
+    status = Sync(work, _bin(tmp_path), GitWorkspace(work)).status()
+    assert status.behind == 0 and status.reason is None and status.can_pull
 
 
 def test_app_code_changes_are_not_pulled_from_the_screen(tmp_path: Path) -> None:

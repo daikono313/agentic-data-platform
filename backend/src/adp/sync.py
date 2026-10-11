@@ -3,8 +3,8 @@
 生成 PR・取り込み PR が GitHub でマージされても、手元（アプリが動いているチェックアウト）の
 warehouse は古いまま。「main の新しい変更を取り込む → dbt build → 一覧を更新」を行う。
 
-- 手元が main で、変更が無いときだけ、確かめた origin/main のコミットへ `git merge --ff-only`
-  する（作業中のブランチや変更は触らない）
+- 手元が main で、変更も手元だけのコミットも無いときだけ、確かめた origin/main のコミットへ
+  `git merge --ff-only` する（作業中のブランチや変更は触らない）
 - 反映は dbt deps / build / parse と、オントロジー・クレンジング・チャートの検査（`make dbt-build`
   と同じ）。一覧（/datasets）は manifest を読み直すので、終われば新しい指標が見える
 - 自動反映（AutoSync）: backend が `ADP_AUTO_SYNC_INTERVAL_S` 秒（既定 60）ごとにマージを確かめ、
@@ -54,7 +54,8 @@ class SyncStatus(BaseModel):
     behind: int
     """origin/main にあって手元に無いコミットの数。"""
     can_pull: bool
-    """手元が main で変更が無く、アプリのコードの変更を含まない（画面から取り込める）。"""
+    """手元が main で変更も手元だけのコミットも無く、アプリのコードの変更を含まない（画面から
+    取り込める）。"""
     can_rebuild: bool
     """手元が main で変更が無い（dbt の作り直しだけはできる）。"""
     reason: str | None = None
@@ -129,14 +130,22 @@ class Sync:
             target = None
         try:
             behind = int(git("rev-list", "--count", f"HEAD..{target}")) if target else 0
+            # 手元にだけあるコミット。あると早送り（merge --ff-only）できない
+            ahead = int(git("rev-list", "--count", f"{target}..HEAD")) if target else 0
             changed = git("diff", "--name-only", f"HEAD...{target}").splitlines() if behind else []
         except Exception:
-            behind, changed = 0, []
+            behind, ahead, changed = 0, 0, []
         reason = None
         if branch != "main":
             reason = f"手元が main ではありません（{branch}）。main に切り替えると取り込めます"
         elif not clean:
             reason = "手元に変更があります。変更を片付けると取り込めます"
+        elif ahead:
+            reason = (
+                f"手元の main に origin に無いコミットがあります（{ahead} 件）。"
+                "早送りで取り込めないため、手で push するか、手元の main を origin/main に"
+                "揃えてください"
+            )
         app = [p for p in changed if p.startswith(APP_PATHS) or p == "Makefile"]
         if reason is None and app:
             reason = (
@@ -259,8 +268,9 @@ class AutoSyncState(BaseModel):
 class AutoSync:
     """マージされた PR を一定の間隔で確かめ、取り込めるなら反映ジョブを始める（#106）。
 
-    取り込めない（手元が main 以外・変更あり・アプリのコードを含む）ときは何もせず、理由を残す
-    （画面に出す）。ジョブを始めるのは start（SessionService.start_sync。ほかのジョブと重ねない）。
+    取り込めない（手元が main 以外・変更あり・手元だけのコミットあり・アプリのコードを含む）ときは
+    何もせず、理由を残す（画面に出す）。ジョブを始めるのは start（SessionService.start_sync。
+    ほかのジョブと重ねない）。
     """
 
     sync: Sync
