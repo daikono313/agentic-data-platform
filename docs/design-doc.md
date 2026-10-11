@@ -108,12 +108,14 @@ flowchart LR
 | `adp.beam` | `backend/src/adp/beam/` | BEAM 成果物の型（Pydantic）・検証・YAML 入出力（システムの中心） |
 | `adp.interview` | `backend/src/adp/interview/` | BEAM インタビューの状態機械とプロンプト |
 | `adp.catalog` | `backend/src/adp/catalog/` | DuckDB と dbt のメタデータをプロファイリングし、tool として公開 |
+| `adp.ontology` | `backend/src/adp/ontology/` | オントロジー（業務の概念・属性・関係・制約）の型・検証・Mermaid の図の生成、源泉と dbt との照合（#67） |
 | `adp.design` | `backend/src/adp/design/` | Event Matrix → スター設計への変換 |
 | `adp.generation` | `backend/src/adp/generation/` | dbt / Semantic Layer / テストの生成と自己修復ループ |
 | `adp.llm` | `backend/src/adp/llm/` | LLM 呼び出しの抽象化（モデルの段階的エスカレーション、認証の切り替え） |
 | `adp.vcs` | `backend/src/adp/vcs/` | git worktree / commit / PR 作成 |
 | warehouse | `warehouse/` | dbt プロジェクト（生成物の出力先）とサンプルデータの生成 |
 | beam | `beam/` | 確定した BEAM 成果物（要求の正本） |
+| ontology | `ontology/` | オントロジーの正本（`ontology.yml`）。`docs/ontology.md` はここから生成する |
 | evals | `evals/` | インタビューと生成のシナリオ、期待成果物 |
 
 ## Glossary
@@ -126,6 +128,7 @@ flowchart LR
 - **conformed dimension（共通ディメンション）**: 複数の fct で共有されるディメンション。
 - **BEAM 成果物**: Canvas と Matrix とメトリクス要求をまとめた構造化データ（`beam/*.yml`）。
 - **certificate**: PR をマージしてよいと機械的に判定できる条件の集合（[certificate.md](certificate.md)）。
+- **オントロジー**: 業務の概念（もの・人・場所 = entity、出来事 = event）と、その属性・関係・制約の整理（[ontology.md](ontology.md)、正本は `ontology/ontology.yml`）。entity は dim、event は fact の候補になる。源泉が増えたら、まずオントロジーを更新してから fact / dim を整理する。
 
 ## Constraints
 
@@ -195,6 +198,7 @@ MVP の段階では手動で計測する。
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62） |
+| GET | `/ontology` | オントロジーの図（Mermaid）と、源泉・dbt のモデルとの食い違い、未整理の源泉（#67） |
 | GET | `/sources/{table}/profile` | 源泉 1 つのデータプロファイル（列ごとの型・NULL 率・ユニーク数・最小/最大・上位の値、主キー/外部キーの候補、使っている整備済みモデル。#62）。読み取り専用の Catalog 経由で、対象スキーマ外は 404 |
 | POST | `/sessions/{id}/feedback`（v2） | 発言ごとの評価（👍 / 👎・分類・コメント）、セッション全体の評価（5 段階・コメント）。同じ発言への送り直しは上書き（#44） |
 | GET | `/feedback/categories`（v2） | フィードバックの分類（質問が重複している、専門用語がわからない など） |

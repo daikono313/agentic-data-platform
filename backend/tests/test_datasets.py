@@ -288,3 +288,29 @@ def test_broken_bus_matrix_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(index, "bus_matrix", broken)
     errors: list[str] = []
     assert index._bus(errors).rows == [] and errors
+
+
+def test_ontology_api(repo: Path, tmp_path: Path) -> None:
+    """GET /ontology: 図と食い違いを返す。yml が無ければ 404、形式の誤りは 422（#67）。"""
+    import shutil
+
+    async def noop(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    service = SessionService(
+        Store(tmp_path / "app.db"), Interviewer(ScriptedRunner([]), LLMSettings()), noop
+    )
+    catalog = Catalog(repo / "warehouse/data/dev.duckdb", repo / "warehouse/target/manifest.json")
+    client = TestClient(create_app(service, DatasetIndex(repo, catalog)))
+    if (repo / "ontology").exists():
+        shutil.rmtree(repo / "ontology")
+    assert client.get("/ontology").status_code == 404
+    (repo / "ontology").mkdir()
+    src = Path(__file__).resolve().parents[2] / "ontology" / "ontology.yml"
+    (repo / "ontology" / "ontology.yml").write_text(src.read_text(encoding="utf-8"))
+    body = client.get("/ontology").json()
+    assert body["mermaid"].startswith("flowchart")
+    assert body["errors"] == [] and body["unmapped_sources"] == []
+    (repo / "ontology" / "ontology.yml").write_text("version: 1\ndomains: []\nconcepts: [1]\n")
+    assert client.get("/ontology").status_code == 422
+    shutil.rmtree(repo / "ontology")

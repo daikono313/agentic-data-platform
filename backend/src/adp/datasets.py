@@ -119,6 +119,17 @@ class BusMatrix(BaseModel):
     rows: list[BusRow] = Field(default_factory=list)
 
 
+class OntologyView(BaseModel):
+    """オントロジーの画面用（#67）。"""
+
+    mermaid: str
+    ontology: dict[str, Any]
+    unmapped_sources: list[str] = Field(default_factory=list)
+    """どの概念にもなっていない源泉（未整理）。"""
+    errors: list[str] = Field(default_factory=list)
+    """源泉・dbt のモデルとの食い違い。"""
+
+
 class Datasets(BaseModel):
     metrics: list[MetricInfo]
     models: list[ModelInfo]
@@ -420,6 +431,30 @@ class DatasetIndex:
         except Exception as e:  # 壊れた manifest でも一覧の他の部分は返す
             errors.append(f"バスマトリクスを作れませんでした: {type(e).__name__}")
             return BusMatrix()
+
+    def ontology(self) -> OntologyView:
+        """`ontology/ontology.yml` を読み、図（Mermaid）と食い違いを返す。
+
+        yml が無い・壊れている場合は FileNotFoundError / ValueError。
+        """
+        from adp.ontology import load, mermaid
+        from adp.ontology.check import check
+
+        onto = load(self.repo_root / "ontology" / "ontology.yml")
+        view = OntologyView(
+            mermaid=mermaid(onto),
+            ontology=onto.model_dump(mode="json", by_alias=True, exclude_none=True),
+        )
+        if self.catalog is None:
+            return view
+        try:
+            result = check(onto, self.catalog, self.warehouse / "target" / "manifest.json")
+        except CatalogUnavailable as e:
+            view.errors.append(f"源泉との照合ができませんでした: {e}")
+            return view
+        view.errors += result.errors
+        view.unmapped_sources = result.unmapped_sources
+        return view
 
     def all(self) -> Datasets:
         errors: list[str] = []
