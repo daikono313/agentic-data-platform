@@ -1,6 +1,6 @@
 # モデリング規約
 
-`warehouse/` の dbt モデルの規約。既存の共通ディメンション（`dim_*`）と、アプリが生成するモデルの両方に適用する。生成器（`backend/src/adp/generation/`）はこの文書をテンプレートとして実装している。手書きのリファレンス fct（`backend/tests/fixtures/generation/reference/`）は、生成結果と行単位で一致することをテストで確認している。
+`warehouse/` の dbt モデルの規約。既存の共通ディメンション（`dim_*`）と、アプリが生成するモデルの両方に適用する。**この文書は人間が持ち主**で、生成器（`backend/src/adp/generation/`。AI が書くコード）はこの文書をテンプレートとして実装している。規約を変えるときは、まずこの文書を直し、それに合わせて生成器を直す。リファレンス fct（`backend/tests/fixtures/generation/reference/`。生成器とは別に書いたもの）は、生成結果と行単位で一致することをテストで確認している。
 
 ## レイヤー
 

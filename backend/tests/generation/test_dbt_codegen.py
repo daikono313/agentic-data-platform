@@ -1,8 +1,6 @@
 """生成した dbt モデルを、リポジトリの warehouse を複製した一時プロジェクトで実際に build する。"""
 
-import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,30 +21,10 @@ DBT = Path(sys.executable).parent / "dbt"
 
 
 def _warehouse_copy(tmp: Path) -> Path:
-    dst = tmp / "warehouse"
-    shutil.copytree(
-        ROOT / "warehouse",
-        dst,
-        ignore=shutil.ignore_patterns("target", "data", "logs", ".user.yml"),
-    )
-    # アプリが生成してマージされたモデル（ヘッダで判別）を除き、生成前の warehouse から始める
-    for path in [*dst.joinpath("models").rglob("*"), *dst.joinpath("tests").rglob("*")]:
-        if path.is_file() and path.suffix in {".sql", ".yml"}:
-            head = path.read_text(encoding="utf-8").lstrip()[:40]
-            if head.startswith(("-- adp により生成", "# adp により生成")):
-                path.unlink()
-    # 生成した指標を使うチャートも除く（指標が無いと書き出せないため）
-    for path in [*dst.joinpath("charts").glob("*.yml"), *dst.joinpath("chart_specs").glob("*.yml")]:
-        path.unlink()
-    spec = importlib.util.spec_from_file_location(
-        "gen_sample", dst / "scripts/generate_sample_data.py"
-    )
-    assert spec and spec.loader
-    gen = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = gen
-    spec.loader.exec_module(gen)
-    gen.load(dst / "data" / "dev.duckdb", gen.generate(500, 3))
-    return dst
+    """生成前の warehouse と小さなサンプルデータ（eval と同じ作り方。#104）。"""
+    from adp.evals.repair import prepare_warehouse
+
+    return prepare_warehouse(tmp)
 
 
 def _dbt(warehouse: Path, *args: str) -> subprocess.CompletedProcess[str]:

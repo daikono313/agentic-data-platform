@@ -2,6 +2,8 @@
 
 インタビューエージェント（`adp.interview`）と開発者が参照する、BEAM✲ の手法の要約。出典: *Agile Data Warehouse Design*（Lawrence Corr & Jim Stagnitto）。
 
+**人間が持ち主の知識ファイル。** この内容はそのままインタビューのシステムプロンプトに入るので、直すとプロンプトのバージョンが変わる。直す PR では eval の前後比較の表を貼る（certificate の C10）。
+
 ## 基本の考え方
 
 - Kimball 流のディメンショナルモデリングをもとに、**アジャイルで少しずつ届ける**ことを重視する。

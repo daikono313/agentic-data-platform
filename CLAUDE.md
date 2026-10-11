@@ -1,4 +1,4 @@
-# auto_data_platform (ADP)
+# agentic-data-platform (ADP)
 
 ビジネスユーザーの指標要求を、Claude が BEAM✲ でヒアリングし、dbt（dim / fct）・Semantic Layer・テストを実装した PR にする Web アプリとデータ基盤。
 
@@ -22,6 +22,14 @@
 
 各ディレクトリの規約は、そのディレクトリの `CLAUDE.md` を参照する。
 
+## 人間と AI の担当
+
+**コードは AI が書き、ドキュメント（方針・規約・知識）は人間が書いて直す。** 全体のフローは [design-doc の「全体のフローと担当」](docs/design-doc.md#全体のフローと担当)、ファイルごとの持ち主は [「ファイルの持ち主」](docs/design-doc.md#ファイルの持ち主) を参照。
+
+- アプリのコード・プロンプト（`backend/`・`frontend/` など）は Claude Code が書く。
+- ドキュメントは人間が持ち主。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよいが、中身（方針・規約・知識。guardrails の制限を緩めること、ADR の採否を含む）を変えるときはオーナーの承認を得る（certificate の T3）。
+- 生成物（stg・生成した fct と Semantic Layer・`warehouse/charts/`・`docs/ontology.md`・`frontend/src/generated/` など。一覧は「ファイルの持ち主」）は手で直さない。元の定義（`beam/`・`ontology/`・`warehouse/cleansing/`）か、規約・生成器を直して作り直す。
+
 ## コマンド
 
 ```
@@ -32,7 +40,8 @@ make dbt-build  # dbt build + dbt parse（指標があれば mf validate-configs
 make ontology   # ontology/ontology.yml から docs/ontology.md を生成し、源泉・dbt と照合する
 make cleansing  # warehouse/cleansing/ の定義からクレンジング層（stg）を生成する
 make eval       # インタビューの eval（実際の LLM。REPEAT=N で繰り返す）
-make e2e        # 実際の LLM で通しの E2E（S1。V2=1 で S3・S4。既定は dry-run、PR=1 で本物の PR）
+make e2e        # 実際の LLM で通しの E2E（S1。V2=1 で S3・S4、V3=1 で S5。既定は dry-run、PR=1 で本物の PR）
+make charts     # warehouse/chart_specs/ から dbt Charts のボード（warehouse/charts/）を書き出す
 make eval-compare BEFORE=… AFTER=…  # eval の前後比較（プロンプトを変えたら PR に貼る。C10）
 make eval-repair  # 生成の自己修復の eval（失敗を入れた生成物を実際の LLM で直せるか。SCENARIO= / REPEAT=）
 make feedback-report  # フィードバックの集計（SUMMARY=1 で Claude の要約と改善案）
@@ -43,10 +52,10 @@ make dev        # backend と frontend を起動
 ## 作業ルール
 
 - **作業はこのディレクトリの中で完結させる。** ディレクトリの外で操作が必要なとき（グローバル設定、システムへのインストールなど）は、実行前にオーナーに確認する。システムに対する変更・削除は行わない。
-- issue ごとにブランチ（`<type>/<issue番号>-<slug>`、例: `feat/7-beam-schema`）を切って PR を作る。certificate を満たしたら squash merge してよい（[certificate.md](docs/certificate.md)）。
+- issue ごとにブランチ（`<type>/<issue番号>-<slug>`、例: `feat/7-beam-schema`）を切って PR を作る。certificate を満たしたら squash merge してよい（[certificate.md](docs/certificate.md)）。ただし人間が持ち主のドキュメントの中身を変える PR（T3）は、オーナーの承認を得てから。
 - PR 本文には `Closes #<issue>` と、certificate の各項目の結果を書く。
 - 敵対的レビューは、実装したコンテキストとは別の **新しい subagent** で行う。
-- design-doc の決定（Resolved issues）を覆す必要が出たら、`docs/adr/` に ADR を追加し、design-doc も更新する。
+- design-doc の決定（Resolved issues）を覆す必要が出たら、`docs/adr/` に ADR を `Proposed` で追加し、design-doc も更新する。`Accepted` にするのはオーナー（T3）。
 - 新しい依存を入れるときはライセンス（MIT / Apache-2.0 / BSD 系）を確認し、PR に書く。
 - 同じ種類の失敗が続いたら、個別の修正ではなく、プロンプト・テンプレート・certificate の側を直す。
 - git の commit と push は daikono313 のアカウントで行われる（includeIf で設定済み）。

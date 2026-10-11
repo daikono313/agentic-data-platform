@@ -61,7 +61,7 @@ class ProjectInfo:
 
     def _yaml_docs(self) -> list[dict[str, Any]]:
         docs = []
-        for p in (self.warehouse_dir / "models").rglob("*.yml"):
+        for p in sorted((self.warehouse_dir / "models").rglob("*.yml")):  # 順序を決まったものに
             data = yaml.safe_load(p.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 docs.append(data)
@@ -92,13 +92,15 @@ class ProjectInfo:
                 return str(p.relative_to(self.warehouse_dir)), text
         return None
 
-    def declared_sources(self) -> set[str]:
-        declared = set()
+    def declared_sources(self) -> dict[str, str]:
+        declared: dict[str, str] = {}
         for doc in self._yaml_docs():
             for src in doc.get("sources", []) or []:
-                if isinstance(src, dict):
+                if isinstance(src, dict) and src.get("name"):
                     schema = src.get("schema", src.get("name"))
-                    declared |= {f"{schema}.{t['name']}" for t in src.get("tables", [])}
+                    for t in src.get("tables", []) or []:
+                        if isinstance(t, dict) and "name" in t:
+                            declared.setdefault(f"{schema}.{t['name']}", str(src.get("name")))
         return declared
 
     def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
