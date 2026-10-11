@@ -15,8 +15,8 @@ from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
 from adp.generation.project import ProjectInfo
-from adp.generation.semantic import MetricQuery, run_query
-from tests.generation.test_dbt_codegen import DBT, FIXTURES, _dbt, _warehouse_copy
+from adp.generation.semantic import MetricQuery
+from tests.generation.test_dbt_codegen import FIXTURES, _dbt, _warehouse_copy, mf_query
 
 RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "evals" / "return_rate_by_category.json"
 
@@ -52,10 +52,10 @@ def test_existing_fact_gets_missing_measure_and_metrics(after_s1: Path) -> None:
     assert "as quantity_sold" in sql_after
     assert _dbt(wh, "build").returncode == 0
     for q in generation.queries:
-        result = run_query(wh, DBT.parent / "mf", q)
+        result = mf_query(wh, q)
         assert result.returncode == 0, (q, result.stderr[-500:])
     # S1 の指標もそのまま取れる
-    revenue = run_query(wh, DBT.parent / "mf", MetricQuery("revenue", ["store__store_name"]))
+    revenue = mf_query(wh, MetricQuery("revenue", ["store__store_name"]))
     assert revenue.returncode == 0, revenue.stderr[-500:]
 
 

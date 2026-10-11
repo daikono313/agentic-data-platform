@@ -63,82 +63,83 @@ def test_v2_end_to_end(repo: Path) -> None:  # noqa: F811
     )
     store = Store(repo / ".adp" / "app.db")
     service = SessionService(store, interviewer, pipeline.run)
-    client = TestClient(create_app(service, DatasetIndex(repo, catalog), ChartViews(repo)))
+    # 生成ジョブはバックグラウンドのタスクで進むので、イベントループを保ったまま使う
+    with TestClient(create_app(service, DatasetIndex(repo, catalog), ChartViews(repo))) as client:
+        # S3-1. 開始画面で使えるデータを見る（返品のテーブルがある）
+        datasets = client.get("/datasets").json()
+        assert any(s["name"] == "raw.returns" for s in datasets["sources"]), datasets["errors"]
 
-    # S3-1. 開始画面で使えるデータを見る（返品のテーブルがある）
-    datasets = client.get("/datasets").json()
-    assert any(s["name"] == "raw.returns" for s in datasets["sources"]), datasets["errors"]
-
-    # S3-3. 要求を出してインタビュー（記録した各ターンを再生）
-    request = record["beam"]["request"]
-    sid = client.post("/sessions", json={"request": request}).json()["id"]
-    for i in range(len(turns)):
-        events = parse_sse(
-            client.post(f"/sessions/{sid}/messages", json={"text": f"回答 {i}"}).text
-        )
-        assert events[-1][0] == "done"
-        if i == 0:
-            # S4-1. インタビュー中に、わかりにくい質問へフィードバックする
-            res = client.post(
-                f"/sessions/{sid}/feedback",
-                json={
-                    "kind": "message",
-                    "message_index": 1,
-                    "thumb": "down",
-                    "categories": ["jargon"],
-                    "comment": "『粒度』の意味がわからない",
-                },
+        # S3-3. 要求を出してインタビュー（記録した各ターンを再生）
+        request = record["beam"]["request"]
+        sid = client.post("/sessions", json={"request": request}).json()["id"]
+        for i in range(len(turns)):
+            events = parse_sse(
+                client.post(f"/sessions/{sid}/messages", json={"text": f"回答 {i}"}).text
             )
-            assert res.status_code == 200, res.text
-            assert res.json()["prompt_version"]
-    view = client.get(f"/sessions/{sid}").json()
-    assert view["phase"] == "review" and view["issues"] == [], view["issues"]
+            assert events[-1][0] == "done"
+            if i == 0:
+                # S4-1. インタビュー中に、わかりにくい質問へフィードバックする
+                res = client.post(
+                    f"/sessions/{sid}/feedback",
+                    json={
+                        "kind": "message",
+                        "message_index": 1,
+                        "thumb": "down",
+                        "categories": ["jargon"],
+                        "comment": "『粒度』の意味がわからない",
+                    },
+                )
+                assert res.status_code == 200, res.text
+                assert res.json()["prompt_version"]
+        view = client.get(f"/sessions/{sid}").json()
+        assert view["phase"] == "review" and view["issues"] == [], view["issues"]
 
-    # S3-4. 確定 → 生成ジョブ → PR（チャートの定義と画像を含む）
-    final = client.post(f"/sessions/{sid}/finalize").json()
-    job_id = final["job"]["id"]
-    done = None
-    deadline = time.monotonic() + 600
-    while done is None and time.monotonic() < deadline:
-        for name, data in parse_sse(client.get(f"/jobs/{job_id}/events").text):
-            if name == "done":
-                done = data
-    assert done is not None, "生成ジョブが終わりませんでした"
-    assert done["status"] == "succeeded", done
-    charts = next(s for s in done["steps"] if s["step"] == "charts")
-    assert charts["status"] == "done", charts
-    branch = done["branch"]
-    added = git(repo, "diff", "--name-only", f"origin/main...origin/{branch}").splitlines()
-    beam_name = record["beam"]["name"]
-    assert f"warehouse/chart_specs/{beam_name}.yml" in added
-    assert f"warehouse/charts/{beam_name}.yml" in added
-    assert not any(f.startswith("pr_assets/") for f in added)  # 画像は main に残さない
-    body = gh.bodies[-1]
-    assert "## チャート" in body and "![チャート](https://github.com/" in body
+        # S3-4. 確定 → 生成ジョブ → PR（チャートの定義と画像を含む）
+        final = client.post(f"/sessions/{sid}/finalize").json()
+        job_id = final["job"]["id"]
+        done = None
+        deadline = time.monotonic() + 600
+        while done is None and time.monotonic() < deadline:
+            for name, data in parse_sse(client.get(f"/jobs/{job_id}/events").text):
+                if name == "done":
+                    done = data
+        assert done is not None, "生成ジョブが終わりませんでした"
+        assert done["status"] == "succeeded", done
+        charts = next(s for s in done["steps"] if s["step"] == "charts")
+        assert charts["status"] == "done", charts
+        branch = done["branch"]
+        added = git(repo, "diff", "--name-only", f"origin/main...origin/{branch}").splitlines()
+        beam_name = record["beam"]["name"]
+        assert f"warehouse/chart_specs/{beam_name}.yml" in added
+        assert f"warehouse/charts/{beam_name}.yml" in added
+        assert not any(f.startswith("pr_assets/") for f in added)  # 画像は main に残さない
+        body = gh.bodies[-1]
+        assert "## チャート" in body and "![チャート](https://github.com/" in body
 
-    # S4-1. セッションの最後に全体の評価
-    res = client.post(
-        f"/sessions/{sid}/feedback", json={"kind": "session", "score": 3, "comment": "質問が多い"}
-    )
-    assert res.status_code == 200, res.text
+        # S4-1. セッションの最後に全体の評価
+        res = client.post(
+            f"/sessions/{sid}/feedback",
+            json={"kind": "session", "score": 3, "comment": "質問が多い"},
+        )
+        assert res.status_code == 200, res.text
 
-    # S3-4. 完了画面から、作った指標の描画画面へ（PR の内容でプレビュー）
-    metric = record["beam"]["metrics"][0]["name"]
-    options = client.get("/charts/options", params={"job_id": job_id}).json()
-    assert options["preview"] is True
-    info = next(m for m in options["metrics"] if m["name"] == metric)
-    dimension = next(d["name"] for d in info["dimensions"] if d["kind"] == "categorical")
-    for req in (
-        {"metric": metric, "grain": "month"},
-        {"metric": metric, "dimension": dimension, "grain": "week"},
-        {"metric": metric, "dimension": dimension, "grain": None, "start": "2024-01-01"},
-    ):
-        rendered = client.post("/charts/render", params={"job_id": job_id}, json=req)
-        assert rendered.status_code == 200, rendered.text
-        assert rendered.json()["svg"].lstrip().startswith("<svg")
+        # S3-4. 完了画面から、作った指標の描画画面へ（PR の内容でプレビュー）
+        metric = record["beam"]["metrics"][0]["name"]
+        options = client.get("/charts/options", params={"job_id": job_id}).json()
+        assert options["preview"] is True
+        info = next(m for m in options["metrics"] if m["name"] == metric)
+        dimension = next(d["name"] for d in info["dimensions"] if d["kind"] == "categorical")
+        for req in (
+            {"metric": metric, "grain": "month"},
+            {"metric": metric, "dimension": dimension, "grain": "week"},
+            {"metric": metric, "dimension": dimension, "grain": None, "start": "2024-01-01"},
+        ):
+            rendered = client.post("/charts/render", params={"job_id": job_id}, json=req)
+            assert rendered.status_code == 200, rendered.text
+            assert rendered.json()["svg"].lstrip().startswith("<svg")
 
-    # S4-2. フィードバックの集計に、インタビュー中の内容が出る
-    text = report(store.feedback())
-    assert "👎 1" in text and "『粒度』の意味がわからない" in text
-    assert "| 専門用語がわからない | 1 | `no_unexplained_jargon` |" in text
-    assert "平均 3.0 点" in text
+        # S4-2. フィードバックの集計に、インタビュー中の内容が出る
+        text = report(store.feedback())
+        assert "👎 1" in text and "『粒度』の意味がわからない" in text
+        assert "| 専門用語がわからない | 1 | `no_unexplained_jargon` |" in text
+        assert "平均 3.0 点" in text

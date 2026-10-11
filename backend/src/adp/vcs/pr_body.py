@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from adp.beam import BeamModel, W, build_event_matrix
 from adp.design import IssueSeverity, PhysicalDesign, er_diagram
 from adp.generation import AgentTask
+from adp.markdown import cell
 
 _W_LABEL = {
     W.WHO: "Who（誰が）",
@@ -52,25 +52,6 @@ class ChartPreview:
 _TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
 
 
-_ABS_PATH = re.compile(r"(?:/Users|/home|/private|/tmp|[A-Z]:\\)[^\s`'\")]*")
-
-
-def _safe(text: str) -> str:
-    """LLM やユーザーの文章を、公開リポジトリの PR に載せても安全にする。
-
-    - `#123` や `@user` が issue の自動クローズやメンションにならないようにする
-    - ローカルの絶対パスを伏せる
-    - コードブロックを閉じられないようにする
-    """
-    text = _ABS_PATH.sub("<path>", text)
-    text = re.sub(r"(?<!\w)([#@])(?=\w)", "\\1\u200b", text)
-    return text.replace("```", "ˋˋˋ")
-
-
-def _cell(text: str) -> str:
-    return _safe(text).replace("|", "\\|").replace("\n", " ")
-
-
 def pr_title(beam: BeamModel) -> str:
     return f"feat(beam): {beam.title}"
 
@@ -84,19 +65,19 @@ def pr_body(
     chart: ChartPreview | None = None,
 ) -> str:
     lines: list[str] = []
-    lines += ["## 要求", "", f"> {_cell(beam.request)}", ""]
+    lines += ["## 要求", "", f"> {cell(beam.request)}", ""]
     for m in beam.metrics:
-        lines.append(f"- **{_cell(m.label)}**（`{m.name}`）: {_cell(m.framed_question)}")
+        lines.append(f"- **{cell(m.label)}**（`{m.name}`）: {cell(m.framed_question)}")
         if m.group_by:
             lines.append(f"  - 切り口: {', '.join(f'`{g}`' for g in m.group_by)}")
         if m.filter:
-            lines.append(f"  - 条件: {_cell(m.filter)}")
+            lines.append(f"  - 条件: {cell(m.filter)}")
     lines.append("")
 
     for event in beam.events:
-        lines += [f"## BEAM Canvas: {_cell(event.label)}（`{event.name}`）", ""]
-        lines.append(f"- 種類: {event.fact_type.value}　粒度: {_cell(event.grain or '-')}")
-        measures = ", ".join(f"{_cell(m.label)}（{m.aggregation.value}）" for m in event.measures)
+        lines += [f"## BEAM Canvas: {cell(event.label)}（`{event.name}`）", ""]
+        lines.append(f"- 種類: {event.fact_type.value}　粒度: {cell(event.grain or '-')}")
+        measures = ", ".join(f"{cell(m.label)}（{m.aggregation.value}）" for m in event.measures)
         lines += [f"- How many: {measures}", "", "| W | ディメンション | 属性 |", "|---|---|---|"]
         for d in event.dimensions:
             attrs = ", ".join(
@@ -104,7 +85,7 @@ def pr_body(
                 for a in d.attributes
             )
             lines.append(
-                f"| {_W_LABEL[d.w]} | {_cell(d.label)}（`{d.ref}`） | {_cell(attrs) or '-'} |"
+                f"| {_W_LABEL[d.w]} | {cell(d.label)}（`{d.ref}`） | {cell(attrs) or '-'} |"
             )
         lines.append("")
 
@@ -130,16 +111,16 @@ def pr_body(
     if chart is not None:
         lines += ["## チャート", ""]
         if chart.skipped:
-            lines += [f"- {_cell(chart.skipped)}", ""]
+            lines += [f"- {cell(chart.skipped)}", ""]
         elif chart.error:
-            lines += [f"- ❌ チャートを作れませんでした: {_cell(chart.error)}", ""]
+            lines += [f"- ❌ チャートを作れませんでした: {cell(chart.error)}", ""]
         else:
             lines.append(f"元ファイル `{chart.spec}`（SQL は MetricFlow が作る）")
             lines += [""] + [
-                f"- {_cell(title)}（{_TYPE_LABEL.get(kind, kind)}）" for title, kind in chart.charts
+                f"- {cell(title)}（{_TYPE_LABEL.get(kind, kind)}）" for title, kind in chart.charts
             ]
             if chart.omitted:
-                omitted = "、".join(_cell(t) for t in chart.omitted)
+                omitted = "、".join(cell(t) for t in chart.omitted)
                 lines += ["", f"- ⚠ 描けなかったため除いた指標: {omitted}"]
             if chart.image_url:
                 lines += ["", f"![チャート]({chart.image_url})"]
@@ -148,19 +129,19 @@ def pr_body(
     lines += ["## 検証", ""]
     lines.append(f"- dbt build: {'✅ 成功' if verification.dbt_build_passed else '❌ 失敗'}")
     if verification.summary:
-        lines.append(f"  - {_cell(verification.summary)}")
+        lines.append(f"  - {cell(verification.summary)}")
     for desc, ok in verification.queries:
         lines.append(f"- 指標の取得 `{desc}`: {'✅' if ok else '❌'}")
     if verification.repair_attempts:
         lines.append(f"- 自己修復: {len(verification.repair_attempts)} 回")
-        lines += [f"  - {_cell(a)}" for a in verification.repair_attempts]
+        lines += [f"  - {cell(a)}" for a in verification.repair_attempts]
     lines.append("")
 
     unresolved = [f"{g.kind.value}: {g.description}" for g in beam.gaps]
     unresolved += [i.message for i in design.issues if i.severity == IssueSeverity.WARNING]
     unresolved += [f"要対応（{t.kind}）: {t.instruction}" for t in tasks or []]
     if unresolved:
-        lines += ["## 未解決事項", ""] + [f"- {_cell(u)}" for u in unresolved] + [""]
+        lines += ["## 未解決事項", ""] + [f"- {cell(u)}" for u in unresolved] + [""]
 
     lines += [
         "---",

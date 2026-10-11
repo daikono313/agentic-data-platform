@@ -395,3 +395,49 @@ def test_auto_sync_records_fetch_error(tmp_path: Path) -> None:
     status = sync.status(fetch=False).model_copy(update={"behind": 0, "fetch_error": "timeout"})
     assert not auto.tick(status)
     assert "origin の最新を取れませんでした: timeout" in (auto.state.last_note or "")
+
+
+def test_fetch_holds_the_git_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """同期の git fetch も、ジョブの git の操作と同じ GIT_LOCK の中で行う（#110）。
+
+    対話をしない設定と打ち切りの時間はそのまま。
+    """
+    import subprocess
+    import threading
+
+    from adp import sync as sync_module
+    from adp.vcs.git import GIT_LOCK
+
+    work, _ = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    seen: dict[str, object] = {}
+    real_run = subprocess.run
+
+    def fake_run(args, **kwargs):  # type: ignore[no-untyped-def]
+        if list(args)[:2] != ["git", "fetch"]:
+            return real_run(args, **kwargs)
+        held: list[bool] = []
+
+        def probe() -> None:  # 別のスレッドから取れなければ、fetch が lock を持っている
+            got = GIT_LOCK.acquire(blocking=False)
+            if got:
+                GIT_LOCK.release()
+            held.append(not got)
+
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join()
+        seen.update(held=held[0], timeout=kwargs["timeout"], env=kwargs["env"])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    sync._fetch()
+    assert seen["held"] is True
+    assert seen["timeout"] == sync_module.FETCH_TIMEOUT_S
+    env = seen["env"]
+    assert isinstance(env, dict) and env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "BatchMode=yes" in env["GIT_SSH_COMMAND"]
+    assert sync._cache.error is None
+    # lock は解放されている（後のジョブの git の操作を止めない）
+    assert GIT_LOCK.acquire(blocking=False)
+    GIT_LOCK.release()

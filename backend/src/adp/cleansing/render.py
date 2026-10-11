@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from adp.catalog.types import is_text_type
 from adp.cleansing.models import CleansingSpec, ColumnRule, Defaults, Scalar
 
 GENERATED = "adp.cleansing により生成"
@@ -49,10 +50,6 @@ def _assert_no_jinja(spec: CleansingSpec, sql: str, yml: str) -> None:
             raise ValueError(f"{spec.source}: 生成した {name} に使えない文字（{{ }} \\）が含まれる")
 
 
-def _is_text(data_type: str) -> bool:
-    return data_type.upper().startswith(("VARCHAR", "TEXT", "STRING", "CHAR"))
-
-
 def column_expr(column: SourceColumn, rule: ColumnRule | None, defaults: Defaults) -> str:
     """1 列のクレンジングの式。
 
@@ -66,7 +63,7 @@ def column_expr(column: SourceColumn, rule: ColumnRule | None, defaults: Default
     if rule is not None and rule.timezone is not None:
         src, dst = rule.timezone
         expr = f"timezone({literal(dst)}, timezone({literal(src)}, {expr}))"
-    if _is_text(data_type):
+    if is_text_type(data_type):
         trim = rule.trim if rule is not None and rule.trim is not None else defaults.text.trim
         empty = (
             rule.empty_to_null

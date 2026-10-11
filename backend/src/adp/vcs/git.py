@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -58,6 +59,16 @@ class Worktree:
     branch: str
 
 
+GIT_LOCK = threading.RLock()
+"""リポジトリの git を変更する操作の、プロセス全体での排他（#110）。
+
+生成・取り込み・同期のジョブはスレッドで並行に動くので、worktree の追加・削除、stage・commit、
+push が同時に走ると、`.git` の lock ファイル（`config.lock`・`index.lock` など）がぶつかったり、
+同じブランチ名を選んだりする。git の操作はこの lock の中で行う（dbt などの検証は外で並行に動く）。
+再入できるので、lock を持ったまま GitWorkspace のメソッドを呼んでよい。
+"""
+
+
 class GitWorkspace:
     def __init__(self, repo_root: Path, runner: Runner = run) -> None:
         self.repo_root = repo_root
@@ -68,7 +79,8 @@ class GitWorkspace:
         return self.repo_root / ".adp" / "worktrees"
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
-        return self.run(["git", *args], cwd or self.repo_root, None).stdout.strip()
+        with GIT_LOCK:
+            return self.run(["git", *args], cwd or self.repo_root, None).stdout.strip()
 
     def remote_owner(self) -> str | None:
         url = self.git("remote", "get-url", "origin").rstrip("/")
@@ -97,6 +109,10 @@ class GitWorkspace:
 
     def create_worktree(self, branch: str, base: str = "origin/main") -> Worktree:
         """base から branch（使用済みなら -2, -3 … を付ける）を作り、worktree に展開する。"""
+        with GIT_LOCK:  # 空いているブランチ名を選んでから作るまでを、ほかのジョブと重ねない
+            return self._create_worktree(branch, base)
+
+    def _create_worktree(self, branch: str, base: str) -> Worktree:
         if base.startswith("origin/"):
             self.git("fetch", "origin", base.removeprefix("origin/"))
         branch = self.available_branch(branch)
@@ -107,23 +123,26 @@ class GitWorkspace:
     def stage(self, wt: Worktree, pathspecs: Sequence[str]) -> list[str]:
         """pathspecs の下の変更（追加・変更・削除）をすべて stage し、そのパスを返す。"""
         existing = [p for p in pathspecs if (wt.path / p).exists()]
-        if existing:
-            self.git("add", "-A", "--", *existing, cwd=wt.path)
-        out = self.run(["git", "diff", "--cached", "--name-only", "-z"], wt.path, None).stdout
+        with GIT_LOCK:
+            if existing:
+                self.git("add", "-A", "--", *existing, cwd=wt.path)
+            out = self.run(["git", "diff", "--cached", "--name-only", "-z"], wt.path, None).stdout
         return sorted(p for p in out.split("\0") if p)
 
     def commit(self, wt: Worktree, message: str) -> str:
         """stage 済みの変更を commit する。author は git の設定（includeIf）に従う。"""
-        self.git("commit", "-m", message, cwd=wt.path)
-        return self.git("rev-parse", "HEAD", cwd=wt.path)
+        with GIT_LOCK:
+            self.git("commit", "-m", message, cwd=wt.path)
+            return self.git("rev-parse", "HEAD", cwd=wt.path)
 
     def push(self, wt: Worktree) -> None:
         self.git("push", "-u", "origin", wt.branch, cwd=wt.path)
 
     def remove_worktree(self, wt: Worktree, delete_branch: bool = False) -> None:
-        self.git("worktree", "remove", "--force", str(wt.path))
-        if delete_branch:
-            self.git("branch", "-D", wt.branch)
+        with GIT_LOCK:
+            self.git("worktree", "remove", "--force", str(wt.path))
+            if delete_branch:
+                self.git("branch", "-D", wt.branch)
 
 
 MAX_BODY = 60000

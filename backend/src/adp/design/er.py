@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from adp.design.models import ColumnRole, PhysicalDesign
+from adp.markdown import mermaid_label
 
 _TYPE = {
     ColumnRole.PRIMARY_KEY: "key",
@@ -13,16 +14,12 @@ _TYPE = {
 }
 
 
-def _label(text: str) -> str:
-    return text.replace('"', "'").replace("`", "'").replace("\n", " ")
-
-
 def er_diagram(design: PhysicalDesign) -> str:
     lines = ["erDiagram"]
     for dim in design.dims:
         lines.append(f"  {dim.name} {{")
-        lines.append(f'    key {dim.key_column} PK "{_label(dim.label)}"')
-        lines += [f'    string {c.name} "{_label(c.description)}"' for c in dim.columns]
+        lines.append(f'    key {dim.key_column} PK "{mermaid_label(dim.label)}"')
+        lines += [f'    string {c.name} "{mermaid_label(c.description)}"' for c in dim.columns]
         lines.append("  }")
     if design.uses_dim_date:
         lines.append("  dim_date {")
@@ -34,7 +31,7 @@ def er_diagram(design: PhysicalDesign) -> str:
             mark = " PK" if c.name in fact.grain_columns else ""
             mark = " FK" if c.role == ColumnRole.FOREIGN_KEY else mark
             kind = _TYPE.get(c.role, "string")
-            lines.append(f'    {kind} {c.name}{mark} "{_label(c.description)}"')
+            lines.append(f'    {kind} {c.name}{mark} "{mermaid_label(c.description)}"')
         lines.append("  }")
         for c in fact.columns:
             if c.references and c.role in (ColumnRole.FOREIGN_KEY, ColumnRole.TIME):

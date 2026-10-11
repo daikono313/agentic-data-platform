@@ -11,6 +11,7 @@ from adp.llm.runner import (
     TurnResult,
 )
 from adp.llm.settings import LLMSettings, load_settings
+from adp.llm.tools import tool_text
 
 __all__ = [
     "AgentEvent",
@@ -23,4 +24,5 @@ __all__ = [
     "ToolCall",
     "TurnResult",
     "load_settings",
+    "tool_text",
 ]

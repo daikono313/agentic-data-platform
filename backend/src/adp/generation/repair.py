@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -249,10 +250,12 @@ class Repairer:
         baseline: dict[str, str] | None = None,
     ) -> RepairResult:
         """baseline: 比べるテストの一覧（無ければ今のプロジェクトから取る）。"""
+        # dbt / mf の実行はスレッドで行う（イベントループ、つまり進捗の SSE などを止めない）
+        thread = asyncio.to_thread
         attempts: list[Attempt] = []
-        ensure_deps(warehouse, self.bin_dir)
+        await thread(ensure_deps, warehouse, self.bin_dir)
         if baseline is None:
-            baseline = test_inventory(warehouse, self.bin_dir)
+            baseline = await thread(test_inventory, warehouse, self.bin_dir)
         if baseline is None:
             # 生成物が dbt で読めない（ls が失敗）。直った後の最初の一覧を比べる元にする
             # （それ以前の弱め方は検出できないので、そのことを記録する）
@@ -285,10 +288,10 @@ class Repairer:
                 self.settings.default_model,
                 f"次の作業を行い、dbt build が通ることを確認してください。\n{todo}",
             )
-            attempts.append(Attempt(self.settings.default_model, "tasks", check(), summary, denied))
-            result = attempts[-1].result
+            result = await thread(check)
+            attempts.append(Attempt(self.settings.default_model, "tasks", result, summary, denied))
         else:
-            result = check()
+            result = await thread(check)
         for model in self.plan:
             if result.ok:
                 break
@@ -299,6 +302,6 @@ class Repairer:
                 "原因を調べて直してください。直したら dbt build で確認してください。"
             )
             summary, denied = await self._agent(warehouse, model, prompt)
-            result = check()
+            result = await thread(check)
             attempts.append(Attempt(model, "repair", result, summary, denied))
         return RepairResult(ok=result.ok, attempts=attempts, final=result)

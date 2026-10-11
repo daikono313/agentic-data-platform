@@ -130,3 +130,14 @@ def test_validation_of_filters_and_reserved_names(setup) -> None:  # type: ignor
     issues = beam.finalize_issues()
     assert any("filters として記録されていません" in i for i in issues)
     assert any("rev_total_input は累計の元の指標" in i for i in issues)
+
+
+@pytest.mark.parametrize("value", ["{{ env_var('X') }}", "50%", float("nan")])
+def test_filter_values_are_validated_like_charts(setup, value) -> None:  # type: ignore[no-untyped-def]
+    """生成する指標の filter も、チャートと同じ検査（#55）を通る（#110）。"""
+    _, _, event, fact = setup
+    f = MetricFilter.model_construct(
+        ref="store.channel", operator=FilterOperator.EQUALS, values=[value]
+    )
+    with pytest.raises(SemanticError, match="filter の値に使えない"):
+        filter_expr(event, fact, f)

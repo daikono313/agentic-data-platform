@@ -14,6 +14,7 @@ from typing import Any, Protocol
 import yaml
 
 from adp.beam import BeamModel
+from adp.catalog.types import is_text_type
 from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_spec, spec_path
 from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
@@ -184,7 +185,7 @@ def _is_text(info: WarehouseInfo, table: str, column: Column, alias_tables: dict
     if alias not in alias_tables or not col.isidentifier():
         return False
     types = dict(info.source_columns(alias_tables[alias]))
-    return types.get(col, "").upper() == "VARCHAR"
+    return is_text_type(types.get(col, ""))
 
 
 def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> list[GeneratedFile]:

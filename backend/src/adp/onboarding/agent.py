@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools
-from adp.llm import AgentRunner, AgentSpec, LLMSettings, TurnResult
+from adp.llm import AgentRunner, AgentSpec, LLMSettings, TurnResult, tool_text
 from adp.onboarding.prompts import SYSTEM_PROMPT
 from adp.onboarding.proposal import OntologyPatch, validate_patch
 from adp.ontology.models import Ontology, dump
@@ -33,13 +33,6 @@ class AgentProposal:
     attempts: int = 0
     errors: list[str] = field(default_factory=list)
     error: str | None = None
-
-
-def _text(message: str, is_error: bool = False) -> dict[str, Any]:
-    result: dict[str, Any] = {"content": [{"type": "text", "text": message}]}
-    if is_error:
-        result["is_error"] = True
-    return result
 
 
 def build_submit_tool(
@@ -58,19 +51,19 @@ def build_submit_tool(
             try:
                 raw = json.loads(raw)
             except ValueError:
-                return _text("patch を JSON として読めません", is_error=True)
+                return tool_text("patch を JSON として読めません", error=True)
         try:
             patch = OntologyPatch.model_validate(raw)
         except ValidationError as e:
             out.errors.append(str(e))
-            return _text(f"形式の誤り: {e}", is_error=True)
+            return tool_text(f"形式の誤り: {e}", error=True)
         # DB を読むのでスレッドで（イベントループを止めない）
         errors = await asyncio.to_thread(validate_patch, ontology, patch, catalog, source)
         if errors:
             out.errors += errors
-            return _text("直してください:\n" + "\n".join(f"- {e}" for e in errors), True)
+            return tool_text("直してください:\n" + "\n".join(f"- {e}" for e in errors), error=True)
         out.patch = patch
-        return _text("受け付けました。これで終わりです。")
+        return tool_text("受け付けました。これで終わりです。")
 
     return submit_proposal
 

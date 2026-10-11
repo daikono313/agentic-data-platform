@@ -7,9 +7,7 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from adp.beam import (
@@ -24,6 +22,7 @@ from adp.beam import (
 )
 from adp.design import ColumnRole, DimTable, FactTable, PhysicalDesign
 from adp.design.builder import is_masterless
+from adp.metricflow import literal
 
 _AGG = {
     Aggregation.SUM: "sum",
@@ -82,11 +81,10 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
 
 
 def _literal(value: str | int | float | bool) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return str(value)
-    return "'" + value.replace("'", "''") + "'"
+    try:
+        return literal(value)
+    except ValueError as e:
+        raise SemanticError(str(e)) from e
 
 
 def filter_expr(event: BusinessEvent, fact: FactTable, f: MetricFilter) -> str:
@@ -228,16 +226,3 @@ def metric_definitions(
             group_by.insert(0, "metric_time__day")
         queries.append(MetricQuery(m.name, group_by))
     return MetricDefinitions(in_model, top, queries)
-
-
-def run_query(
-    warehouse: Path, mf: Path, q: MetricQuery, limit: int = 5
-) -> subprocess.CompletedProcess[str]:
-    """生成した指標を元の要求どおりにクエリする（dbt parse 済みであること）。"""
-    import os
-
-    args = [str(mf), "query", "--metrics", q.metric, "--limit", str(limit)]
-    if q.group_by:
-        args += ["--group-by", ",".join(q.group_by)]
-    env = os.environ | {"DBT_PROFILES_DIR": str(warehouse)}
-    return subprocess.run(args, cwd=warehouse, env=env, capture_output=True, text=True, check=False)

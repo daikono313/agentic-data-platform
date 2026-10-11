@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from adp.generation.repair import _clean_log, _run
 from adp.pipeline import PipelineResult, StepStatus, StepUpdate
 from adp.vcs import GitWorkspace
+from adp.vcs.git import GIT_LOCK
 
 SYNC_STEPS: list[tuple[str, str]] = [
     ("pull", "main の新しい変更を取り込む"),
@@ -91,15 +92,19 @@ class Sync:
             "GIT_SSH_COMMAND": "ssh -o BatchMode=yes -o ConnectTimeout=10",
         }
         try:
-            done = subprocess.run(
-                ["git", "fetch", "-q", "origin", "main"],
-                cwd=self.repo_root,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=FETCH_TIMEOUT_S,
-            )
+            # ジョブの worktree の追加・push などと、refs や .git の lock ファイルを
+            # 取り合わない（#110）。lock の順序は常に _fetch_lock → GIT_LOCK
+            # （GIT_LOCK を持ったまま _fetch_lock を取る箇所は無い）
+            with GIT_LOCK:
+                done = subprocess.run(
+                    ["git", "fetch", "-q", "origin", "main"],
+                    cwd=self.repo_root,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=FETCH_TIMEOUT_S,
+                )
             self._cache.error = (
                 None if done.returncode == 0 else (done.stderr.strip()[-300:] or "失敗")
             )

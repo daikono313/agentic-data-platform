@@ -1,16 +1,28 @@
 """生成ジョブを、一時的な git リポジトリ（warehouse の複製 + bare リモート）で通しで実行する。"""
 
+import asyncio
 import shutil
 import subprocess
-from collections.abc import Sequence
+import threading
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from adp.beam import load
 from adp.llm import LLMSettings
-from adp.pipeline import GenerationPipeline, PipelineConfig, StepStatus, StepUpdate
-from adp.vcs import GitHub, GitWorkspace
+from adp.pipeline import (
+    GenerationPipeline,
+    JobSteps,
+    PipelineConfig,
+    PipelineError,
+    PipelineResult,
+    StepStatus,
+    StepUpdate,
+)
+from adp.vcs import GitHub, GitWorkspace, Worktree
 from tests.generation.test_dbt_codegen import DBT, FIXTURES, ROOT, _warehouse_copy
 from tests.generation.test_repair import FixingRunner
 from tests.vcs.test_vcs import git
@@ -292,3 +304,242 @@ def test_one_failing_chart_does_not_drop_the_board(tmp_path: Path, monkeypatch) 
     assert preview is not None and preview.omitted == ["壊れた指標"] and preview.error is None
     spec = (tmp_path / "warehouse" / "chart_specs" / f"{beam.name}.yml").read_text()
     assert "broken" not in spec
+
+
+class RecordingWorkspace(GitWorkspace):
+    """git の操作を、どのスレッドで呼ばれたかと一緒に記録する。"""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.threads: list[tuple[str, int]] = []
+
+    def _record(self, name: str) -> None:
+        self.threads.append((name, threading.get_ident()))
+
+    def create_worktree(self, branch: str, base: str = "origin/main") -> Worktree:
+        self._record("create_worktree")
+        return super().create_worktree(branch, base)
+
+    def stage(self, wt: Worktree, paths: Sequence[str]) -> list[str]:
+        self._record("stage")
+        return super().stage(wt, paths)
+
+    def commit(self, wt: Worktree, message: str) -> str:
+        self._record("commit")
+        return super().commit(wt, message)
+
+    def push(self, wt: Worktree) -> None:
+        self._record("push")
+        super().push(wt)
+
+
+async def test_heavy_work_runs_off_the_event_loop(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """git・DB のコピー・dbt・PR 作成・チャートの描画がイベントループを止めない（#110）。"""
+    import adp.charts as charts_module
+    import adp.generation.repair as repair_module
+    import adp.pipeline as pipeline_module
+
+    loop_thread = threading.get_ident()
+    calls: list[tuple[str, int]] = []
+
+    def recorded(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            calls.append((name, threading.get_ident()))
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(repair_module, "_run", recorded("dbt", repair_module._run))
+    monkeypatch.setattr(
+        pipeline_module, "copy_database", recorded("copy_database", pipeline_module.copy_database)
+    )
+    monkeypatch.setattr(
+        pipeline_module, "render_png", recorded("render_png", charts_module.render_png)
+    )
+    gh = FakeGh()
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.finalize()
+    config = PipelineConfig(repo, DBT.parent, repo / "warehouse/data/dev.duckdb", "daikono313")
+    workspace = RecordingWorkspace(repo)
+    pipeline = GenerationPipeline(
+        config,
+        FixingRunner(lambda n, s: None),
+        LLMSettings(),
+        workspace,
+        GitHub(repo, "daikono313", recorded("gh", gh)),
+    )
+    step_threads: list[int] = []
+    result = await pipeline.run(beam, lambda _: step_threads.append(threading.get_ident()))
+    assert result.ok, result.error
+    # 進捗の通知（SSE のキューに入れる）はイベントループのスレッドだけから呼ぶ
+    assert step_threads and set(step_threads) == {loop_thread}
+    calls += workspace.threads
+    names = {name for name, _ in calls}
+    assert {"dbt", "copy_database", "render_png", "gh"} <= names
+    assert {"create_worktree", "stage", "commit", "push"} <= names
+    on_loop = [name for name, thread in calls if thread == loop_thread]
+    assert on_loop == []
+
+
+class FakeWorkspace:
+    def __init__(self, staged: list[str]) -> None:
+        self.staged = staged
+        self.calls: list[str] = []
+
+    def create_worktree(self, branch: str, base: str) -> Worktree:
+        self.calls.append("create_worktree")
+        return Worktree(Path("/nonexistent") / branch, branch)
+
+    def stage(self, wt: Worktree, paths: list[str]) -> list[str]:
+        self.calls.append("stage")
+        return self.staged
+
+    def commit(self, wt: Worktree, message: str) -> str:
+        self.calls.append("commit")
+        return "sha"
+
+    def push(self, wt: Worktree) -> None:
+        self.calls.append("push")
+
+    def remove_worktree(self, wt: Worktree, delete_branch: bool = False) -> None:
+        self.calls.append(f"remove_worktree:{delete_branch}")
+
+
+async def test_job_steps_cleans_up_before_push_and_truncates_detail() -> None:
+    updates: list[StepUpdate] = []
+    workspace = FakeWorkspace([])
+    job = JobSteps([("commit", "commit / push")], updates.append, workspace, detail_limit=5)  # type: ignore[arg-type]
+    result = PipelineResult(ok=False, branch="b")
+    wt = await job.create_worktree("b", "origin/main")
+    job.step("commit", StepStatus.RUNNING)
+    try:
+        await job.commit_and_push(wt, ["x"], "m")
+    except PipelineError as e:
+        await job.fail(result, e)
+    assert workspace.calls == ["create_worktree", "stage", "remove_worktree:True"]
+    assert result.branch is None and result.error == "commit するファイルがありません"
+    assert updates[-1].status == StepStatus.FAILED and updates[-1].detail == "commi"
+
+
+async def test_job_steps_keeps_branch_after_push() -> None:
+    workspace = FakeWorkspace(["a.sql"])
+    job = JobSteps([("commit", "commit / push"), ("pr", "PR")], lambda _: None, workspace)  # type: ignore[arg-type]
+    wt = await job.create_worktree("b", "origin/main")
+    files = await job.commit_and_push(
+        wt, ["x"], "m", before_push=lambda: workspace.calls.append("image")
+    )
+    assert files == ["a.sql"]
+    # 画像の commit などは、commit の後・push の前
+    assert workspace.calls == ["create_worktree", "stage", "commit", "image", "push"]
+    job.step("pr", StepStatus.RUNNING)
+    result = await job.fail(PipelineResult(ok=False, branch="b"), RuntimeError("x" * 3000))
+    assert result.branch == "b"
+    assert "remove_worktree:True" not in workspace.calls
+
+
+class OverlapDetectingWorkspace(FakeWorkspace):
+    """git の操作が、ほかのジョブの git の操作と時間的に重なったら記録する。"""
+
+    def __init__(self) -> None:
+        super().__init__(["a.sql"])
+        self.active = 0
+        self.overlaps: list[str] = []
+        self.guard = threading.Lock()
+
+    def _op(self, name: str) -> None:
+        with self.guard:
+            self.active += 1
+            if self.active > 1:
+                self.overlaps.append(name)
+        time.sleep(0.02)
+        with self.guard:
+            self.active -= 1
+
+    def create_worktree(self, branch: str, base: str) -> Worktree:
+        self._op("create_worktree")
+        return super().create_worktree(branch, base)
+
+    def stage(self, wt: Worktree, paths: list[str]) -> list[str]:
+        self._op("stage")
+        return super().stage(wt, paths)
+
+    def commit(self, wt: Worktree, message: str) -> str:
+        self._op("commit")
+        return super().commit(wt, message)
+
+    def push(self, wt: Worktree) -> None:
+        self._op("push")
+        super().push(wt)
+
+    def remove_worktree(self, wt: Worktree, delete_branch: bool = False) -> None:
+        self._op("remove_worktree")
+        super().remove_worktree(wt, delete_branch)
+
+
+async def test_concurrent_jobs_do_not_overlap_git_operations() -> None:
+    """並行するジョブの git の操作は重ならず、検証（dbt など）は並行に動く（#110）。"""
+    workspace = OverlapDetectingWorkspace()
+    verifying = 0
+    verify_overlapped = False
+    guard = threading.Lock()
+
+    def verify() -> None:  # dbt build の代わり（lock の外で動く）
+        nonlocal verifying, verify_overlapped
+        with guard:
+            verifying += 1
+        time.sleep(0.2)
+        with guard:
+            verify_overlapped = verify_overlapped or verifying > 1
+            verifying -= 1
+
+    async def job(n: int, fail: bool) -> None:
+        steps = JobSteps([("commit", "commit / push")], lambda _: None, workspace)  # type: ignore[arg-type]
+        wt = await steps.create_worktree(f"b{n}", "origin/main")
+        await asyncio.to_thread(verify)
+        if fail:
+            await steps.fail(PipelineResult(ok=False), RuntimeError("x"))
+            return
+        await steps.commit_and_push(
+            wt, ["x"], "m", before_push=lambda: workspace._op("image commit")
+        )
+
+    await asyncio.gather(*(job(n, fail=n % 2 == 1) for n in range(6)))
+    assert workspace.overlaps == []
+    assert workspace.calls.count("push") == 3
+    assert workspace.calls.count("remove_worktree:True") == 3
+    assert verify_overlapped
+
+
+def test_git_workspace_holds_the_process_wide_lock(tmp_path: Path) -> None:
+    """GitWorkspace の git の呼び出しは GIT_LOCK の中（JobSteps を通らない同期なども）。"""
+    from adp.vcs.git import GIT_LOCK
+
+    held: list[bool] = []
+
+    def runner(
+        args: Sequence[str], cwd: Path, env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        # 別のスレッドから lock を取れなければ、この呼び出しが lock を持っている
+        result: list[bool] = []
+
+        def probe() -> None:
+            got = GIT_LOCK.acquire(blocking=False)
+            if got:
+                GIT_LOCK.release()
+            result.append(not got)
+
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join()
+        held.extend(result)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    ws = GitWorkspace(tmp_path, runner)
+    wt = Worktree(tmp_path, "b")
+    ws.git("status")
+    ws.commit(wt, "m")
+    ws.stage(wt, ["x"])
+    ws.remove_worktree(wt, delete_branch=True)
+    assert held and all(held)

@@ -16,15 +16,9 @@ from pydantic import ValidationError
 
 from adp.beam import BeamModel, BusinessEvent, Gap, MetricRequest, to_yaml
 from adp.interview.state import InterviewState, Phase
+from adp.llm import tool_text
 
 SERVER_NAME = "beam"
-
-
-def _text(text: str, *, error: bool = False) -> dict[str, Any]:
-    result: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
-    if error:
-        result["is_error"] = True
-    return result
 
 
 def _remaining(beam: BeamModel, check: Callable[[BeamModel], list[str]] | None = None) -> str:
@@ -61,14 +55,14 @@ def build_tools(
             mutate(data)
             updated = BeamModel.model_validate(data)
         except (ValidationError, ValueError, KeyError) as e:
-            return _text(
+            return tool_text(
                 f"変更を反映できませんでした。内容を直して再実行してください。\n{e}", error=True
             )
         updated.finalized_at = None
         state.beam = updated
         if on_change:
             on_change()
-        return _text("反映しました。\n" + _remaining(updated, issues))
+        return tool_text("反映しました。\n" + _remaining(updated, issues))
 
     def upsert(items: list[dict[str, Any]], key: str, item: dict[str, Any]) -> None:
         for i, existing in enumerate(items):
@@ -79,7 +73,7 @@ def build_tools(
 
     @tool("get_beam", "現在の BEAM 成果物（YAML）と、確定までに残っている課題を返す", {})
     async def get_beam(args: dict[str, Any]) -> dict[str, Any]:
-        return _text(to_yaml(state.beam) + "\n" + _remaining(state.beam, issues))
+        return tool_text(to_yaml(state.beam) + "\n" + _remaining(state.beam, issues))
 
     @tool(
         "set_overview",
@@ -154,13 +148,13 @@ def build_tools(
         try:
             phase = Phase(args["phase"])
         except ValueError:
-            return _text(f"不明な段階です: {args['phase']}", error=True)
+            return tool_text(f"不明な段階です: {args['phase']}", error=True)
         if phase == Phase.FINALIZED:
-            return _text("確定はユーザーが UI で行います。review にしてください。", error=True)
+            return tool_text("確定はユーザーが UI で行います。review にしてください。", error=True)
         state.phase = phase
         if on_change:
             on_change()
-        return _text(f"段階を {phase.value} にしました。")
+        return tool_text(f"段階を {phase.value} にしました。")
 
     @tool(
         "present_choices",
@@ -181,7 +175,7 @@ def build_tools(
         state.choices = options
         if on_change:
             on_change()
-        return _text("選択肢を表示しました: " + json.dumps(options, ensure_ascii=False))
+        return tool_text("選択肢を表示しました: " + json.dumps(options, ensure_ascii=False))
 
     return [
         get_beam,

@@ -177,9 +177,9 @@ def test_pr_body_shows_charts() -> None:
 
 
 def test_pr_body_is_safe_for_public_repo() -> None:
-    from adp.vcs.pr_body import _safe
+    from adp.markdown import safe
 
-    text = _safe("Closes #12 cc @someone /Users/me/secret/path.txt ```x```")
+    text = safe("Closes #12 cc @someone /Users/me/secret/path.txt ```x```")
     assert "#12" not in text and "@someone" not in text
     assert "/Users/me" not in text and "<path>" in text
     assert "```" not in text

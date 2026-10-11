@@ -25,7 +25,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import re
 import subprocess
@@ -40,6 +39,8 @@ from typing import Any
 import sqlglot
 import yaml
 from sqlglot import exp
+
+from adp.metricflow import literal
 
 HEADER = (
     "# adp により生成（chart_specs/{name}.yml から `python -m adp.charts compile`）。編集しない\n"
@@ -108,7 +109,6 @@ class ChartError(Exception):
 
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*\Z")
-_SAFE_VALUE = re.compile(r"[^{}%\\\x00-\x1f\x7f-\x9f  ]{0,200}")
 _OPS = {
     "=": "=",
     "!=": "<>",
@@ -131,19 +131,10 @@ def _idents(name: str, key: str, value: Any, allow_desc: bool = False) -> list[s
 
 
 def _literal(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        if not math.isfinite(value):
-            raise ChartError(f"filter の値に使えない数値があります: {value!r}")
-        return str(value)
-    if isinstance(value, str):
-        # MetricFlow は where を Jinja で展開するので、{ } % があるとエスケープの後で引用符や
-        # 任意の SQL を作れる。値に使える文字を絞る（#55 のレビュー）
-        if not _SAFE_VALUE.fullmatch(value):
-            raise ChartError(f"filter の値に使えない文字があります: {value!r}")
-        return "'" + value.replace("'", "''") + "'"
-    raise ChartError(f"filter の値に使えない型があります: {value!r}")
+    try:
+        return literal(value)
+    except ValueError as e:
+        raise ChartError(str(e)) from e
 
 
 def _filter_expr(name: str, f: Any) -> str:

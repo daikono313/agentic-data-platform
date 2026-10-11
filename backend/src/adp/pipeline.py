@@ -7,12 +7,13 @@ draft PR にして人に渡す。
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import duckdb
 import yaml
@@ -25,12 +26,13 @@ from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import load_ontology
 from adp.generation import generate_models
 from adp.generation.chart_specs import LINE_SERIES_MAX, chart_spec, source_of
+from adp.generation.dbt import Generation
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
 from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, LLMSettings
+from adp.ontology.models import Ontology, link_models
 from adp.ontology.models import dump as dump_ontology
-from adp.ontology.models import link_models
 from adp.ontology.render import markdown as ontology_markdown
 from adp.vcs import (
     ChartPreview,
@@ -42,8 +44,13 @@ from adp.vcs import (
     pr_body,
     pr_title,
 )
+from adp.vcs.git import GIT_LOCK
 from adp.warehouse import warehouse_db
 
+T = TypeVar("T")
+
+ONTOLOGY = Path("ontology") / "ontology.yml"
+"""オントロジーの正本（リポジトリのルートから）。"""
 ASSETS_DIR = "pr_assets"
 """PR 本文に載せる画像。commit して push した直後の commit で消す（main に残さない）。"""
 
@@ -101,6 +108,89 @@ class PipelineConfig:
     base: str = "origin/main"
 
 
+class JobSteps:
+    """生成・取り込みのジョブで共通の、進捗の通知と worktree → commit → push の流れ。
+
+    git・DB のコピー・dbt などの重い処理はスレッドで行い、イベントループ（ほかの要求や
+    進捗の SSE）を止めない。push する前に失敗したら、作業ブランチを片付けて同じ要求で
+    再実行できるようにする。git を変更する操作（worktree の追加・削除、stage・commit・画像の
+    commit・push）は、すべてのジョブで共通の `GIT_LOCK` の中で行い、ジョブ同士で重ねない。
+    dbt などの検証は lock の外で行うので、ジョブ同士で並行に動く。
+    """
+
+    def __init__(
+        self,
+        steps: list[tuple[str, str]],
+        on_step: Callable[[StepUpdate], None],
+        workspace: GitWorkspace,
+        detail_limit: int | None = None,
+    ) -> None:
+        self.labels = dict(steps)
+        self.on_step = on_step
+        self.workspace = workspace
+        self.detail_limit = detail_limit
+        """失敗の詳細を画面に送るときの最大の長さ（None なら切らない）。"""
+        self.current = ""
+        self.worktree: Worktree | None = None
+        self.pushed = False
+
+    def step(self, name: str, status: StepStatus, detail: str = "") -> None:
+        self.current = name
+        self.on_step(StepUpdate(name, self.labels[name], status, detail))
+
+    @staticmethod
+    async def _git(fn: Callable[..., T], *args: Any) -> T:
+        """git を変更する処理を、スレッドで GIT_LOCK を持って実行する。"""
+
+        def locked() -> T:
+            with GIT_LOCK:
+                return fn(*args)
+
+        return await asyncio.to_thread(locked)
+
+    async def create_worktree(self, branch: str, base: str) -> Worktree:
+        wt = await self._git(self.workspace.create_worktree, branch, base)
+        self.worktree = wt
+        return wt
+
+    async def commit_and_push(
+        self,
+        wt: Worktree,
+        paths: list[str],
+        message: str,
+        before_push: Callable[[], None] | None = None,
+    ) -> list[str]:
+        """paths を stage して commit し、push する。stage したファイルを返す。
+
+        before_push は commit の後・push の前に（スレッドで）呼ぶ（PR 本文の画像の commit など）。
+        """
+        files = await self._git(self.workspace.stage, wt, paths)
+        if not files:
+            raise PipelineError("commit するファイルがありません")
+        await self._git(self.workspace.commit, wt, message)
+        if before_push is not None:
+            await self._git(before_push)
+        await self._git(self.workspace.push, wt)
+        self.pushed = True
+        return files
+
+    async def fail(self, result: PipelineResult, error: Exception) -> PipelineResult:
+        """失敗を結果と進捗に書き、push 前なら作業ブランチを片付ける。"""
+        result.error = str(error)
+        if self.current:
+            detail = str(error)
+            if self.detail_limit is not None:
+                detail = detail[: self.detail_limit]
+            self.step(self.current, StepStatus.FAILED, detail)
+        if self.worktree is not None and not self.pushed:
+            try:
+                await self._git(self.workspace.remove_worktree, self.worktree, True)
+                result.branch = None
+            except Exception:
+                pass
+        return result
+
+
 class GenerationPipeline:
     def __init__(
         self,
@@ -119,36 +209,28 @@ class GenerationPipeline:
     async def run(
         self, beam: BeamModel, on_step: Callable[[StepUpdate], None] = lambda _: None
     ) -> PipelineResult:
-        labels = dict(STEPS)
-        current = ""
-
-        def step(name: str, status: StepStatus, detail: str = "") -> None:
-            nonlocal current
-            current = name
-            on_step(StepUpdate(name, labels[name], status, detail))
-
+        job = JobSteps(STEPS, on_step, self.workspace)
+        step = job.step
+        thread = asyncio.to_thread
         result = PipelineResult(ok=False)
-        worktree: Worktree | None = None
-        pushed = False
         try:
             if beam.finalized_at is None:
                 raise PipelineError("BEAM 成果物が確定されていません")
             # push してから PR を作れないと判明しないよう、先に確かめる
-            self.github.check()
+            await thread(self.github.check)
 
             step("worktree", StepStatus.RUNNING)
             event = beam.events[0].name if beam.events else None
-            wt = self.workspace.create_worktree(branch_name(beam.name, event), self.config.base)
-            worktree = wt
+            wt = await job.create_worktree(branch_name(beam.name, event), self.config.base)
             result.branch = wt.branch
-            warehouse = self._prepare_warehouse(wt)
+            warehouse = await thread(self._prepare_warehouse, wt)
             step("worktree", StepStatus.DONE, wt.branch)
 
             step("design", StepStatus.RUNNING)
             catalog = Catalog(warehouse_db(warehouse))
-            ontology_path = wt.path / "ontology" / "ontology.yml"
-            ontology = load_ontology(ontology_path)
-            design = DesignBuilder(CatalogSchema(catalog), ontology=ontology).build(beam)
+            ontology = await thread(load_ontology, wt.path / ONTOLOGY)
+            builder = DesignBuilder(CatalogSchema(catalog), ontology=ontology)
+            design = await thread(builder.build, beam)
             result.design = design
             if design.blockers:
                 raise PipelineError(
@@ -158,20 +240,9 @@ class GenerationPipeline:
             step("design", StepStatus.DONE, f"fct {len(design.facts)} / dim {len(design.dims)}")
 
             step("generate", StepStatus.RUNNING)
-            info = ProjectInfo(warehouse, catalog)
-            generation = generate_models(design, info, beam)
-            info.write(generation.files)
-            save(beam, wt.path / "beam" / f"{beam.name}.yml")
-            if ontology is not None:
-                # 作った fct / dim を、その源泉の概念に書き込む（fact / dim の整理。#69）
-                links = [(f.base.table, f.name) for f in design.facts]
-                links += [(d.base.table, d.name) for d in design.dims if not d.exists]
-                ontology, linked = link_models(ontology, links)
-                if linked:
-                    ontology_path.write_text(dump_ontology(ontology), encoding="utf-8")
-                    (wt.path / "docs" / "ontology.md").write_text(
-                        ontology_markdown(ontology), encoding="utf-8"
-                    )
+            generation = await thread(
+                self._generate, beam, design, ontology, wt, ProjectInfo(warehouse, catalog)
+            )
             reused = f"、再利用 {len(generation.reused)} モデル" if generation.reused else ""
             step("generate", StepStatus.DONE, f"{len(generation.files)} ファイル{reused}")
 
@@ -180,9 +251,7 @@ class GenerationPipeline:
                 self.runner,
                 self.settings,
                 self.config.bin_dir,
-                log=lambda msg: on_step(
-                    StepUpdate("verify", labels["verify"], StepStatus.RUNNING, msg)
-                ),
+                log=lambda msg: step("verify", StepStatus.RUNNING, msg),
             )
             repair = await repairer.run(warehouse, generation.queries, generation.tasks)
             result.repair = repair
@@ -194,7 +263,7 @@ class GenerationPipeline:
             )
 
             step("charts", StepStatus.RUNNING)
-            chart = self._charts(beam, generation.queries, wt)
+            chart = await thread(self._charts, beam, generation.queries, wt)
             result.chart = chart
             if chart is None or chart.skipped:
                 step(
@@ -209,18 +278,18 @@ class GenerationPipeline:
                     chart.error or f"{len(chart.charts)} チャート",
                 )
 
+            def commit_image() -> None:
+                if chart is not None and not chart.error and not chart.skipped:
+                    chart.image_url = self._commit_image(wt, beam)
+
             step("commit", StepStatus.RUNNING)
-            files = self.workspace.stage(wt, ["warehouse", "beam", "ontology", "docs/ontology.md"])
-            if not files:
-                raise PipelineError("commit するファイルがありません")
-            result.files = files
-            self.workspace.commit(
-                wt, f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成"
+            files = await job.commit_and_push(
+                wt,
+                ["warehouse", "beam", "ontology", "docs/ontology.md"],
+                f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成",
+                before_push=commit_image,
             )
-            if chart is not None and not chart.error and not chart.skipped:
-                chart.image_url = self._commit_image(wt, beam)
-            self.workspace.push(wt)
-            pushed = True
+            result.files = files
             step("commit", StepStatus.DONE, f"{len(files)} ファイル")
 
             step("pr", StepStatus.RUNNING)
@@ -238,24 +307,42 @@ class GenerationPipeline:
                 ],
             )
             body = pr_body(beam, design, files, verification, generation.tasks, chart)
-            result.pr_url = self.github.create_pr(wt, pr_title(beam), body, draft=not repair.ok)
+            result.pr_url = await thread(
+                self.github.create_pr, wt, pr_title(beam), body, draft=not repair.ok
+            )
             step("pr", StepStatus.DONE, result.pr_url)
             result.ok = repair.ok
             if not repair.ok:
                 result.error = "自己修復で直らなかったため、draft PR にして人に渡しました"
             return result
         except Exception as e:
-            result.error = str(e)
-            if current:
-                step(current, StepStatus.FAILED, str(e))
-            # push 前の失敗なら作業ブランチを片付けて、同じ BEAM で再実行できるようにする
-            if worktree is not None and not pushed:
-                try:
-                    self.workspace.remove_worktree(worktree, delete_branch=True)
-                    result.branch = None
-                except Exception:
-                    pass
-            return result
+            return await job.fail(result, e)
+
+    @staticmethod
+    def _generate(
+        beam: BeamModel,
+        design: PhysicalDesign,
+        ontology: Ontology | None,
+        wt: Worktree,
+        info: ProjectInfo,
+    ) -> Generation:
+        """dbt・Semantic Layer・テストと BEAM 成果物を worktree に書く（ファイルと DB の I/O）。"""
+        wt_root = wt.path
+        ontology_path = wt_root / ONTOLOGY
+        generation = generate_models(design, info, beam)
+        info.write(generation.files)
+        save(beam, wt_root / "beam" / f"{beam.name}.yml")
+        if ontology is not None:
+            # 作った fct / dim を、その源泉の概念に書き込む（fact / dim の整理。#69）
+            links = [(f.base.table, f.name) for f in design.facts]
+            links += [(d.base.table, d.name) for d in design.dims if not d.exists]
+            ontology, linked = link_models(ontology, links)
+            if linked:
+                ontology_path.write_text(dump_ontology(ontology), encoding="utf-8")
+                (wt_root / "docs" / "ontology.md").write_text(
+                    ontology_markdown(ontology), encoding="utf-8"
+                )
+        return generation
 
     def _charts(
         self, beam: BeamModel, queries: list[MetricQuery], wt: Worktree
