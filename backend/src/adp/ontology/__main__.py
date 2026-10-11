@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from adp.catalog.catalog import Catalog
+from adp.catalog.catalog import Catalog, CatalogUnavailable
 from adp.ontology.check import check
 from adp.ontology.models import load
 from adp.ontology.render import markdown
@@ -35,15 +35,26 @@ def main(argv: list[str] | None = None) -> int:
         print("docs/ontology.md が ontology.yml と一致しません（make ontology で生成し直す）")
         failed = True
     warehouse = REPO_ROOT / "warehouse"
-    result = check(
-        ontology,
-        Catalog(warehouse / "data" / "dev.duckdb"),
-        warehouse / "target" / "manifest.json",
-    )
+    db = warehouse / "data" / "dev.duckdb"
+    manifest = warehouse / "target" / "manifest.json"
+    if not db.exists() or not manifest.exists():
+        print("源泉・dbt との照合には DB と manifest が要る（make dbt-build を先に実行する）")
+        return 1
+    try:
+        result = check(
+            ontology,
+            Catalog(db),
+            manifest,
+        )
+    except CatalogUnavailable as err:
+        print(f"源泉と照合できなかった: {err}")
+        return 1
     for e in result.errors:
         print(f"✗ {e}")
     for s in result.unmapped_sources:
         print(f"・未整理の源泉（どの概念にもなっていない）: {s}")
+    for m in result.unmapped_models:
+        print(f"・どの概念にも対応していないモデル: {m}")
     if result.errors:
         failed = True
     if not failed:

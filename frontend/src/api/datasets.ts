@@ -82,6 +82,7 @@ export interface OntologyView {
     constraints: { concept: string; text: string }[]
   }
   unmapped_sources: string[]
+  unmapped_models: string[]
   errors: string[]
 }
 

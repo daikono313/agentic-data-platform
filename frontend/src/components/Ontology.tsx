@@ -95,14 +95,17 @@ function OntologyBody({ view }: { view: OntologyView }) {
   const label = new Map(ontology.concepts.map((c) => [c.name, c.label]))
   return (
     <>
-      {(view.errors.length > 0 || view.unmapped_sources.length > 0) && (
+      {(view.errors.length > 0 || view.unmapped_sources.length > 0 || view.unmapped_models.length > 0) && (
         <Card className="gap-1 border-amber-500/60 py-3" aria-label="食い違い">
           <CardContent className="space-y-1 px-4 text-xs">
-            {view.errors.map((e) => (
-              <p key={e} className="text-destructive">
+            {view.errors.map((e, i) => (
+              <p key={i} className="text-destructive">
                 ✗ {e}
               </p>
             ))}
+            {view.unmapped_models.length > 0 && (
+              <p className="text-muted-foreground">どの概念にも対応していないモデル: {view.unmapped_models.join('、')}</p>
+            )}
             {view.unmapped_sources.length > 0 && (
               <p>
                 未整理の源泉（どの概念にもなっていない）:{' '}
@@ -167,6 +170,35 @@ function OntologyBody({ view }: { view: OntologyView }) {
           </Table>
         </CardContent>
       </Card>
+      {ontology.relations.length > 0 && (
+        <Card className="gap-2 py-3">
+          <CardHeader className="px-4">
+            <CardTitle className="text-sm">関係</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4">
+            <Table aria-label="関係">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>から</TableHead>
+                  <TableHead>関係</TableHead>
+                  <TableHead>へ</TableHead>
+                  <TableHead>列</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ontology.relations.map((r, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="text-xs">{label.get(r.from)}</TableCell>
+                    <TableCell className="text-xs font-medium">{r.verb}</TableCell>
+                    <TableCell className="text-xs">{label.get(r.to)}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.via}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
       {ontology.constraints.length > 0 && (
         <Card className="gap-2 py-3">
           <CardHeader className="px-4">
@@ -174,8 +206,8 @@ function OntologyBody({ view }: { view: OntologyView }) {
           </CardHeader>
           <CardContent className="px-4">
             <ul className="list-disc space-y-0.5 pl-5 text-xs">
-              {ontology.constraints.map((x) => (
-                <li key={`${x.concept}:${x.text}`}>
+              {ontology.constraints.map((x, i) => (
+                <li key={i}>
                   <span className="font-medium">{label.get(x.concept)}</span>: {x.text}
                 </li>
               ))}

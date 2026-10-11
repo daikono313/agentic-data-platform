@@ -12,9 +12,25 @@ HEADER = (
 )
 
 
+_ENTITIES = [
+    ("#", "#35;"),  # 先に置き換える（後の実体参照の # を壊さないため）
+    ('"', "#quot;"),
+    ("<", "#lt;"),
+    (">", "#gt;"),
+    ("%", "#37;"),  # %%{init: …}%% の設定・%% のコメントを無効にする
+    ("{", "#123;"),
+    ("}", "#125;"),
+    ("`", "#96;"),  # markdown の文字列
+]
+
+
 def _label(text: str) -> str:
-    """Mermaid のラベルに入れる文字列。引用符と山括弧を実体参照にする。"""
-    return text.replace('"', "#quot;").replace("<", "#lt;").replace(">", "#gt;")
+    """Mermaid のラベルに入れる文字列。構文・設定（%%{init}%%）・コメントとして解釈される文字を
+    実体参照にし、改行は空白にする（ontology.yml はエージェントも書くため、データとして扱う）。"""
+    text = " ".join(text.split())
+    for raw, entity in _ENTITIES:
+        text = text.replace(raw, entity)
+    return text
 
 
 def _node(c: Concept) -> str:

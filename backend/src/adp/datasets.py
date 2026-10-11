@@ -126,6 +126,8 @@ class OntologyView(BaseModel):
     ontology: dict[str, Any]
     unmapped_sources: list[str] = Field(default_factory=list)
     """どの概念にもなっていない源泉（未整理）。"""
+    unmapped_models: list[str] = Field(default_factory=list)
+    """どの概念にも対応していない dim / fct。"""
     errors: list[str] = Field(default_factory=list)
     """源泉・dbt のモデルとの食い違い。"""
 
@@ -452,8 +454,12 @@ class DatasetIndex:
         except CatalogUnavailable as e:
             view.errors.append(f"源泉との照合ができませんでした: {e}")
             return view
+        except Exception as e:  # DB の例外など。図は返す（本文は出さない）
+            view.errors.append(f"源泉との照合ができませんでした: {type(e).__name__}")
+            return view
         view.errors += result.errors
         view.unmapped_sources = result.unmapped_sources
+        view.unmapped_models = result.unmapped_models
         return view
 
     def all(self) -> Datasets:

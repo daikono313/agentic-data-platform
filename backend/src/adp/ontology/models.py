@@ -51,9 +51,12 @@ class Concept(_Strict):
         expected = "dim_" if self.kind == "entity" else "fct_"
         if self.model is not None and not self.model.startswith(expected):
             raise ValueError(f"概念 {self.name}（{self.kind}）のモデルは {expected}* にする")
-        names = [a.name for a in self.attributes]
-        if len(names) != len(set(names)):
-            raise ValueError(f"概念 {self.name} の属性の名前が重複している")
+        for what, values in (
+            ("名前", [a.name for a in self.attributes]),
+            ("列", [a.column for a in self.attributes]),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"概念 {self.name} の属性の{what}が重複している")
         return self
 
 
@@ -102,6 +105,16 @@ class Ontology(_Strict):
         for x in self.constraints:
             if x.concept not in concepts:
                 raise ValueError(f"制約の概念 {x.concept} が concepts に無い")
+        relations = [(r.from_, r.to, r.verb) for r in self.relations]
+        if len(relations) != len(set(relations)):
+            raise ValueError("同じ関係が重複している")
+        constraints = [(x.concept, x.text) for x in self.constraints]
+        if len(constraints) != len(set(constraints)):
+            raise ValueError("同じ制約が重複している")
+        models = [c.model for c in self.concepts if c.model]
+        dup = {m for m in models if models.count(m) > 1}
+        if dup:
+            raise ValueError(f"1 つのモデルが複数の概念に対応している: {', '.join(sorted(dup))}")
         return self
 
     def concept(self, name: str) -> Concept:
@@ -109,7 +122,11 @@ class Ontology(_Strict):
 
 
 def load(path: Path) -> Ontology:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    """読み込んで検証する。YAML の構文の誤りも ValueError にする。"""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"YAML として読めない: {e}") from e
     return Ontology.model_validate(data)
 
 

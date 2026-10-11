@@ -35,6 +35,7 @@ const view: OntologyView = {
     constraints: [{ concept: 'order', text: 'キャンセルを含む' }],
   },
   unmapped_sources: ['raw.inventory'],
+  unmapped_models: ['dim_date'],
   errors: ['概念 order: キー raw.orders.order_id が無い'],
 }
 
@@ -49,6 +50,8 @@ describe('OntologyScreen', () => {
     expect(screen.getByTestId('concept-customer')).toHaveTextContent('dim_customer')
     expect(screen.getByTestId('concept-order')).toHaveTextContent('未整備')
     expect(screen.getByText(/キャンセルを含む/)).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: '関係' })).toHaveTextContent('顧客注文する注文raw.orders.customer_id')
+    expect(screen.getByText(/dim_date/)).toBeInTheDocument()
     expect(screen.getByText(/キー raw.orders.order_id が無い/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'raw.inventory' })).toHaveAttribute('href', '?source=raw.inventory')
     expect(screen.getByRole('link', { name: /ホーム/ })).toHaveAttribute('href', '/')
