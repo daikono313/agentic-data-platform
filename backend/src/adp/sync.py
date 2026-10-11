@@ -1,12 +1,17 @@
-"""マージ後の自動反映（#74）。
+"""マージ後の反映（#74）と自動反映（#106）。
 
 生成 PR・取り込み PR が GitHub でマージされても、手元（アプリが動いているチェックアウト）の
-warehouse は古いまま。アプリから「main の新しい変更を取り込む → dbt build → 一覧を更新」を行う。
+warehouse は古いまま。「main の新しい変更を取り込む → dbt build → 一覧を更新」を行う。
 
-- 手元が main で、変更が無いときだけ `git pull --ff-only` する（作業中のブランチや変更は触らない）
+- 手元が main で、変更が無いときだけ、確かめた origin/main のコミットへ `git merge --ff-only`
+  する（作業中のブランチや変更は触らない）
 - 反映は dbt deps / build / parse と、オントロジー・クレンジング・チャートの検査（`make dbt-build`
   と同じ）。一覧（/datasets）は manifest を読み直すので、終われば新しい指標が見える
-- launchd / cron などシステムの仕組みは使わない（アプリの画面から実行する）
+- 自動反映（AutoSync）: backend が `ADP_AUTO_SYNC_INTERVAL_S` 秒（既定 60）ごとにマージを確かめ、
+  取り込めるなら人のクリックなしに取り込みと dbt build を始める。インタビューの途中（応答中・
+  直近 5 分に操作あり）は始めない。`ADP_AUTO_SYNC_INTERVAL_S=0` で止め、画面の「取り込んで
+  更新する」だけにする
+- launchd / cron などシステムの仕組みは使わない（アプリのプロセスの中で動かす）
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ import asyncio
 import os
 import re
 import subprocess
+import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -52,6 +59,9 @@ class SyncStatus(BaseModel):
     """取り込めない理由。"""
     fetch_error: str | None = None
     """origin の最新を取れなかった理由（差は前回の情報）。"""
+    target: str | None = None
+    """差を確かめた origin/main のコミット。取り込むのはこのコミットまで（確かめた後の fetch で
+    origin/main が進んでも、確かめていないコミットは取り込まない）。"""
 
 
 @dataclass
@@ -66,6 +76,13 @@ class Sync:
     bin_dir: Path
     workspace: GitWorkspace
     _cache: _Cache = field(default_factory=_Cache)
+    _fetch_lock: threading.Lock = field(default_factory=threading.Lock)
+    """GET /sync・自動反映の確認・反映ジョブが同時に fetch しないように。"""
+
+    def _fetch_if_stale(self) -> None:
+        with self._fetch_lock:  # 待っていた側は、先の fetch の結果を使う
+            if time.monotonic() - self._cache.fetched_at > FETCH_TTL_S:
+                self._fetch()
 
     def _fetch(self) -> None:
         """origin/main を取る。対話（パスフレーズ・ホストの確認）をしない・短く打ち切る。"""
@@ -94,15 +111,19 @@ class Sync:
     def status(self, fetch: bool = True) -> SyncStatus:
         """手元と origin/main の差。fetch は FETCH_TTL_S に 1 回まで。"""
         git = self.workspace.git
-        if fetch and time.monotonic() - self._cache.fetched_at > FETCH_TTL_S:
-            self._fetch()
+        if fetch:
+            self._fetch_if_stale()
         branch = git("rev-parse", "--abbrev-ref", "HEAD")
         clean = git("status", "--porcelain") == ""
+        target: str | None
         try:
-            behind = int(git("rev-list", "--count", "HEAD..origin/main"))
-            changed = (
-                git("diff", "--name-only", "HEAD...origin/main").splitlines() if behind else []
-            )
+            # 先にコミットを決め、差・変わるファイル・取り込みを、すべてこのコミットで見る
+            target = git("rev-parse", "--verify", "-q", "origin/main^{commit}") or None
+        except Exception:
+            target = None
+        try:
+            behind = int(git("rev-list", "--count", f"HEAD..{target}")) if target else 0
+            changed = git("diff", "--name-only", f"HEAD...{target}").splitlines() if behind else []
         except Exception:
             behind, changed = 0, []
         reason = None
@@ -126,6 +147,7 @@ class Sync:
             can_rebuild=branch == "main" and clean,
             reason=reason,
             fetch_error=self._cache.error,
+            target=target,
         )
 
     async def run(self, on_step: Callable[[StepUpdate], None] = lambda _: None) -> PipelineResult:
@@ -150,10 +172,12 @@ class Sync:
                 raise SyncError(status.reason or "手元が main で変更が無いときだけ反映できます")
             if status.behind and not status.can_pull:
                 raise SyncError(status.reason or "取り込めません")
-            if status.behind:
-                # fetch 済みの origin/main へ早送りするだけ（マージは作らない）
+            if status.behind and status.target:
+                # 確かめたコミットへ早送りするだけ（マージは作らない）。origin/main を名前で
+                # 指すと、確かめた後の fetch で進んだ（アプリのコードを含むかもしれない）
+                # コミットまで取り込んでしまう
                 await asyncio.to_thread(
-                    self.workspace.git, "merge", "--ff-only", "-q", "origin/main"
+                    self.workspace.git, "merge", "--ff-only", "-q", status.target
                 )
                 step("pull", StepStatus.DONE, f"{status.behind} 件のコミットを取り込みました")
             else:
@@ -208,6 +232,97 @@ def _has_metrics(warehouse: Path) -> bool:
 
 class SyncError(Exception):
     pass
+
+
+AUTO_INTERVAL_S = 60.0
+"""マージを確かめる間隔（#106）。.env の ADP_AUTO_SYNC_INTERVAL_S で変える。0 で自動にしない。"""
+INTERVIEW_IDLE_S = 300.0
+"""インタビューの操作からこの秒数が経つまでは自動で反映しない（dbt build の間はカタログを
+読めず、インタビューの tool が失敗するため）。"""
+
+
+class AutoSyncState(BaseModel):
+    enabled: bool
+    interval_s: float
+    last_checked_at: str | None = None
+    last_note: str | None = None
+    """直近の確認で取り込まなかった理由（取り込めない・ほかのジョブを実行中など）。"""
+
+
+@dataclass
+class AutoSync:
+    """マージされた PR を一定の間隔で確かめ、取り込めるなら反映ジョブを始める（#106）。
+
+    取り込めない（手元が main 以外・変更あり・アプリのコードを含む）ときは何もせず、理由を残す
+    （画面に出す）。ジョブを始めるのは start（SessionService.start_sync。ほかのジョブと重ねない）。
+    """
+
+    sync: Sync
+    start: Callable[[], object]
+    interval_s: float = AUTO_INTERVAL_S
+    blocked: Callable[[], str | None] = lambda: None
+    """自動で始めない理由（インタビューの途中など）。None なら始めてよい。"""
+    state: AutoSyncState = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.state = AutoSyncState(enabled=self.interval_s > 0, interval_s=self.interval_s)
+
+    def tick(self, status: SyncStatus | None = None) -> bool:
+        """1 回確かめる。反映ジョブを始めたら True。
+
+        start はイベントループの上で呼ぶ（ジョブを asyncio のタスクとして始めるため）。状態の確認
+        （git fetch）だけを別スレッドで行い、その結果を渡す。
+        """
+        from datetime import UTC, datetime
+
+        self.state.last_checked_at = datetime.now(UTC).isoformat(timespec="seconds")
+        status = status if status is not None else self.sync.status()
+        fetch_note = (
+            f"origin の最新を取れませんでした: {status.fetch_error}" if status.fetch_error else None
+        )
+
+        def note(text: str | None) -> None:
+            self.state.last_note = "。".join(t for t in (text, fetch_note) if t) or None
+
+        if status.behind == 0:
+            note(None)
+            return False
+        if not status.can_pull:
+            note(status.reason)
+            return False
+        reason = self.blocked()
+        if reason:
+            note(f"{reason}。終わってから自動で取り込みます")
+            return False
+        try:
+            self.start()
+        except Exception as e:  # ほかのジョブを実行中など。次の確認でもう一度
+            note(str(e))
+            return False
+        note(None)
+        return True
+
+    async def loop(self) -> None:
+        while self.state.enabled:
+            await asyncio.sleep(self.interval_s)
+            try:
+                self.tick(await asyncio.to_thread(self.sync.status))
+            except Exception as e:  # git が使えないなど。止めずに次へ
+                self.state.last_note = f"確かめられませんでした: {type(e).__name__}"
+
+
+def auto_interval(values: dict[str, str]) -> float:
+    """`ADP_AUTO_SYNC_INTERVAL_S`（.env か環境変数）。数でなければ既定値。"""
+    raw = values.get("ADP_AUTO_SYNC_INTERVAL_S") or os.environ.get("ADP_AUTO_SYNC_INTERVAL_S")
+    try:
+        return max(0.0, float(raw)) if raw else AUTO_INTERVAL_S
+    except ValueError:
+        print(
+            f"ADP_AUTO_SYNC_INTERVAL_S は秒数（0 で無効）で指定してください: {raw!r}。"
+            f"{AUTO_INTERVAL_S:g} 秒にします",
+            file=sys.stderr,
+        )
+        return AUTO_INTERVAL_S
 
 
 def _check(args: list[str], backend: Path, warehouse: Path) -> subprocess.CompletedProcess[str]:
