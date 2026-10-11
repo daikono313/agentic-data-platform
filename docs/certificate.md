@@ -43,3 +43,24 @@
 1. Umbrella [#47](https://github.com/daikono313/auto_data_platform/issues/47) の子 issue がすべて close されている
 2. design-doc の S3 と S4 の 1〜2 が通しで動く: 自動テスト（`backend/tests/test_e2e_v2.py`、CI）と、実際の LLM（`make e2e SCENARIO=return_rate_by_category V2=1`）
 3. main の CI が green
+
+## v3 の完了（/goal の終了条件）
+
+終了条件は結果だけで判定する（進め方の順序は条件にしない）。
+
+1. Umbrella [#82](https://github.com/daikono313/auto_data_platform/issues/82) 本文のチェックリストにある issue が、次のどちらかになっている
+   - close されている
+   - オーナーの判断待ちで open のまま: `needs-owner` ラベルが付き、issue に「理由」と「オーナーがやること（実行するコマンドや判断事項）」が書かれている。対象になりうるのは次のものだけ
+     - #80: 本物の PR が 1 件残るため、実行してよいかをオーナーが決める
+     - #81 のうち PII の扱いの方針の承認（接続先を差し替えられるようにする実装はエージェントが行う。実際の接続はしない）
+     - #76 のうち、画面で集まった本物のフィードバックが無い部分（自分で作ったフィードバックで「1 周」したことにしない）
+2. 新しい源泉（在庫 `raw.inventory` を #69 でサンプルデータに追加する）を足して「オントロジーの更新 → クレンジング層 → fact / dim → 指標 → チャート（画像が生成される）」が通しで動く
+   - 自動テスト: `backend/tests/test_e2e_v3.py`（CI。LLM はモック）
+   - 実際の LLM: `make e2e SCENARIO=inventory V3=1`（ローカル。#69 で追加）
+3. main の CI が green
+
+1〜3 を満たしたら /goal を終了し、`needs-owner` の issue の一覧をオーナーに報告する。
+
+補足:
+- #74 の自動反映は GitHub Actions かアプリ内の仕組みで作る（launchd / cron などシステムの変更はしない）
+- #79 は issue 本文の 3 項目を入れたら close する
