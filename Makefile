@@ -1,6 +1,6 @@
 SAMPLE_ORDERS ?= 30000
 
-.PHONY: sample-data setup lint test dbt-build charts ontology eval e2e eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
+.PHONY: sample-data setup lint test dbt-build charts ontology cleansing eval e2e eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -31,6 +31,13 @@ dbt-build:
 	@if grep -rqsE '^ *metrics:' warehouse/models; then $(MF) list metrics; fi
 	cd backend && uv run python -m adp.charts check
 	cd backend && uv run python -m adp.ontology check
+	cd backend && uv run python -m adp.cleansing check
+
+# クレンジングの定義（warehouse/cleansing/）からクレンジング層（models/staging/stg_*）を生成する。
+# 雛形は `cd backend && uv run python -m adp.cleansing draft raw.<table>`（源泉のプロファイル画面にも出る）
+cleansing:
+	cd backend && uv run python -m adp.cleansing build
+	cd backend && uv run python -m adp.cleansing check
 
 # オントロジーの正本（ontology/ontology.yml）から docs/ontology.md（Mermaid の図）を生成し、源泉・dbt と照合する
 ontology:

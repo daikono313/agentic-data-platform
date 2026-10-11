@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.stores.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_stores
+  description: 店舗・チャネル（raw.stores を整形）
+  columns:
+  - name: store_id
+    data_tests:
+    - unique
+    - not_null

@@ -1,5 +1,5 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
-import type { Datasets, OntologyView, SourceProfile } from './datasets'
+import type { CleansingView, Datasets, OntologyView, SourceProfile } from './datasets'
 import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
 import type { InterviewEvent, JobEvent, SessionView } from './types'
 
@@ -45,6 +45,9 @@ export const api = {
   },
   async ontology(): Promise<OntologyView> {
     return json(await fetch(`${BASE}/ontology`))
+  },
+  async sourceCleansing(table: string): Promise<CleansingView> {
+    return json(await fetch(`${BASE}/sources/${encodeURIComponent(table)}/cleansing`))
   },
   async sourceProfile(table: string): Promise<SourceProfile> {
     return json(await fetch(`${BASE}/sources/${encodeURIComponent(table)}/profile`))

@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.products.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_products
+  description: 商品（raw.products を整形）
+  columns:
+  - name: product_id
+    data_tests:
+    - unique
+    - not_null

@@ -132,6 +132,18 @@ class OntologyView(BaseModel):
     """源泉・dbt のモデルとの食い違い。"""
 
 
+class CleansingView(BaseModel):
+    """源泉のクレンジングの定義（#68）。"""
+
+    path: str
+    """定義のファイル（リポジトリからの相対パス）。"""
+    existing: str | None = None
+    """今の定義（無ければ None）。"""
+    draft: str | None = None
+    """プロファイルから作った雛形（作れなければ None）。"""
+    draft_error: str | None = None
+
+
 class Datasets(BaseModel):
     metrics: list[MetricInfo]
     models: list[ModelInfo]
@@ -460,6 +472,31 @@ class DatasetIndex:
         view.errors += result.errors
         view.unmapped_sources = result.unmapped_sources
         view.unmapped_models = result.unmapped_models
+        return view
+
+    def cleansing(self, table: str) -> CleansingView:
+        """源泉のクレンジングの定義と、プロファイルからの雛形（#68）。
+
+        対象外のテーブルは ValueError、DB が使用中なら CatalogUnavailable。
+        """
+        from adp.cleansing.check import draft
+        from adp.cleansing.models import dump_spec, spec_path
+
+        if self.catalog is None:
+            raise CatalogUnavailable("元データのカタログが使えません")
+        profile = self.catalog.profile_table(table)
+        source = f"{profile.schema_name}.{profile.name}"
+        path = spec_path(self.warehouse / "cleansing", source)
+        view = CleansingView(
+            path=str(path.relative_to(self.repo_root)),
+            existing=path.read_text(encoding="utf-8") if path.exists() else None,
+        )
+        try:
+            view.draft = dump_spec(draft(profile))
+        except ValueError:  # 定義に書けない源泉の名前など。今の定義は返す
+            view.draft_error = (
+                "この源泉からは雛形を作れませんでした（名前に使えない文字があります）"
+            )
         return view
 
     def all(self) -> Datasets:

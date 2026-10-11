@@ -1,0 +1,3 @@
+source: raw.promotions
+description: プロモーション（raw.promotions を整形）
+key: promotion_id

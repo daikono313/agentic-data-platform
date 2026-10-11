@@ -1,0 +1,3 @@
+source: raw.order_items
+description: 注文明細（raw.order_items を整形）
+key: order_item_id

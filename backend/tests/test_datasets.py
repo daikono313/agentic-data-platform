@@ -314,3 +314,23 @@ def test_ontology_api(repo: Path, tmp_path: Path) -> None:
     (repo / "ontology" / "ontology.yml").write_text("version: 1\ndomains: []\nconcepts: [1]\n")
     assert client.get("/ontology").status_code == 422
     shutil.rmtree(repo / "ontology")
+
+
+def test_source_cleansing_api(repo: Path, tmp_path: Path) -> None:
+    """GET /sources/{table}/cleansing: 今の定義と、プロファイルからの雛形（#68）。"""
+
+    async def noop(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    service = SessionService(
+        Store(tmp_path / "app.db"), Interviewer(ScriptedRunner([]), LLMSettings()), noop
+    )
+    catalog = Catalog(repo / "warehouse/data/dev.duckdb", repo / "warehouse/target/manifest.json")
+    client = TestClient(create_app(service, DatasetIndex(repo, catalog)))
+    body = client.get("/sources/raw.orders/cleansing").json()
+    assert body["path"] == "warehouse/cleansing/raw.orders.yml"
+    assert body["existing"] and "ordered_on" in body["existing"]
+    assert "key: order_id" in body["draft"]
+    body = client.get("/sources/raw.returns/cleansing").json()
+    assert body["existing"] is None and "source: raw.returns" in body["draft"]
+    assert client.get("/sources/main.x/cleansing").status_code == 404

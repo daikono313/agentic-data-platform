@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
 
 from adp.beam import BeamModel
+from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_spec, spec_path
+from adp.cleansing.render import SourceColumn
+from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
 from adp.design.builder import dim_key_expr
 from adp.generation.semantic import (
@@ -29,6 +33,11 @@ UNKNOWN_LABEL = "不明"
 
 class WarehouseInfo(Protocol):
     """生成に必要な既存の状態とソースの情報。"""
+
+    @property
+    def warehouse_dir(self) -> Path:
+        """dbt プロジェクトのディレクトリ（クレンジングの定義を読む。#68）。"""
+        ...
 
     def existing_models(self) -> set[str]: ...
 
@@ -110,28 +119,33 @@ def _select(columns: list[tuple[str, str]]) -> str:
 
 
 def staging_files(table: str, info: WarehouseInfo) -> list[GeneratedFile]:
-    model = "stg_" + table.rpartition(".")[2]
+    """源泉のクレンジング層（stg）。クレンジングの定義（warehouse/cleansing/）から生成する（#68）。
+
+    定義が無ければ既定の定義（キーと、型ごとの既定のクレンジングだけ）を一緒に作る。
+    """
     schema, _, source_table = table.rpartition(".")
     declared = table in info.declared_sources()
     # 未宣言のソースは、テーブルごとに別名のソースとして宣言する（既存の sources を編集しない）
     source_name = schema if declared else f"adp_{source_table}"
-    cols = info.source_columns(table)
-    sql = (
-        "-- adp により生成\n"
-        + _select([(c, c) for c, _ in cols])
-        + f"\nfrom {{{{ source('{source_name}', '{source_table}') }}}}\n"
-    )
-    columns: list[dict[str, Any]] = []
-    pk = info.source_primary_key(table)
-    for c, _ in cols:
-        entry: dict[str, Any] = {"name": c}
-        if c == pk:
-            entry["data_tests"] = ["unique", "not_null"]
-        columns.append(entry)
-    yml = _yaml([{"name": model, "description": f"{table} を整形", "columns": columns}])
-    files = [
-        GeneratedFile(f"models/staging/{model}.sql", sql),
-        GeneratedFile(f"models/staging/{model}.yml", yml),
+    cleansing_dir = info.warehouse_dir / "cleansing"
+    files: list[GeneratedFile] = []
+    path = spec_path(cleansing_dir, table)
+    if path.exists():
+        # 定義の dbt_source は、宣言の有無に合わせる（未宣言なら下で別名の source を宣言する）
+        spec = load_spec(path).model_copy(update={"dbt_source": None if declared else source_name})
+    else:
+        spec = CleansingSpec(
+            source=table,
+            dbt_source=None if declared else source_name,
+            description=f"{table} をクレンジング",
+            key=info.source_primary_key(table),
+        )
+        files.append(GeneratedFile(f"cleansing/{table}.yml", dump_spec(spec)))
+    columns = [SourceColumn(c, t) for c, t in info.source_columns(table)]
+    rendered = render_cleansing(spec, load_defaults(cleansing_dir), columns)
+    files += [
+        GeneratedFile(rendered.sql_path, rendered.sql),
+        GeneratedFile(rendered.yml_path, rendered.yml),
     ]
     if not declared:
         sources = yaml.safe_dump(

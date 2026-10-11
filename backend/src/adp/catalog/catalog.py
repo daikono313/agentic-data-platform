@@ -20,6 +20,9 @@ from pydantic import BaseModel
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FK_MIN_MATCH_RATIO = 0.95
+_CAST_TYPE = re.compile(
+    r"^(integer|bigint|double|varchar|date|timestamp|boolean|decimal\(\d{1,2},\s*\d{1,2}\))$"
+)
 
 
 class CatalogUnavailable(Exception):
@@ -284,6 +287,21 @@ class Catalog:
             foreign_key_candidates=fks,
             profiles=profiles,
         )
+
+    def count_cast_failures(self, table: str, column: str, data_type: str) -> int:
+        """値があるのに data_type に変換できない行の数（クレンジングの定義の事前確認。#68）。"""
+        schema, name = self._resolve(table)
+        if not _IDENT.match(column) or not _CAST_TYPE.fullmatch(data_type):
+            raise ValueError(f"不正な列名か型です: {column} / {data_type}")
+        col = _q(column)
+        with self._connect() as con:
+            return int(
+                _scalar(
+                    con,
+                    f"select count(*) from {_table(schema, name)}"
+                    f" where {col} is not null and try_cast({col} as {data_type}) is null",
+                )
+            )
 
     def search_columns(self, query: str) -> list[ColumnMatch]:
         """列名・説明・テーブル説明に、いずれかの語を含む列を返す（大文字小文字は区別しない）。"""
