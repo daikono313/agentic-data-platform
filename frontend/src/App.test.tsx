@@ -80,6 +80,7 @@ describe('インタビュー画面（似た指標）', () => {
     })
     const datasets = {
       metrics: [metric('sales', '売上金額', 'store_sales'), metric('mine', '返品率', 'returns_rate')],
+
       models: [],
       beams: [],
       errors: [],
@@ -88,7 +89,7 @@ describe('インタビュー画面（似た指標）', () => {
     const session = {
       id: 's1',
       phase: 'review',
-      beam: { schema_version: 1, name: 'returns_rate', title: '返品率', request: '売上を見たい', events: [], metrics: [], gaps: [] },
+      beam: { schema_version: 1, name: 'returns_rate', title: '返品率', request: '売上と返品率を見たい', events: [], metrics: [], gaps: [] },
       matrix: { columns: [], rows: [] },
       issues: [],
       choices: [],
@@ -108,7 +109,9 @@ describe('インタビュー画面（似た指標）', () => {
     render(<App />)
     const box = await screen.findByRole('status', { name: '似ている既にある指標' })
     expect(box).toHaveTextContent('売上金額をチャートで見る')
+    // この BEAM 自身の指標（返品率）は「似ている」には出さず、同じ名前で置き換えることを知らせる
     expect(box).not.toHaveTextContent('返品率をチャートで見る')
+    expect(box).toHaveTextContent('同じ名前（returns_rate）の要求が既にあります（返品率）')
   })
 })
 

@@ -454,7 +454,7 @@ function StartScreen({
           </a>
         </p>
         {similar.length > 0 && (
-          <div className="rounded-md border border-sky-500/50 p-2 text-xs" role="status" aria-label="似ている既にある指標">
+          <div className="rounded-md border border-sky-500/50 p-2 text-xs" aria-live="polite" aria-label="似ている既にある指標">
             <p className="text-muted-foreground">既にある指標で見られるかもしれません:</p>
             <ul className="mt-1 flex flex-wrap gap-2">
               {similar.map((m) => (
@@ -491,28 +491,40 @@ function StartScreen({
 function SimilarExisting({ texts, beam, datasets }: { texts: string[]; beam: string; datasets: Datasets }) {
   // この BEAM 成果物自身が作った指標（確定し直し）は除く
   const others = datasets.metrics.filter((m) => !beam || m.beam !== beam)
+  // 同じ名前の BEAM 成果物が既にある: 確定すると beam/<name>.yml と、その指標を置き換える
+  const sameName = beam ? datasets.metrics.filter((m) => m.beam === beam) : []
   const found = new Map<string, Datasets['metrics'][number]>()
   for (const t of texts) if (t) for (const m of similarMetrics(t, others)) found.set(m.name, m)
-  if (found.size === 0) return null
+  if (found.size === 0 && sameName.length === 0) return null
   return (
     <div className="rounded-lg border border-sky-500/50 p-3 text-xs" role="status" aria-label="似ている既にある指標">
-      <p className="font-semibold">似ている指標が既にあります</p>
-      <ul className="mt-1 space-y-1">
-        {[...found.values()].map((m) => (
-          <li key={m.name}>
-            <a href={chartUrl(m.name)} target="_blank" rel="noreferrer" className="text-primary underline">
-              {m.label}をチャートで見る
-            </a>
-            <span className="ml-1 text-muted-foreground">
-              （切り口: {rankDimensions(m.dimensions).slice(0, 5).map((d) => d.label).join('、') || 'なし'}）
-            </span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-1 text-muted-foreground">
-        同じ指標なら、作らずにチャートで見られます。切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えると、既存の
-        fact に足して作れます。
-      </p>
+      {sameName.length > 0 && (
+        <p className="mb-1 text-amber-600">
+          同じ名前（{beam}）の要求が既にあります（{sameName.map((m) => m.label).join('、')}
+          ）。確定すると、その要求と指標を置き換えます。別の要求なら、インタビューで「別の名前にしてほしい」と伝えてください。
+        </p>
+      )}
+      {found.size > 0 && (
+        <>
+          <p className="font-semibold">似ている指標が既にあります</p>
+          <ul className="mt-1 space-y-1">
+            {[...found.values()].map((m) => (
+              <li key={m.name}>
+                <a href={chartUrl(m.name)} target="_blank" rel="noreferrer" className="text-primary underline">
+                  {m.label}をチャートで見る（別のタブ）
+                </a>
+                <span className="ml-1 text-muted-foreground">
+                  （切り口: {rankDimensions(m.dimensions).slice(0, 5).map((d) => d.label).join('、') || 'なし'}）
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-muted-foreground">
+            同じ指標なら、作らずにチャートで見られます。切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えると、既存の
+            fact に足して作れます。
+          </p>
+        </>
+      )}
     </div>
   )
 }

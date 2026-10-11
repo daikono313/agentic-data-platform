@@ -214,7 +214,10 @@ export function matches(query: string, ...texts: string[]): boolean {
   return !q || texts.some((t) => t.toLowerCase().includes(q))
 }
 
-const STOP = /(を|が|は|に|で|と|ごと|別|見たい|知りたい|みたい|したい|ほしい|欲しい|毎|[、。・\s「」（）()])/g
+const STOP = /(を|が|は|に|で|と|ごと|見たい|知りたい|みたい|したい|ほしい|欲しい|毎|[、。・\s「」（）()])/g
+
+/** 単独では「同じものを測る」根拠にならない言葉（返品数量と販売数量、返品金額と売上金額は別の指標） */
+const GENERIC = new Set(['数量', '金額', '件数', '個数', '人数', '合計', '税抜', '税込'])
 
 function bigrams(text: string): Set<string> {
   const out = new Set<string>()
@@ -224,30 +227,27 @@ function bigrams(text: string): Set<string> {
   return out
 }
 
+/** 表示名のうち、何を測るかの部分（「商品別販売数量」→「販売数量」。「◯◯別」は切り口） */
+function measurePart(label: string): string {
+  const i = label.lastIndexOf('別')
+  return i >= 0 ? label.slice(i + 1) : label
+}
+
 /**
- * 要求の文に似た既にある指標（#75）。指標の表示名・説明（何を測るか）との 2 文字の並びの重なりで
- * 並べる。切り口（店舗・カテゴリなど）は比べない（切り口が同じだけの別の指標を出さないため）。
- * 表示名と 1 つも重ならないものは出さない。
+ * 要求の文に似た既にある指標（#75）。指標の表示名のうち何を測るかの部分と、要求の 2 文字の並びが
+ * 重なるものを、重なりの多い順に出す。切り口（「◯◯別」）・説明（「除く」などの条件を含む）は
+ * 比べない。数量・金額のような汎用の言葉だけが重なるものは出さない。
  */
-export function similarMetrics(request: string, metrics: MetricInfo[], limit = 3, threshold = 0.5): MetricInfo[] {
-  const want = bigrams(request)
+export function similarMetrics(request: string, metrics: MetricInfo[], limit = 3): MetricInfo[] {
+  const want = bigrams(request.replace(/別/g, ' '))
   if (want.size === 0) return []
   return metrics
     .map((m) => {
-      // 表示名のうち切り口の言葉（「商品別販売数量」の「商品」など）は、何を測るかを表さないので除く
-      const slices = bigrams(m.dimensions.map((d) => d.label).join(' '))
-      const label = new Set([...bigrams(m.label)].filter((b) => !slices.has(b)))
-      const measure = new Set([...label, ...[...bigrams(m.description)].filter((b) => !slices.has(b))])
-      const labelHit = [...label].filter((b) => want.has(b)).length
-      // 表示名のうち要求に出てくる割合と、要求のうち表示名・説明に出てくる割合の大きい方
-      const score = Math.max(
-        label.size ? labelHit / label.size : 0,
-        [...want].filter((b) => measure.has(b)).length / want.size,
-      )
-      return { m, score: labelHit > 0 ? score : 0 }
+      const hits = [...bigrams(measurePart(m.label))].filter((b) => want.has(b))
+      return { m, hits: hits.length, specific: hits.some((b) => !GENERIC.has(b)) }
     })
-    .filter((x) => x.score >= threshold)
-    .sort((a, b) => b.score - a.score)
+    .filter((x) => x.specific)
+    .sort((a, b) => b.hits - a.hits)
     .slice(0, limit)
     .map((x) => x.m)
 }

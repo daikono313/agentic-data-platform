@@ -208,27 +208,50 @@ describe('errorText', () => {
 })
 
 describe('similarMetrics', () => {
-  const dims = [
-    { name: 'store__store_name', label: '店舗名', description: '', kind: 'categorical', entity: 'store' },
-    { name: 'product__category', label: '商品カテゴリ', description: '', kind: 'categorical', entity: 'product' },
-    { name: 'customer__membership_rank', label: '会員ランク', description: '', kind: 'categorical', entity: 'customer' },
-  ]
+  // 実際のカタログと同じ切り口（販売チャネル・注文日を含む）
+  const dims = ['店舗名', '販売チャネル', '商品カテゴリ', '商品名', '会員ランク', '注文日', '注文ステータス'].map((label, i) => ({
+    name: `d${i}`,
+    label,
+    description: '',
+    kind: 'categorical',
+    entity: null,
+  }))
+  const metric = (name: string, label: string, description: string) => ({
+    ...datasets.metrics[0],
+    name,
+    label,
+    description,
+    dimensions: dims,
+  })
   const metrics = [
-    { ...datasets.metrics[0], name: 'sales', label: '売上金額(税抜)', description: '店舗別の売上金額の合計はいくらか', dimensions: dims },
-    { ...datasets.metrics[0], name: 'quantity', label: '商品別販売数量', description: '販売した数量', dimensions: dims },
+    metric('sales', '売上金額(税抜)', '店舗別の売上金額（キャンセルと返品を除く）の合計はいくらか'),
+    metric('sales_by_product', '商品別売上金額', '商品別の売上金額'),
+    metric('quantity', '商品別販売数量', '販売した数量（キャンセルと返品を除く）'),
+    metric('daily', '日別売上金額', '日ごとの売上金額'),
   ]
 
-  it('何を測るか（表示名・説明）が似た指標を出す（#75）', async () => {
+  it('何を測るか（表示名の「◯◯別」の後ろ）が似た指標を出す（#75）', async () => {
     const { similarMetrics } = await import('@/api/datasets')
-    expect(similarMetrics('店舗ごとの売上を見たい', metrics).map((m) => m.name)).toEqual(['sales'])
-    expect(similarMetrics('売上を見たい', metrics).map((m) => m.name)).toEqual(['sales'])
-    expect(similarMetrics('販売数量を商品ごとに', metrics).map((m) => m.name)).toEqual(['quantity'])
+    const names = (r: string) => similarMetrics(r, metrics).map((m) => m.name)
+    expect(names('店舗ごとの売上を見たい')).toEqual(expect.arrayContaining(['sales']))
+    expect(names('売上を見たい')).toContain('sales')
+    expect(names('販売数量を商品ごとに')).toEqual(['quantity'])
+    expect(names('日別の売上')).toContain('daily')
   })
 
-  it('切り口が同じだけの別の指標は出さない（#91 レビュー）', async () => {
+  it('切り口や汎用の言葉（数量・金額）だけが同じ別の指標は出さない（レビュー）', async () => {
     const { similarMetrics } = await import('@/api/datasets')
-    expect(similarMetrics('商品カテゴリ別の返品率を知りたい', metrics)).toEqual([])
-    expect(similarMetrics('店舗ごと・商品カテゴリごとの入荷数量を月別に見たい', metrics)).toEqual([])
-    expect(similarMetrics('会員ランク別の顧客数', metrics)).toEqual([])
+    for (const r of [
+      '商品カテゴリ別の返品率を知りたい',
+      '店舗ごと・商品カテゴリごとの入荷数量を月別に見たい',
+      '在庫数量を見たい',
+      '返品数量',
+      'キャンセル数量',
+      '返品金額',
+      '値引金額',
+      '会員ランク別の顧客数',
+    ]) {
+      expect([r, similarMetrics(r, metrics)]).toEqual([r, []])
+    }
   })
 })
