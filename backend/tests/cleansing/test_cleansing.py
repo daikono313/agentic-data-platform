@@ -336,3 +336,36 @@ def test_generator_uses_the_existing_source_name() -> None:
     files = {f.path: f.content for f in staging_files("raw.orders", Info())}  # type: ignore[arg-type]
     assert "source('adp_orders', 'orders')" in files["models/staging/stg_orders.sql"]
     assert not any(p.endswith("__sources.yml") for p in files)
+
+
+def test_existing_spec_gets_the_same_source_name_as_stg(tmp_path: Path) -> None:
+    """取り込みが先に書いた定義（dbt_source 無し）も、stg と同じ source 名に書き換える。"""
+    import shutil
+
+    from adp.cleansing import load_spec
+    from adp.generation.dbt import staging_files
+
+    shutil.copytree(WAREHOUSE / "cleansing", tmp_path / "cleansing")
+    spec = tmp_path / "cleansing" / "raw.coupons.yml"
+    spec.write_text(
+        "source: raw.coupons\ndescription: クーポン\nkey: coupon_id\n", encoding="utf-8"
+    )
+
+    class Info:
+        warehouse_dir = tmp_path
+
+        def declared_sources(self) -> dict[str, str]:
+            return {}
+
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [("coupon_id", "INTEGER")]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return "coupon_id"
+
+    files = {f.path: f for f in staging_files("raw.coupons", Info())}  # type: ignore[arg-type]
+    written = files["cleansing/raw.coupons.yml"]
+    assert written.replaces == spec.read_text(encoding="utf-8")
+    spec.write_text(written.content, encoding="utf-8")
+    assert load_spec(spec).dbt_source == "adp_coupons"
+    assert "source('adp_coupons', 'coupons')" in files["models/staging/stg_coupons.sql"].content

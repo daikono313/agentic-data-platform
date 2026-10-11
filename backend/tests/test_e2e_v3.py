@@ -165,17 +165,21 @@ def test_v3_end_to_end(repo: Path) -> None:  # noqa: F811
         )
         branch = done["branch"]
         changed = git(repo, "diff", "--name-only", f"origin/main...origin/{branch}").splitlines()
-        for path in ("ontology/ontology.yml", "docs/ontology.md"):
-            assert path in changed, (path, changed)
-        # クレンジング層は、この PR で作るか、すでに main にある（生成 PR が先に足した場合。#104）
         for path in (
-            "warehouse/cleansing/raw.inventory.yml",
+            "ontology/ontology.yml",
+            "docs/ontology.md",
+            "warehouse/cleansing/raw.inventory.yml",  # exclude を足したので必ず変わる
             "warehouse/models/staging/stg_inventory.sql",
+        ):
+            assert path in changed, (path, changed)
+        # 源泉の宣言と stg の yml は、この PR で作るか、すでに main にある（生成 PR が先に
+        # 足した場合。#104）
+        in_main = set(git(repo, "ls-tree", "-r", "--name-only", "origin/main").splitlines())
+        for path in (
             "warehouse/models/staging/stg_inventory.yml",
             "warehouse/models/staging/_adp_inventory__sources.yml",
         ):
-            in_main = path in git(repo, "ls-tree", "-r", "--name-only", "origin/main").splitlines()
-            assert path in changed or in_main, (path, changed)
+            assert path in changed or path in in_main, (path, changed)
         assert "源泉 `raw.inventory` を取り込みます" in gh.bodies[-1]
 
         # PR をマージする（本物ではオーナーが GitHub でマージする）

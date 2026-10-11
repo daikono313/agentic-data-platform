@@ -134,8 +134,15 @@ def staging_files(table: str, info: WarehouseInfo) -> list[GeneratedFile]:
     files: list[GeneratedFile] = []
     path = spec_path(cleansing_dir, table)
     if path.exists():
-        # 定義の dbt_source は、宣言の有無に合わせる（未宣言なら下で別名の source を宣言する）
-        spec = load_spec(path).model_copy(update={"dbt_source": dbt_source})
+        # 定義の dbt_source は、宣言済みの source 名に合わせる（未宣言なら下で別名の source を
+        # 宣言する）。変わるときは定義のファイルも書き換え、定義と stg を食い違わせない（#105）
+        original = path.read_text(encoding="utf-8")
+        loaded = load_spec(path)
+        spec = loaded.model_copy(update={"dbt_source": dbt_source})
+        if loaded.dbt_source != dbt_source:
+            files.append(
+                GeneratedFile(f"cleansing/{table}.yml", dump_spec(spec), replaces=original)
+            )
     else:
         spec = CleansingSpec(
             source=table,
