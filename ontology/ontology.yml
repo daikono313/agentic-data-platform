@@ -22,6 +22,8 @@ domains:
   label: 店舗・チャネル
 - name: fulfillment
   label: 決済・配送・返品
+- name: inventory
+  label: 在庫
 concepts:
 - name: customer
   label: 顧客
@@ -208,6 +210,23 @@ concepts:
   - name: return_reason
     label: 返品理由
     column: return_reason
+- name: inventory_movement
+  label: 在庫の入出庫
+  domain: inventory
+  kind: event
+  source: raw.inventory
+  key: inventory_id
+  model: fct_stock_movements
+  attributes:
+  - name: moved_at
+    label: 入出庫日時
+    column: moved_at
+  - name: movement_type
+    label: 入出庫の種類
+    column: movement_type
+  - name: quantity
+    label: 数量
+    column: quantity
 relations:
 - from: customer
   to: order
@@ -241,6 +260,14 @@ relations:
   to: return
   verb: 返品される
   via: raw.returns.order_item_id
+- from: store
+  to: inventory_movement
+  verb: 入出庫する
+  via: raw.inventory.store_id
+- from: inventory_movement
+  to: product
+  verb: 動かす
+  via: raw.inventory.product_id
 constraints:
 - concept: store
   text: channel が online / app の店舗は都道府県・地方を持たない
@@ -250,3 +277,5 @@ constraints:
   text: online / app の注文のみ配送がある
 - concept: product
   text: unit_cost は標準原価で、実績原価ではない
+- concept: inventory_movement
+  text: 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。月末在庫は、その月までの最新の棚卸の数か、そこから後の入庫・移動出庫・廃棄を足した帳簿の数

@@ -52,9 +52,9 @@ charts:
 eval:
 	cd backend && uv run python -m adp.evals interview $(if $(SCENARIO),--scenario $(SCENARIO)) $(if $(REPEAT),--repeat $(REPEAT))
 
-# 実際の LLM で通しの E2E（S1。V2=1 で S3・S4 も）。既定は dry-run（push・PR 作成をしない）。PR=1 で本物の PR
+# 実際の LLM で通しの E2E（S1。V2=1 で S3・S4、V3=1 で S5。V3 の既定のシナリオは reviews）。既定は dry-run（push・PR 作成をしない）。PR=1 で本物の PR
 e2e:
-	cd backend && uv run python -m adp.evals.e2e --scenario $(or $(SCENARIO),sales_by_store) $(if $(V2),--v2) $(if $(V3),--v3) $(if $(PR),,--dry-run)
+	cd backend && uv run python -m adp.evals.e2e --scenario $(or $(SCENARIO),$(if $(V3),reviews,sales_by_store)) $(if $(V2),--v2) $(if $(V3),--v3) $(if $(PR),,--dry-run)
 
 # 生成の自己修復の eval（#78）: 失敗を入れた生成物を実際の LLM で直せるか。make eval-repair [SCENARIO=名前] [REPEAT=N]
 eval-repair:

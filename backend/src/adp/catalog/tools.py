@@ -56,8 +56,9 @@ async def _call(fn: Callable[[], BaseModel | Sequence[BaseModel]]) -> dict[str, 
         return _error("データベースの読み取りに失敗しました。")
 
 
-def build_tools(catalog: Catalog, sample: bool = True) -> list[SdkMcpTool[Any]]:
-    """ソースカタログの tool。sample=False で sample_rows（行の値）を渡さない（取り込み用）。"""
+def build_tools(catalog: Catalog, sample: bool = True, facts: bool = True) -> list[SdkMcpTool[Any]]:
+    """ソースカタログの tool。取り込み用には sample=False（sample_rows: 行の値）と
+    facts=False（list_facts: 整備済みの fact）で渡さない。"""
 
     @tool("list_sources", "ソーステーブルの一覧（説明・行数）を返す", {})
     async def list_sources(args: dict[str, Any]) -> dict[str, Any]:
@@ -118,7 +119,19 @@ def build_tools(catalog: Catalog, sample: bool = True) -> list[SdkMcpTool[Any]]:
             )
         )
 
+    @tool(
+        "list_facts",
+        "整備済みの fact（ファクトテーブル）の一覧: 説明・列・結合できるディメンション・"
+        "既存の指標。"
+        "新しい指標は、まずここにある fact で作れないかを確かめる（同じ用途の fact を作らない）",
+        {},
+    )
+    async def list_facts(args: dict[str, Any]) -> dict[str, Any]:
+        return await _call(catalog.existing_facts)
+
     tools = [list_sources, describe_table, profile_column, search_columns]
+    # 整備済みの fact は、指標を探すインタビューだけが使う（取り込みには要らない。最小権限）
+    tools += [list_facts] if facts else []
     return [*tools, sample_rows] if sample else tools
 
 
@@ -135,6 +148,7 @@ def allowed_tool_names() -> list[str]:
             "describe_table",
             "profile_column",
             "search_columns",
+            "list_facts",
             "sample_rows",
         )
     ]

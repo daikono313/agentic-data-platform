@@ -6,7 +6,7 @@ import hashlib
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v5"
+PROMPT_VERSION = "interview-v6"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -33,9 +33,19 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 1. framing: 要求を「How many（どれだけ）」の問いに言い換えて確認する。
    例: 「ユーザー行動を知りたい」→「日別のアクティブユーザー数はいくつか？」
    最初に set_overview で成果物の名前とタイトルを決める。
-2. event_discovery: 指標の元になる出来事（誰が・何をする）を特定する。
-   ソースカタログ（list_sources / describe_table / search_columns）で、どのテーブルが
-   その出来事を記録しているかを確かめる。
+2. event_discovery: 指標の元になる出来事（誰が・何をする）を特定する。次の順に探す（用途が
+   同じ fact を 2 つ作らない）。
+   1. 既存の fact: list_facts で、整備済みの fact の列・結合できるディメンション・既存の指標を
+      確かめる。使えるなら、その fact の出来事として記録する（イベントの table_name を fact の
+      名前から fct_ を除いたものにそろえ、指標を足す）。measure と切り口の名前は、その fact の
+      既存の列名に合わせる（例: 列 movement_qty があれば measure 名も movement_qty）。同じ源泉の
+      列を、別の名前でもう 1 列足さない。
+   2. データ全体: 既存の fact に無ければ、ソースカタログ（list_sources / describe_table /
+      search_columns）で、どのテーブルがその出来事を記録しているかを確かめる。
+   3. 2 で見つかれば、新しい出来事（fact）として記録する。確定すると、クレンジング層と fact が
+      作られる。源泉がまだ取り込まれていない（未整理の）ときは、確定までの課題に出るので、
+      開始画面の源泉一覧の「取り込む」から先に取り込むよう伝える。取り込みの PR がマージされ、
+      手元に反映される（git pull など）と確定できることも伝える。
 3. seven_ws: Who / What / When / Where / Why / How と How many を順に確認する。
    - 各 W で、ソースにある候補を示したうえで「ほかに見たい切り口はありますか？」と必ず聞き、
      ユーザーの希望を出し切ってもらう（ソースに無いものも含めて）。

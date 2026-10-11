@@ -176,6 +176,23 @@ def test_pr_body_shows_charts() -> None:
     assert "❌ チャートを作れませんでした: 描画できませんでした" in body and "![" not in body
 
 
+def test_pr_body_records_fact_search() -> None:
+    """既存の fact を再利用したか・新しく作ったか（と理由）を PR 本文に残す（#113）。"""
+    beam = load(FIXTURE)
+    design = DesignBuilder(FakeSchema()).build(beam)
+    reused = pr_body(beam, design, [], Verification(True), existing_facts=["fct_order_lines"])
+    assert "## 既存の fact の確認" in reused
+    assert "`fct_order_lines`: 既存の fact を再利用し" in reused
+    created = pr_body(beam, design, [], Verification(True), existing_facts=["fct_stock_movements"])
+    line = next(x for x in created.splitlines() if x.startswith("- `fct_order_lines`"))
+    assert "に無い出来事として、新しく作りました" in line and "`fct_stock_movements`" in line
+    assert "源泉 `raw.order_items`" in line
+    empty = pr_body(beam, design, [], Verification(True), existing_facts=[])
+    assert "既存の fact（なし）" in empty
+    # 渡さなければ書かない（従来どおり）
+    assert "## 既存の fact の確認" not in pr_body(beam, design, [], Verification(True))
+
+
 def test_pr_body_is_safe_for_public_repo() -> None:
     from adp.markdown import safe
 

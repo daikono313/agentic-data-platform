@@ -2,9 +2,11 @@
 
     uv run python -m adp.evals.e2e [--scenario sales_by_store] [--dry-run] [--v2]
 
---v3 のときは、先に新しい源泉（raw.inventory）を取り込み（エージェントの追加案 → クレンジング層 →
-PR）、取り込みのブランチの上でインタビューと生成を行い、作った fct がオントロジーの概念に
-書き込まれ、指標をチャートで描けることまで確かめる（certificate の「v3 の完了」の 2）。
+--v3 のときは、先にシナリオの新しい源泉（`onboard`。既定のシナリオ reviews では raw.reviews）を
+取り込み（エージェントの追加案 → クレンジング層 → PR）、取り込みのブランチの上でインタビューと
+生成を行い、作った fct がオントロジーの概念に書き込まれ、指標をチャートで描けることまで確かめる
+（certificate の「v3 の完了」の 2、design-doc の S5）。在庫（raw.inventory）は取り込み済みなので、
+`--v3` には onboard のあるシナリオを使う。
 
 --v2 のときは、データ一覧を見てから要求し、インタビュー中に最初の発言へフィードバックし、
 確定後に全体を評価し、生成した指標を描画画面（PR の内容でプレビュー）で描き、フィードバックの
@@ -89,11 +91,24 @@ async def main(args: argparse.Namespace) -> int:
 
     onboarded: str | None = None
     if args.v3:
-        onboarded = await _v3_onboard(runner, settings, workspace, github, db, account)
+        if not scenario.onboard:
+            print(
+                f"シナリオ {scenario.name} には取り込む源泉（onboard）がありません。"
+                "--v3 には onboard のあるシナリオ（例: reviews）を使ってください"
+            )
+            return 1
+        onboarded = await _v3_onboard(
+            runner, settings, workspace, github, db, account, scenario.onboard
+        )
         if onboarded is None:
             return 1
         # 取り込みのブランチの上で生成する（dry-run では push しないので、ローカルのブランチ）
         pipeline.config.base = onboarded
+        # インタビューの設計の確認も、取り込んだ後のオントロジーで行う（マージ後に反映した状態）
+        onboarded_root = workspace.worktrees_dir / onboarded.replace("/", "-")
+        interviewer.design_issues = design_issues(
+            catalog, onboarded_root / "ontology" / "ontology.yml"
+        )
     try:
         return await _run(args, service, scenario, user, workspace)
     except Conflict as e:
@@ -200,8 +215,8 @@ async def _run(
     try:
         if ok and args.v2:
             ok = _v2_after_pr(service, sid, job_id, service._state(sid).beam.metrics)
-        if ok and args.v3 and branch:
-            ok = _v3_after_pr(workspace, branch) and _v2_after_pr(
+        if ok and args.v3 and branch and scenario.onboard:
+            ok = _v3_after_pr(workspace, branch, scenario.onboard) and _v2_after_pr(
                 service, sid, job_id, service._state(sid).beam.metrics, feedback=False
             )
     finally:
@@ -219,9 +234,10 @@ async def _v3_onboard(
     github: GitHub,
     db: Path,
     account: str | None,
+    source: str,
 ) -> str | None:
     """新しい源泉を取り込む（エージェントの追加案 → 確定 → PR）。取り込みのブランチを返す。"""
-    from adp.onboarding.pipeline import OnboardingPipeline
+    from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
 
     onboarding = OnboardingPipeline(
         PipelineConfig(REPO_ROOT, Path(sys.executable).parent, db, account),
@@ -230,7 +246,11 @@ async def _v3_onboard(
         workspace,
         github,
     )
-    draft = await onboarding.draft(SOURCE, use_agent=True)
+    try:
+        draft = await onboarding.draft(source, use_agent=True)
+    except AlreadyOnboarded as e:
+        print(f"{e}。まだオントロジーに無い源泉のシナリオを使ってください")
+        return None
     print(f"取り込みの案（{draft.proposer}）{draft.note or ''}")
     for c in draft.patch.concepts:
         print(f"  概念 {c.label}（{c.name}、{c.kind}）: {'、'.join(a.label for a in c.attributes)}")
@@ -240,7 +260,7 @@ async def _v3_onboard(
         print("エージェントの案を使えませんでした")
         return None
     result = await onboarding.run(
-        SOURCE,
+        source,
         draft.patch,
         draft.cleansing,
         lambda u: print(f"  {u.status.value:8} {u.label} {u.detail[:200]}"),
@@ -252,21 +272,17 @@ async def _v3_onboard(
     return result.branch if result.ok else None
 
 
-def _v3_after_pr(workspace: GitWorkspace, branch: str) -> bool:
+def _v3_after_pr(workspace: GitWorkspace, branch: str, source: str) -> bool:
     """作った fct が、取り込んだ源泉の概念に書き込まれているか（fact / dim の整理）。"""
     from adp.ontology import load
 
     path = workspace.worktrees_dir / branch.replace("/", "-") / "ontology" / "ontology.yml"
-    linked = [c for c in load(path).concepts if c.source == SOURCE and c.model]
+    linked = [c for c in load(path).concepts if c.source == source and c.model]
     print(
         "オントロジー: "
         + (", ".join(f"{c.name} → {c.model}" for c in linked) or "書き込まれていない")
     )
     return bool(linked)
-
-
-SOURCE = "raw.inventory"
-"""v3 で取り込む新しい源泉。"""
 
 
 def _v2_after_pr(
@@ -313,7 +329,9 @@ def _v2_after_pr(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", default="sales_by_store")
+    parser.add_argument(
+        "--scenario", default=None, help="既定は sales_by_store（--v3 では reviews）"
+    )
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -322,4 +340,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--v3", action="store_true", help="源泉の取り込み → インタビュー → 生成 → 描画（#69）"
     )
-    sys.exit(asyncio.run(main(parser.parse_args())))
+    parsed = parser.parse_args()
+    parsed.scenario = parsed.scenario or ("reviews" if parsed.v3 else "sales_by_store")
+    sys.exit(asyncio.run(main(parsed)))
