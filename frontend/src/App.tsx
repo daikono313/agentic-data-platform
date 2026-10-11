@@ -380,7 +380,8 @@ function StartScreen({
   datasets: Datasets | null
   datasetsError: string | null
 }) {
-  const [request, setRequest] = useState('')
+  // 源泉のプロファイル画面の「作れそうな指標」から、要求を入れた状態で開ける（#71）
+  const [request, setRequest] = useState(() => new URLSearchParams(window.location.search).get('request') ?? '')
   const input = useRef<HTMLInputElement>(null)
   const examples = datasets ? exampleRequests(datasets.sources) : []
   return (

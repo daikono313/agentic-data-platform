@@ -117,6 +117,51 @@ describe('SourceProfileScreen', () => {
     expect(screen.getByTestId('column-returned_at')).toHaveTextContent('ほとんど異なる値')
   })
 
+  it('月ごとの件数（欠けた月）・数値の分布・最新の日時・作れそうな指標を出す', async () => {
+    vi.spyOn(api, 'sourceProfile').mockResolvedValue({
+      ...profile,
+      columns: [
+        { name: 'returned_at', description: '返品日時', data_type: 'TIMESTAMP' },
+        { name: 'quantity', description: '返品数量', data_type: 'INTEGER' },
+        { name: 'return_reason', description: '返品理由', data_type: 'VARCHAR' },
+        { name: 'updated_at', description: '更新日時', data_type: 'TIMESTAMP' },
+      ],
+      profiles: [
+        col('returned_at', {
+          data_type: 'TIMESTAMP',
+          is_unique: false,
+          max: '2025-03-10 10:00:00',
+          monthly: [
+            ['2025-01', 3],
+            ['2025-02', 0],
+            ['2025-03', 1],
+          ],
+        }),
+        col('quantity', {
+          data_type: 'INTEGER',
+          is_unique: false,
+          distinct_count: 2,
+          histogram: [
+            [1, 2, 3],
+            [2, 3, 1],
+          ],
+        }),
+        col('return_reason', { is_unique: false, distinct_count: 2 }),
+        col('updated_at', { data_type: 'TIMESTAMP', max: '2026-01-01 00:00:00', monthly: [['2026-01', 4], ['2026-02', 1]] }),
+      ],
+    })
+    render(<SourceProfileScreen table="raw.returns" />)
+    const monthly = await screen.findByTestId('monthly-returned_at')
+    expect(monthly).toHaveTextContent('欠け 1 か月')
+    expect(within(monthly).getByRole('img')).toHaveAttribute('aria-label', expect.stringContaining('2025-02: 0 行'))
+    expect(screen.getByTestId('histogram-quantity')).toBeInTheDocument()
+    // 管理用の更新日時ではなく、業務の日時の最新を出す
+    expect(screen.getByTestId('freshness')).toHaveTextContent('returned_at')
+    expect(screen.getByTestId('freshness')).toHaveTextContent('2025-03-10 10:00:00')
+    const link = screen.getByRole('link', { name: '返品理由別の返品の返品数量を見たい' })
+    expect(link).toHaveAttribute('href', '/?request=' + encodeURIComponent('返品理由別の返品の返品数量を見たい').replace(/%20/g, '+'))
+  })
+
   it('取得に失敗したらエラーを表示する', async () => {
     vi.spyOn(api, 'sourceProfile').mockRejectedValue(new Error('{"detail":"対象外のテーブルです: x.y"}'))
     render(<SourceProfileScreen table="x.y" />)

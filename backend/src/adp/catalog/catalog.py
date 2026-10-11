@@ -84,6 +84,15 @@ class ColumnProfile(BaseModel):
     max: str | None
     top_values: list[tuple[str | None, int]]
     is_unique: bool
+    monthly: list[tuple[str, int]] | None = None
+    """日付・日時の列の月ごとの件数（YYYY-MM。0 件の月も含む）。プロファイル画面用（#71）。"""
+    histogram: list[tuple[float, float, int]] | None = None
+    """数値の列の分布（下限・上限・件数。等幅 HISTOGRAM_BINS 区間）。"""
+
+
+HISTOGRAM_BINS = 10
+MONTHLY_MAX = 120
+"""月ごとの件数を出す最大の月数（それより長い期間は出さない）。"""
 
 
 class TableProfile(TableDetail):
@@ -274,7 +283,7 @@ class Catalog:
         schema, name = self._resolve(table)
         with self._connect() as con:
             columns = self._columns(con, schema, name)
-            profiles = [_profile(con, schema, name, c, top) for c in columns]
+            profiles = [_profile(con, schema, name, c, top, detail=True) for c in columns]
             count = profiles[0].row_count if profiles else 0
             fks = self._foreign_keys(con, schema, name, columns)
         return TableProfile(
@@ -328,7 +337,12 @@ class Catalog:
 
 
 def _profile(
-    con: duckdb.DuckDBPyConnection, schema: str, name: str, column: ColumnInfo, top: int
+    con: duckdb.DuckDBPyConnection,
+    schema: str,
+    name: str,
+    column: ColumnInfo,
+    top: int,
+    detail: bool = False,
 ) -> ColumnProfile:
     q, col = _table(schema, name), _q(column.name)
     row = con.execute(
@@ -341,7 +355,7 @@ def _profile(
         f" group by 1 order by n desc, v limit {int(top)}"
     ).fetchall()
     total, nulls, distinct, lo, hi = row
-    return ColumnProfile(
+    profile = ColumnProfile(
         table=f"{schema}.{name}",
         column=column.name,
         data_type=column.data_type,
@@ -353,6 +367,68 @@ def _profile(
         top_values=[(v, int(n)) for v, n in values],
         is_unique=total > 0 and nulls == 0 and distinct == total,
     )
+    if detail and total > nulls:
+        kind = column.data_type.upper()
+        if kind == "DATE" or kind.startswith("TIMESTAMP"):
+            profile.monthly = _monthly(con, q, col)
+        elif kind.startswith(_NUMERIC):
+            profile.histogram = _histogram(con, q, col)
+    return profile
+
+
+_NUMERIC = (
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "DOUBLE",
+    "FLOAT",
+    "REAL",
+    "DECIMAL",
+    "UBIGINT",
+    "UINTEGER",
+)
+
+
+def _monthly(con: duckdb.DuckDBPyConnection, q: str, col: str) -> list[tuple[str, int]] | None:
+    """月ごとの件数。件数の無い月（欠けている期間）も 0 で出す。"""
+    rows = con.execute(
+        f"with m as (select date_trunc('month', {col}) as month, count(*) as n from {q}"
+        f" where {col} is not null group by 1),"
+        " span as (select min(month) lo, max(month) hi from m)"
+        " select strftime(g.month, '%Y-%m'), coalesce(m.n, 0)"
+        " from span, generate_series(span.lo, span.hi, interval 1 month) as g(month)"
+        " left join m on m.month = g.month order by 1"
+        f" limit {MONTHLY_MAX + 1}"
+    ).fetchall()
+    if len(rows) > MONTHLY_MAX:
+        return None
+    return [(str(m), int(n)) for m, n in rows]
+
+
+def _histogram(
+    con: duckdb.DuckDBPyConnection, q: str, col: str
+) -> list[tuple[float, float, int]] | None:
+    """等幅の区間ごとの件数。"""
+    bounds = con.execute(f"select min({col})::double, max({col})::double from {q}").fetchone()
+    if bounds is None or bounds[0] is None:
+        return None
+    lo, hi = float(bounds[0]), float(bounds[1])
+    if lo == hi:
+        n = con.execute(f"select count({col}) from {q}").fetchone()
+        return [(lo, hi, int(n[0]) if n else 0)]
+    width = (hi - lo) / HISTOGRAM_BINS
+    counts = dict(
+        con.execute(
+            f"select least(floor(({col}::double - ?) / ?)::int, ?) b, count(*) from {q}"
+            f" where {col} is not null group by 1",
+            [lo, width, HISTOGRAM_BINS - 1],
+        ).fetchall()
+    )
+    return [
+        (lo + i * width, lo + (i + 1) * width, int(counts.get(i, 0))) for i in range(HISTOGRAM_BINS)
+    ]
 
 
 def _is_unique(con: duckdb.DuckDBPyConnection, schema: str, name: str, column: str) -> bool:

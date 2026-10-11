@@ -51,6 +51,10 @@ export interface ColumnProfile {
   max: string | null
   top_values: [string | null, number][]
   is_unique: boolean
+  /** 日付・日時の列の月ごとの件数（件数 0 の月も含む。#71） */
+  monthly?: [string, number][] | null
+  /** 数値の列の分布（下限・上限・件数） */
+  histogram?: [number, number, number][] | null
 }
 export interface SourceProfile {
   schema_name: string
