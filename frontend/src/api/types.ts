@@ -95,6 +95,16 @@ export interface SessionSummary {
 
 /** GET /sync（#74） */
 export interface SyncView {
-  status: { branch: string; clean: boolean; behind: number; can_pull: boolean; reason: string | null }
+  status: {
+    branch: string
+    clean: boolean
+    behind: number
+    can_pull: boolean
+    /** 手元が main で変更が無い（dbt の作り直しだけはできる） */
+    can_rebuild?: boolean
+    reason: string | null
+    /** origin の最新を取れなかった理由 */
+    fetch_error?: string | null
+  }
   job: JobView | null
 }

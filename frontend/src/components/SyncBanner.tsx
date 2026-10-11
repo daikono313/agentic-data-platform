@@ -48,16 +48,30 @@ export function SyncBanner({ onDone }: { onDone?: () => void }) {
 
   const start = async () => {
     setError(null)
+    setJob(null)
     try {
       await follow(await api.startSync())
     } catch (e) {
       setError(errorText(e))
+      // 別のタブで実行中なら、それを表示する
+      const now = await api.syncStatus().catch(() => null)
+      if (now?.job?.status === 'running') follow(now.job)
     }
   }
 
   if (!view?.status) return null
   const { status } = view
-  if (status.behind === 0 && !job) return null
+  if (status.behind === 0 && !job) {
+    // 手で取り込んだ後など、dbt だけ作り直したいとき
+    return status.can_rebuild ? (
+      <p className="text-right text-xs">
+        <button type="button" className="text-muted-foreground underline" onClick={start}>
+          dbt を作り直して一覧を更新する
+        </button>
+        {error && <span className="ml-2 text-destructive">{error}</span>}
+      </p>
+    ) : null
+  }
   return (
     <div className="space-y-2 rounded-md border border-sky-500/50 p-3 text-xs" data-testid="sync-banner">
       {status.behind > 0 && !job && (
@@ -74,7 +88,15 @@ export function SyncBanner({ onDone }: { onDone?: () => void }) {
           )}
         </div>
       )}
+      {status.fetch_error && !job && (
+        <p className="text-muted-foreground">origin の最新を取れませんでした（前回の情報です）: {status.fetch_error}</p>
+      )}
       {job && <JobProgress job={job} />}
+      {job?.status === 'failed' && (
+        <Button size="sm" variant="outline" onClick={start}>
+          もう一度実行する
+        </Button>
+      )}
       {job?.status === 'succeeded' && <p className="text-green-700">反映しました。</p>}
       {error && <p className="text-destructive">{error}</p>}
     </div>

@@ -338,6 +338,7 @@ class SessionService:
         running = self._job_view(session_id)
         if running and running["status"] == "running":
             raise Conflict("生成ジョブを実行中です")
+        self._check_not_syncing()
         try:
             beam = self.interviewer.finalize(state)
         except ValueError as e:
@@ -347,6 +348,16 @@ class SessionService:
         job = Job(id=uuid.uuid4().hex[:12], session_id=session_id)
         self._start(job, lambda on_step: self.pipeline(beam, on_step))
         return self.view(session_id)
+
+    def _check_not_syncing(self) -> None:
+        sync = self._jobs_running(SYNC_ID)
+        if sync:
+            raise Conflict("main の反映（dbt build）を実行中です。終わってから実行してください")
+
+    def _jobs_running(self, session_id: str) -> bool:
+        return any(
+            j.status == "running" and j.session_id == session_id for j in list(self._jobs.values())
+        )
 
     def _start(
         self,
@@ -369,6 +380,7 @@ class SessionService:
         last = self._job_view(ONBOARD_PREFIX + source)
         if last and last["status"] == "running":
             raise Conflict("この源泉の取り込みを実行中です")
+        self._check_not_syncing()
         if last and last["status"] == "succeeded" and not redo:
             # 同じ源泉の PR を 2 本作らない。前の PR を閉じた場合だけ、明示してやり直す
             raise Conflict(
@@ -398,6 +410,11 @@ class SessionService:
         last = self._job_view(SYNC_ID)
         if last and last["status"] == "running":
             raise Conflict("反映を実行中です")
+        # 反映の dbt build は共有の DuckDB に書く。生成・取り込みのジョブ（DB を写す）と重ねない
+        if any(
+            j.status == "running" and j.session_id != SYNC_ID for j in list(self._jobs.values())
+        ):
+            raise Conflict("生成・取り込みのジョブを実行中です。終わってから反映してください")
         job = Job(
             id=uuid.uuid4().hex[:12],
             session_id=SYNC_ID,

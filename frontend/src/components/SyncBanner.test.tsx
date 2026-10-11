@@ -27,7 +27,7 @@ describe('SyncBanner', () => {
 
   it('取り込めないときは理由を出し、ボタンを出さない', async () => {
     vi.spyOn(api, 'syncStatus').mockResolvedValue({
-      status: status({ branch: 'feat/x', can_pull: false, reason: '手元が main ではありません（feat/x）' }),
+      status: status({ branch: 'feat/x', can_pull: false, can_rebuild: false, reason: '手元が main ではありません（feat/x）' }),
       job: null,
     })
     render(<SyncBanner />)
@@ -35,10 +35,22 @@ describe('SyncBanner', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('新しい変更が無ければ何も出さない', async () => {
-    const call = vi.spyOn(api, 'syncStatus').mockResolvedValue({ status: status({ behind: 0 }), job: null })
+  it('新しい変更が無ければ、dbt の作り直しだけを小さく出す（手で取り込んだ後など）', async () => {
+    const call = vi.spyOn(api, 'syncStatus').mockResolvedValue({ status: status({ behind: 0, can_rebuild: true }), job: null })
     render(<SyncBanner />)
     await waitFor(() => expect(call).toHaveBeenCalled())
     expect(screen.queryByTestId('sync-banner')).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'dbt を作り直して一覧を更新する' })).toBeInTheDocument()
+  })
+
+  it('失敗したら、もう一度実行できる', async () => {
+    vi.spyOn(api, 'syncStatus').mockResolvedValue({ status: status(), job: null })
+    vi.spyOn(api, 'startSync').mockResolvedValue({ id: 'j', status: 'running', steps: [] })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {
+      yield { event: 'done' as const, data: { id: 'j', status: 'failed' as const, steps: [], error: 'x' } }
+    })
+    render(<SyncBanner />)
+    fireEvent.click(await screen.findByRole('button', { name: /取り込んで更新する/ }))
+    expect(await screen.findByRole('button', { name: 'もう一度実行する' })).toBeInTheDocument()
   })
 })

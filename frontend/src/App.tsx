@@ -239,6 +239,7 @@ function InterviewApp() {
         error={state.error}
         datasets={sharedDatasets.datasets}
         datasetsError={sharedDatasets.error}
+        onDatasetsChanged={sharedDatasets.reload}
       />
     )
 
@@ -367,6 +368,7 @@ function useFeedbackCategories(enabled: boolean) {
 function useDatasets(enabled: boolean) {
   const [datasets, setDatasets] = useState<Datasets | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [version, setVersion] = useState(0)
   useEffect(() => {
     if (!enabled) return
     api
@@ -376,8 +378,10 @@ function useDatasets(enabled: boolean) {
         setError(null)
       })
       .catch((e) => setError(errorText(e)))
-  }, [enabled])
-  return { datasets, error }
+  }, [enabled, version])
+  // 反映（#74）の後に読み直す（ページを読み直すと、書きかけの要求が消えるため）
+  const reload = useCallback(() => setVersion((v) => v + 1), [])
+  return { datasets, error, reload }
 }
 
 function StartScreen({
@@ -385,11 +389,13 @@ function StartScreen({
   error,
   datasets,
   datasetsError,
+  onDatasetsChanged,
 }: {
   onStart: (r: string) => void
   error: string | null
   datasets: Datasets | null
   datasetsError: string | null
+  onDatasetsChanged?: () => void
 }) {
   // 源泉のプロファイル画面の「作れそうな指標」から、要求を入れた状態で開ける（#71）
   const [request, setRequest] = useState(() => {
@@ -403,7 +409,7 @@ function StartScreen({
   const similar = datasets && request.trim().length >= 4 ? similarMetrics(request, datasets.metrics) : []
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
-      <SyncBanner onDone={() => window.location.reload()} />
+      <SyncBanner onDone={onDatasetsChanged} />
       <section className="space-y-3" aria-label="要求の入力">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
