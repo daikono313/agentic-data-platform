@@ -113,7 +113,7 @@ function demoSession(): SessionView {
 export default function App() {
   const params = new URLSearchParams(window.location.search)
   const chart = params.get('chart')
-  if (chart) return <ChartScreen metric={chart} jobId={params.get('job')} />
+  if (chart) return <ChartScreen metric={chart} jobId={params.get('job')} dimension={params.get('dimension')} />
   const source = params.get('source')
   if (source) return <SourceProfileScreen table={source} />
   if (params.has('ontology')) return <OntologyScreen />
@@ -445,7 +445,16 @@ function StartScreen({
         </p>
         {error && <p className="text-sm text-destructive">{error}</p>}
       </section>
-      <DatasetsPanel datasets={datasets} error={datasetsError} />
+      <DatasetsPanel
+        datasets={datasets}
+        error={datasetsError}
+        onRequest={(text) => {
+          // 書きかけの要求は上書きしない（後ろに足す）
+          setRequest((current) => (current.trim() ? `${current.trim()}。${text}` : text))
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+          input.current?.focus()
+        }}
+      />
     </main>
   )
 }

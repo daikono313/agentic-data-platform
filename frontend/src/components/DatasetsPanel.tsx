@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
 import { matches, onboardUrl, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
-import { BusMatrixView, filterBus } from '@/components/BusMatrix'
+import { BusMatrixView, filterBus, type BusMetric } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 
@@ -12,6 +12,8 @@ interface Props {
   error?: string | null
   /** インタビュー中の参照用（狭い枠）。リンクは別タブで開く */
   compact?: boolean
+  /** バスマトリクスの空欄から要求を入れる（開始画面だけ。#70） */
+  onRequest?: (text: string) => void
 }
 
 function Section({
@@ -45,7 +47,7 @@ function Section({
  * 上から「既存のデータ（指標 → fact × dimension のバスマトリクス）」「使える源泉」の順に並べる。
  * バスマトリクスが無い（semantic manifest が無い）ときは fact と dimension の一覧を出す。
  */
-export function DatasetsPanel({ datasets, error, compact }: Props) {
+export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
   const [query, setQuery] = useState('')
   if (error) return <p className="text-sm text-destructive">使えるデータを読み込めませんでした: {error}</p>
   if (!datasets) return <p className="text-sm text-muted-foreground">使えるデータを読み込んでいます…</p>
@@ -62,6 +64,15 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
   const bus = datasets.bus && datasets.bus.rows.length > 0 ? filterBus(datasets.bus, query, datasets.models) : null
   const inBus = new Set([...(datasets.bus?.groups.map((g) => g.name) ?? []), ...(datasets.bus?.rows.map((r) => r.name) ?? [])])
   const unlisted = models.filter((m) => !inBus.has(m.name))
+  // fct ごとの指標（バスマトリクスの ✓ から、その切り口のチャートへ）
+  const metricsByFact = new Map<string, BusMetric[]>()
+  // 単純な指標を先に（比率などは分母の fact の切り口に限られる）
+  const ordered = [...datasets.metrics].sort((a, b) => Number(a.type !== 'simple') - Number(b.type !== 'simple'))
+  for (const m of ordered) {
+    if (!m.model) continue
+    const dims = m.dimensions.filter((d) => d.kind !== 'time').map((d) => d.name)
+    metricsByFact.set(m.model, [...(metricsByFact.get(m.model) ?? []), { name: m.name, label: m.label, dimensions: dims }])
+  }
   const sources = datasets.sources.filter((s) => matches(query, s.name, s.description, ...s.columns.map((c) => c.description)))
   const maxDims = compact ? 6 : 10
   const linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement> = compact ? { target: '_blank', rel: 'noreferrer' } : {}
@@ -129,7 +140,13 @@ export function DatasetsPanel({ datasets, error, compact }: Props) {
             count={bus.rows.length}
             note="バスマトリクス。✓ の dimension の属性で fact を集計できる"
           >
-            <BusMatrixView bus={bus} models={datasets.models} compact={compact} />
+            <BusMatrixView
+              bus={bus}
+              models={datasets.models}
+              compact={compact}
+              metrics={metricsByFact}
+              onRequest={onRequest}
+            />
             {unlisted.length > 0 && (
               <div className="space-y-1 pt-2">
                 <p className="text-xs text-muted-foreground">Semantic Layer に未登録のモデル（バスマトリクスに出ない）</p>

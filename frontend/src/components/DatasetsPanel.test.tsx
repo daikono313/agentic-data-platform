@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { exampleRequests, type Datasets } from '@/api/datasets'
 
@@ -117,6 +117,39 @@ describe('バスマトリクス', () => {
     expect(screen.getByTestId('bus-fct_order_lines')).toBeInTheDocument()
     expect(screen.queryByTestId('bus-fct_returns')).not.toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: '種類' })).not.toBeInTheDocument()
+  })
+
+  it('✓ はその切り口のチャートへ、空欄は要求に入れる（#70）', () => {
+    const onRequest = vi.fn()
+    const groups = [
+      ...bus.groups,
+      { name: 'dim_customer', label: '顧客', kind: 'dim', attributes: [{ name: 'customer__region', label: '地方' }] },
+      { name: 'fct_returns', label: '返品', kind: 'degenerate', attributes: [{ name: 'return__reason', label: '理由' }] },
+    ]
+    const rows = [
+      { ...bus.rows[0], groups: [...bus.rows[0].groups, 'dim_customer'] },
+      { name: 'fct_new', label: '新しい出来事', groups: [], candidate: true },
+    ]
+    const metrics = [
+      { ...datasets.metrics[0], name: 'rate', label: '率', type: 'ratio', dimensions: [] },
+      datasets.metrics[0],
+    ]
+    render(<DatasetsPanel datasets={{ ...datasets, metrics, bus: { groups, rows } }} onRequest={onRequest} />)
+    const row = screen.getByTestId('bus-fct_order_lines')
+    // その属性で切れる指標（単純な指標を優先）を、その切り口で開く
+    expect(within(row).getByRole('link', { name: '売上金額を店舗の販売チャネル別にチャートで見る' })).toHaveAttribute(
+      'href',
+      '?chart=revenue&dimension=store__channel',
+    )
+    // 指標の切り口に無い属性は、切り口なしで開くと明示する
+    const unsliced = within(row).getAllByRole('link', { name: '売上金額をチャートで見る（この切り口では切れません）' })
+    expect(unsliced.length).toBe(2) // 注文ステータス・地方
+    expect(unsliced.every((a) => a.getAttribute('href') === '?chart=revenue')).toBe(true)
+    fireEvent.click(within(row).getByRole('button', { name: '要求に入れる: 「注文」をプロモーションの種類別に見たい' }))
+    expect(onRequest).toHaveBeenCalledWith('「注文」をプロモーションの種類別に見たい')
+    // 別の fact 自身の属性の空欄・候補の行は操作できない
+    expect(within(row).queryByRole('button', { name: /理由別/ })).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('bus-fct_new')).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('compact では dimension ごとに 1 列にする', () => {
