@@ -253,3 +253,33 @@ def test_cli_skips_llm_and_guides_when_empty(tmp_path: Path, monkeypatch: Any, c
     assert "要約は省きます" in capsys.readouterr().out
     assert cli._feedback_drafts(args) == 0
     assert "低評価" in capsys.readouterr().out
+
+
+def test_position_words() -> None:
+    """画面の位置や操作を指す言い方を拾い、確定ボタンの案内や普通の文は拾わない（#77）。"""
+    bad = [
+        "上の質問に答えてください。",
+        "下の選択肢からお選びください。",
+        "下記の選択肢のどれに近いですか。",
+        "以下のボタンから選んでください。",
+        "上に表示された選択肢から選んでください。",
+        "売上の金額は、上の質問でお答えください。",
+        "ボタンから選んでください。",
+        "選択肢から選んでください。",
+    ]
+    ok = [
+        "問題なければ「確定」ボタンを押してください。",
+        "確定の操作は、画面の「確定」ボタンからお願いします。",
+        "以下の 3 つの観点で整理しました。",
+        "売上が上がった店舗を見たいのですね。",
+        "上の内容で合っていますか。",
+        "売上の項目は orders.amount です。",
+        "以上の確認事項で進めます。",
+        "以下の項目で確定してよいですか。",
+        "前記の質問で伺った通り、期間は月次です。",
+        "選択肢から選ぶ必要はありません、自由に書いてください。",
+    ]
+    for text in bad:
+        assert not _checks([_msg(text)])["no_choice_position_words"], text
+    for text in ok:
+        assert _checks([_msg(text)])["no_choice_position_words"], text

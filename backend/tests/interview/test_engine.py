@@ -149,7 +149,7 @@ async def test_question_from_present_choices_is_shown() -> None:
         [
             [
                 ("present_choices", {"question": "売上は何を指しますか？", "options": ["a", "b"]}),
-                "上のボタンから選んでください。",
+                "売上の種類を確認します。",
             ]
         ]
     )
@@ -158,7 +158,7 @@ async def test_question_from_present_choices_is_shown() -> None:
     done = events[-1]
     assert isinstance(done, TurnDone)
     # 本文と質問文は別に持つ（画面で質問文が二重に出ないように。#36）
-    assert done.message.text == "上のボタンから選んでください。"
+    assert done.message.text == "売上の種類を確認します。"
     assert done.message.question == "売上は何を指しますか？"
     assert done.message.choices == ["a", "b"]
 
@@ -215,3 +215,18 @@ def test_transcript_checks_tolerate_punctuation_and_other_ui_words() -> None:
     ]
     ok = [ChatMessage(role="assistant", text="画面上のボタンの配置は自由です。", question="Q？")]
     assert all(r.passed for r in _transcript_checks(ok))
+
+
+async def test_position_sentences_are_removed_and_recorded() -> None:
+    """「上の質問にお答えください」は本文から取り除き、取り除いた文を記録する（#77）。"""
+    runner = ScriptedRunner([["売上の種類は 3 つです。\n\n上の質問にお答えください。"]])
+    state = new_state("売上")
+    await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    message = state.messages[-1]
+    assert message.text == "売上の種類は 3 つです。"
+    assert message.removed == ["上の質問にお答えください。"]
+
+    from adp.evals.interview import _transcript_checks
+
+    checks = {r.name: r.passed for r in _transcript_checks(state.messages)}
+    assert not checks["no_choice_position_words"]  # モデルの振る舞いとしては数える

@@ -58,7 +58,8 @@ describe('reducer', () => {
       event: { event: 'done', data: { message: { role: 'assistant', text: '' }, error: '応答の途中です' } },
     })
     expect(s.error).toBe('応答の途中です')
-    expect(s.session?.messages).toHaveLength(1)
+    // 空の発言も backend と同じく残す（フィードバックの添字をそろえる）
+    expect(s.session?.messages).toHaveLength(2)
   })
 })
 

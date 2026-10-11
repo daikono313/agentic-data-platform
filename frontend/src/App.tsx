@@ -77,8 +77,9 @@ export function reducer(state: State, action: Action): State {
           return { ...state, session: { ...s, choices: event.data.options, question: event.data.question } }
         case 'done': {
           const m = event.data.message
-          // 本文が空でも、質問だけの発言は残す（#36）
-          const messages: ChatMessage[] = m.text || m.question ? [...s.messages, m] : s.messages
+          // 本文が空の発言も残す（backend の会話と添字をそろえ、フィードバックが別の発言に付かない。
+          // 表示しないのは ChatPanel 側。#77 レビュー）
+          const messages: ChatMessage[] = [...s.messages, m]
           // 選択肢は発言に記録された最後のものを正とする（同じ選択肢で質問だけ変わった場合も反映する）
           const choices = m.choices?.length ? { choices: m.choices, question: m.question ?? null } : {}
           return {

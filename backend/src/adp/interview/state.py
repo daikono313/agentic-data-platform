@@ -56,6 +56,8 @@ class ChatMessage(BaseModel):
     """アシスタントの発言を作ったときのプロンプトのバージョン。"""
     model: str | None = None
     """アシスタントの発言を作ったモデル。"""
+    removed: list[str] = Field(default_factory=list)
+    """画面の位置を指すため本文から取り除いた文（eval でモデルの振る舞いを測るために残す。#77）。"""
 
 
 class InterviewState(BaseModel):
