@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from adp.beam import BeamModel, W, build_event_matrix
 from adp.design import IssueSeverity, PhysicalDesign, er_diagram
 from adp.generation import AgentTask
-from adp.markdown import cell
+from adp.markdown import cell, safe
 
 _W_LABEL = {
     W.WHO: "Who（誰が）",
@@ -53,7 +53,8 @@ _TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
 
 
 def pr_title(beam: BeamModel) -> str:
-    return f"feat(beam): {beam.title}"
+    """PR のタイトル。BEAM のタイトルはユーザー・LLM の文章なので無害化し、1 行にする。"""
+    return f"feat(beam): {' '.join(safe(beam.title).split())}"
 
 
 def pr_body(
@@ -93,14 +94,18 @@ def pr_body(
     if matrix.columns:
         lines += ["## Event Matrix", ""]
         header = (
-            "| イベント | 種類 | 優先度 | " + " | ".join(c.label for c in matrix.columns) + " |"
+            "| イベント | 種類 | 優先度 | "
+            + " | ".join(cell(c.label) for c in matrix.columns)
+            + " |"
         )
         lines += [header, "|" + "---|" * (3 + len(matrix.columns))]
         for row in matrix.rows:
             cells = ["✓" if c.name in row.dimensions else "" for c in matrix.columns]
             priority = row.priority.value if row.priority else "-"
             lines.append(
-                f"| {row.label} | {row.fact_type.value} | {priority} | " + " | ".join(cells) + " |"
+                f"| {cell(row.label)} | {row.fact_type.value} | {priority} | "
+                + " | ".join(cells)
+                + " |"
             )
         lines.append("")
 
