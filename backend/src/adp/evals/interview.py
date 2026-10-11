@@ -215,8 +215,8 @@ _EFFORT = re.compile(
 )
 """工数を聞く質問（工数はモデラーが見積もる。ユーザーに聞かない。#76 のフィードバック）。"""
 _IRREGULAR = re.compile(
-    r"イレギュラー|例外(?!なく)|(特殊|特別|まれ)な(ケース|場合)|普段と違う"
-    r"|取消|取り消し|マイナス|二重に"
+    r"イレギュラー|例外(?!なく)|(特殊|特別|まれ)(な|に扱)|普段と違う"
+    r"|取消|取り消し|マイナス|二重に|除きたい(ケース|もの)"
 )
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
 
@@ -301,7 +301,14 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     jargon = _unexplained_jargon(messages)
     again = _repeated_questions(messages)
     effort = _questions_matching(messages, _EFFORT)
-    irregular = _questions_matching(messages, _IRREGULAR)
+    # 質問の後ろの括弧の例（…ありますか？（例: 取消…））も見るため、質問のある発言の全体で判定
+    irregular = [
+        _shown(m)[:60]
+        for m in messages
+        if m.role == "assistant"
+        and _QUESTION.search(_shown(m))
+        and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
+    ]
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
