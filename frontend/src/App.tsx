@@ -15,6 +15,7 @@ import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { OnboardingScreen } from '@/components/Onboarding'
 import { HistoryScreen } from '@/components/History'
+import { MetricsScreen } from '@/components/Metrics'
 import { OntologyScreen } from '@/components/Ontology'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { SourceProfileScreen } from '@/components/SourceProfile'
@@ -123,6 +124,7 @@ export default function App() {
   const onboard = params.get('onboard')
   if (onboard) return <OnboardingScreen table={onboard} />
   if (params.has('history')) return <HistoryScreen />
+  if (params.has('metrics')) return <MetricsScreen />
   return <InterviewApp />
 }
 

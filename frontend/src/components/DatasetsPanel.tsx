@@ -2,7 +2,7 @@ import { BarChart3, Boxes, Database, Table2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
-import { matches, onboardUrl, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
+import { filterMetrics, groupDimensions, matches, metricsUrl, onboardUrl, sourceUrl, type Datasets } from '@/api/datasets'
 import { BusMatrixView, filterBus, type BusMetric } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -52,9 +52,7 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
   if (error) return <p className="text-sm text-destructive">使えるデータを読み込めませんでした: {error}</p>
   if (!datasets) return <p className="text-sm text-muted-foreground">使えるデータを読み込んでいます…</p>
 
-  const metrics = datasets.metrics.filter((m) =>
-    matches(query, m.label, m.name, m.description, ...m.dimensions.map((d) => d.label)),
-  )
+  const metrics = filterMetrics(datasets.metrics, query, datasets.bus)
   const models = datasets.models.filter((m) =>
     matches(query, m.name, m.description, ...m.columns.map((c) => c.description)),
   )
@@ -74,8 +72,10 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
     metricsByFact.set(m.model, [...(metricsByFact.get(m.model) ?? []), { name: m.name, label: m.label, dimensions: dims }])
   }
   const sources = datasets.sources.filter((s) => matches(query, s.name, s.description, ...s.columns.map((c) => c.description)))
-  const maxDims = compact ? 6 : 10
+  // 開始画面には代表の数件だけ。すべては指標の一覧のページで（#107）
+  const maxMetrics = compact ? 3 : 4
   const linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement> = compact ? { target: '_blank', rel: 'noreferrer' } : {}
+  const tab = compact ? '（別のタブ）' : ''
 
   return (
     <section className="space-y-6" aria-label="使えるデータ">
@@ -98,39 +98,41 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
         <h2 className="flex items-baseline justify-between border-b pb-1 text-base font-bold">
           既存のデータ
           <a href="?ontology" className="text-xs font-normal text-primary underline" {...linkProps}>
-            オントロジー（概念の関係）を見る
+            オントロジー（概念の関係）を見る{tab}
           </a>
         </h2>
         <Section icon={<BarChart3 className="size-4" />} title="指標（metrics）" count={metrics.length} note="すぐチャートで見られる">
-          {metrics.length === 0 && <p className="text-xs text-muted-foreground">まだありません。要求すると作れます。</p>}
-          <ul className={compact ? 'space-y-2' : 'grid gap-2 md:grid-cols-2'}>
-            {metrics.map((m) => (
-              <li key={m.name} className="rounded-md border p-2" data-testid={`metric-${m.name}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">
-                    {m.label}
-                    <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">{m.name}</span>
-                  </p>
-                  <a href={chartUrl(m.name)} className="shrink-0 text-xs text-primary underline" {...linkProps}>
-                    チャートで見る
-                  </a>
-                </div>
-                {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {rankDimensions(m.dimensions)
-                    .slice(0, maxDims)
-                    .map((d) => (
-                      <Badge key={d.name} variant={d.kind === 'time' ? 'outline' : 'secondary'} title={d.description || d.name}>
-                        {d.label}
-                      </Badge>
-                    ))}
-                  {m.dimensions.length > maxDims && (
-                    <span className="text-xs text-muted-foreground">ほか {m.dimensions.length - maxDims}</span>
-                  )}
-                </div>
+          {metrics.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              {datasets.metrics.length === 0 ? 'まだありません。要求すると作れます。' : '検索に合う指標はありません。'}
+            </p>
+          )}
+          <ul className={compact ? 'space-y-1' : 'grid gap-x-4 gap-y-1 md:grid-cols-2'}>
+            {metrics.slice(0, maxMetrics).map((m) => (
+              <li key={m.name} className="flex items-baseline justify-between gap-2 text-xs" data-testid={`metric-${m.name}`}>
+                <span className="min-w-0">
+                  <span className="text-sm font-medium">{m.label}</span>
+                  <span className="ml-1 text-muted-foreground">
+                    {groupDimensions(m.dimensions, datasets.bus)
+                      .filter((g) => g.key !== '__time')
+                      .map((g) => g.label)
+                      .join('・')}
+                  </span>
+                </span>
+                <a href={chartUrl(m.name)} className="shrink-0 text-primary underline" {...linkProps}>
+                  チャートで見る{tab}
+                </a>
               </li>
             ))}
           </ul>
+          {datasets.metrics.length > 0 && (
+            <a href={metricsUrl(query)} className="inline-block text-xs text-primary underline" {...linkProps}>
+              {metrics.length > maxMetrics
+                ? `ほか ${metrics.length - maxMetrics} 件。すべての指標（説明・切り口）を見る`
+                : 'すべての指標（説明・切り口）を見る'}
+              {tab}
+            </a>
+          )}
         </Section>
 
         {bus ? (
@@ -174,7 +176,7 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
         <SourceCoverage sources={sources} />
         <ul className={compact ? 'divide-y' : 'grid divide-y md:grid-cols-2 md:gap-x-6'}>
           {sources.map((s) => (
-            <SourceItem key={s.name} source={s} linkProps={linkProps} />
+            <SourceItem key={s.name} source={s} linkProps={linkProps} tab={tab} />
           ))}
         </ul>
       </div>
@@ -196,9 +198,11 @@ function ModelList({ models }: { models: Datasets['models'] }) {
 function SourceItem({
   source,
   linkProps,
+  tab,
 }: {
   source: Datasets['sources'][number]
   linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement>
+  tab: string
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -225,14 +229,14 @@ function SourceItem({
         <span className="flex shrink-0 flex-col items-end gap-0.5">
           <a href={sourceUrl(source.name)} className="text-primary underline" {...linkProps}>
             <Database className="mr-0.5 inline size-3" />
-            プロファイル
+            プロファイル{tab}
           </a>
           {source.unmapped && (
             <a href={onboardUrl(source.name)} className="text-primary underline" {...linkProps}>
               <Badge variant="outline" className="mr-1 border-amber-500 text-amber-600">
                 未整理
               </Badge>
-              取り込む
+              取り込む{tab}
             </a>
           )}
         </span>
