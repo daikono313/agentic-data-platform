@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
@@ -156,34 +156,106 @@ describe('インタビュー画面（確定ボタンを押せない理由。#108
     window.history.replaceState(null, '', '/')
   })
 
-  it('確定までの課題が残った review の画面で、ボタンの近くに理由と課題を出す', async () => {
-    const session = {
-      id: 's1',
-      phase: 'review',
-      beam: demo.beam,
-      matrix: demo.matrix,
-      issues: ['設計: 指標 sales の group_by が見つかりません'],
-      choices: [],
-      question: null,
-      messages: [],
-      job: null,
-      versions: [],
-      feedback: [],
-    }
-    const datasets = { metrics: [], models: [], beams: [], errors: [], sources: [] }
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) =>
-        Promise.resolve(new Response(JSON.stringify(url.includes('/datasets') ? datasets : url.includes('/feedback') ? {} : session))),
-      ),
-    )
+  const issue = '設計: 指標 sales の group_by が見つかりません'
+  const datasets = { metrics: [], models: [], beams: [], errors: [], sources: [] }
+  const reviewSession = (issues: string[]) => ({
+    id: 's1',
+    phase: 'review',
+    beam: demo.beam,
+    matrix: demo.matrix,
+    issues,
+    choices: [],
+    question: null,
+    messages: [],
+    job: null,
+    versions: [],
+    feedback: [],
+  })
+
+  /** backend の代わり。GET /sessions/s1 は current を返し、ほかは handlers で応じる */
+  function stubBackend(current: { session: ReturnType<typeof reviewSession> }, handlers: Record<string, () => Response>) {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      for (const [suffix, handler] of Object.entries(handlers)) {
+        if (url.endsWith(suffix) && init?.method === 'POST') return Promise.resolve(handler())
+      }
+      if (url.includes('/datasets')) return Promise.resolve(new Response(JSON.stringify(datasets)))
+      if (url.includes('/feedback')) return Promise.resolve(new Response('{}'))
+      return Promise.resolve(new Response(JSON.stringify(current.session)))
+    })
+    vi.stubGlobal('fetch', fetchMock)
     window.history.replaceState(null, '', '/?session=s1')
+    return fetchMock
+  }
+
+  it('確定までの課題が残った review の画面で、ボタンの近くに理由と課題を出す', async () => {
+    stubBackend({ session: reviewSession([issue]) }, {})
     render(<App />)
     const button = await screen.findByRole('button', { name: '確定して実装へ' })
     expect(button).toBeDisabled()
     expect(button).toHaveAccessibleDescription(/確定までに残っている課題が 1 件あります/)
-    expect(screen.getByRole('list', { name: '確定までに残っている課題' })).toHaveTextContent(
-      '設計: 指標 sales の group_by が見つかりません',
+    expect(screen.getByRole('list', { name: '確定までに残っている課題' })).toHaveTextContent(issue)
+  })
+
+  it('会話の beam イベントで課題が無くなると、ボタンが押せるようになる', async () => {
+    const current = { session: reviewSession([issue]) }
+    const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    stubBackend(current, {
+      '/messages': () => {
+        current.session = reviewSession([])
+        return new Response(
+          sse('beam', { beam: demo.beam, matrix: demo.matrix, issues: [] }) +
+            sse('done', { message: { role: 'assistant', text: '直しました' } }),
+        )
+      },
+    })
+    render(<App />)
+    const button = await screen.findByRole('button', { name: '確定して実装へ' })
+    expect(button).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('回答を入力'), { target: { value: '店舗別で見たい' } })
+    fireEvent.click(screen.getByRole('button', { name: '送信' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeEnabled())
+    expect(screen.queryByRole('list', { name: '確定までに残っている課題' })).not.toBeInTheDocument()
+  })
+
+  it('確定が 409 で断られたら、読める理由をボタンの近くに出し、セッションを読み直す', async () => {
+    const current = { session: reviewSession([]) }
+    const fetchMock = stubBackend(current, {
+      '/finalize': () => {
+        // 別のタブで課題が増えていた、など。読み直すと課題の一覧が新しくなる
+        current.session = reviewSession([issue])
+        return new Response(JSON.stringify({ detail: `確定できません: ${issue}` }), { status: 409 })
+      },
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '確定して実装へ' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(`確定できませんでした: 確定できません: ${issue}`)
+    expect(screen.getByRole('alert')).not.toHaveTextContent('detail')
+    expect(await screen.findByRole('list', { name: '確定までに残っている課題' })).toHaveTextContent(issue)
+    expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeDisabled()
+    const gets = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/sessions/s1') && !init?.method)
+    expect(gets.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('main の反映中・別のタブで応答中などほかの 409 も、同じくボタンの近くに出す', async () => {
+    stubBackend(
+      { session: reviewSession([]) },
+      {
+        '/finalize': () =>
+          new Response(JSON.stringify({ detail: 'main の反映（dbt build）を実行中です。終わってから実行してください' }), {
+            status: 409,
+          }),
+      },
     )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '確定して実装へ' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('main の反映（dbt build）を実行中です')
+    expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeEnabled()
+  })
+
+  it('確定済みでジョブが無いときは、確定し直す道を出す', async () => {
+    stubBackend({ session: { ...reviewSession([]), phase: 'finalized' } }, {})
+    render(<App />)
+    expect(await screen.findByRole('button', { name: '修正して確定し直す' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '確定して実装へ' })).not.toBeInTheDocument()
   })
 })

@@ -12,12 +12,14 @@ describe('finalizeBlockers（#108）', () => {
   })
 
   it('押せないときは、必ず理由を返す', () => {
-    expect(finalizeBlockers({ issues: ['a'], eventCount: 1, busy: false }).reason).toContain('残っている課題が 1 件')
+    const withIssues = finalizeBlockers({ issues: ['a'], eventCount: 1, busy: false }).reason
+    expect(withIssues).toContain('残っている課題が 1 件')
+    // 会話だけでは解消できない課題（設計）もあるので、準備が要ることにも触れる
+    expect(withIssues).toContain('データやオントロジーの準備が必要なものもあります')
     expect(finalizeBlockers({ issues: [], eventCount: 0, busy: false }).reason).toContain('出来事')
     expect(finalizeBlockers({ issues: [], eventCount: 1, busy: true }).reason).toContain('応答の途中')
     expect(finalizeBlockers({ issues: [], eventCount: 1, busy: false, submitting: true }).reason).toContain('確定しています')
     expect(finalizeBlockers({ issues: [], eventCount: 1, busy: false, demo: true }).reason).toContain('デモ')
-    expect(finalizeBlockers({ issues: [], eventCount: 1, busy: false, finalized: true }).reason).toContain('確定済み')
   })
 })
 
@@ -48,14 +50,22 @@ describe('FinalizeControl（#108）', () => {
 
   it('応答の途中は、課題が無くても理由を出す', () => {
     render(<FinalizeControl issues={[]} eventCount={1} busy onFinalize={noop} />)
-    expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('応答の途中です')
+    const button = screen.getByRole('button', { name: '確定して実装へ' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription(/応答の途中です/)
   })
 
   it('出来事がまだ無いときも理由を出す', () => {
     render(<FinalizeControl issues={[]} eventCount={0} busy={false} onFinalize={noop} />)
-    expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('出来事')
+    const button = screen.getByRole('button', { name: '確定して実装へ' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription(/出来事/)
+  })
+
+  it('確定に失敗した理由をボタンの近くに出す', () => {
+    render(<FinalizeControl issues={[]} eventCount={1} busy={false} error="生成ジョブを実行中です" onFinalize={noop} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('確定できませんでした: 生成ジョブを実行中です')
+    expect(screen.getByRole('button', { name: '確定して実装へ' })).toHaveAccessibleDescription(/生成ジョブを実行中です/)
   })
 
   it('押せるときは理由を出さず、押すと確定を呼ぶ（送信中は二重に押せない）', async () => {
@@ -64,11 +74,11 @@ describe('FinalizeControl（#108）', () => {
     render(<FinalizeControl issues={[]} eventCount={1} busy={false} onFinalize={onFinalize} />)
     const button = screen.getByRole('button', { name: '確定して実装へ' })
     expect(button).toBeEnabled()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(button).not.toHaveAttribute('aria-describedby')
     fireEvent.click(button)
     expect(onFinalize).toHaveBeenCalledTimes(1)
     expect(button).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('確定しています')
+    expect(button).toHaveAccessibleDescription('確定しています（実装を開始しています）…')
     resolve()
     await waitFor(() => expect(button).toBeEnabled())
   })

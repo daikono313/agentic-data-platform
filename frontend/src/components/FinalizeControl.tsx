@@ -1,29 +1,37 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
 import { finalizeBlockers } from '@/components/finalizeBlockers'
 import { Button } from '@/components/ui/button'
 
 const MAX_ISSUES = 8
 
+/**
+ * 「確定して実装へ」のボタンと、押せない理由・確定に失敗した理由（#108）。
+ * onFinalize は失敗しても投げず、error で失敗の理由を渡す。
+ */
 export function FinalizeControl({
   issues,
   eventCount,
   busy,
   demo,
-  finalized,
+  error,
   onFinalize,
 }: {
   issues: string[]
   eventCount: number
   busy: boolean
   demo?: boolean
-  finalized?: boolean
+  /** 直前の確定の失敗（backend の 409 などの detail） */
+  error?: string | null
   onFinalize: () => Promise<void>
 }) {
   const [submitting, setSubmitting] = useState(false)
-  const blockers = finalizeBlockers({ issues, eventCount, busy, submitting, demo, finalized })
+  const reasonId = useId()
+  const errorId = useId()
+  const blockers = finalizeBlockers({ issues, eventCount, busy, submitting, demo })
   const shown = blockers.issues.slice(0, MAX_ISSUES)
   const rest = blockers.issues.length - shown.length
+  const describedBy = [blockers.reason && reasonId, error && errorId].filter(Boolean).join(' ') || undefined
 
   const click = async () => {
     setSubmitting(true)
@@ -48,19 +56,24 @@ export function FinalizeControl({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          onClick={click}
-          disabled={blockers.reason !== null}
-          aria-describedby={blockers.reason ? 'finalize-reason' : undefined}
-        >
+        <Button onClick={click} disabled={blockers.reason !== null} aria-describedby={describedBy}>
           確定して実装へ
         </Button>
         {blockers.reason && (
-          <p id="finalize-reason" role="status" className="text-xs text-muted-foreground">
+          <p id={reasonId} className="text-xs text-muted-foreground">
             {blockers.reason}
           </p>
         )}
+        {/* 読み上げは、押したあとの「確定しています」だけ（理由が変わるたびには読まない） */}
+        <span aria-live="polite" className="sr-only">
+          {submitting ? blockers.reason : ''}
+        </span>
       </div>
+      {error && !submitting && (
+        <p id={errorId} role="alert" className="text-xs text-destructive">
+          確定できませんでした: {error}
+        </p>
+      )}
     </div>
   )
 }
