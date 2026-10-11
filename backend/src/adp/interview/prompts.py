@@ -40,6 +40,8 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
       名前から fct_ を除いたものにそろえ、指標を足す）。measure と切り口の名前は、その fact の
       既存の列名に合わせる（例: 列 movement_qty があれば measure 名も movement_qty）。同じ源泉の
       列を、別の名前でもう 1 列足さない。
+      既存の fact を使うときも、seven_ws の手順（各 W で「ほかに見たい切り口はありますか？」と聞き、
+      ソースに無いものは data_unavailable で記録する）は省かない。
    2. データ全体: 既存の fact に無ければ、ソースカタログ（list_sources / describe_table /
       search_columns）で、どのテーブルがその出来事を記録しているかを確かめる。
    3. 2 で見つかれば、新しい出来事（fact）として記録する。確定すると、クレンジング層と fact が
