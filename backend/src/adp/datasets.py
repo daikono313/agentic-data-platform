@@ -354,7 +354,7 @@ class DatasetIndex:
         """
         if self.catalog is None:
             raise CatalogUnavailable("元データのカタログが使えません")
-        profile = self.catalog.profile_table(table)
+        profile = self.catalog.profile_table(table, detail=True)
         return SourceProfile(
             **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
         )

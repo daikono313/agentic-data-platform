@@ -177,3 +177,51 @@ def test_locked_database_is_reported(tmp_path: Path) -> None:
         assert time.monotonic() - start < 5
     finally:
         holder.kill()
+
+
+def test_profile_table_details(tmp_path: Path) -> None:
+    """源泉のプロファイル: 日付の列は月ごとの件数（欠けた月は 0）、数値の列は等幅の分布（#71）。"""
+    import duckdb
+
+    from adp.catalog.catalog import HISTOGRAM_BINS
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute(
+        "create table raw.events as select * from (values"
+        " (1, timestamp '2024-01-05', 10.0), (2, timestamp '2024-01-20', 20.0),"
+        " (3, timestamp '2024-03-01', 30.0), (4, null, null)) v(event_id, happened_at, amount)"
+    )
+    con.close()
+    p = {c.column: c for c in Catalog(db).profile_table("raw.events", detail=True).profiles}
+    assert p["happened_at"].monthly == [("2024-01", 2), ("2024-02", 0), ("2024-03", 1)]
+    hist = p["amount"].histogram
+    assert hist is not None and len(hist) == HISTOGRAM_BINS
+    assert sum(n for _, _, n in hist) == 3 and hist[0][0] == 10.0 and hist[-1][1] == 30.0
+    assert p["happened_at"].histogram is None and p["amount"].monthly is None
+    # 列 1 つのプロファイル（エージェントの tool）と、既定（雛形・取り込み）には出さない
+    assert Catalog(db).profile_column("raw.events", "happened_at").monthly is None
+    assert all(c.monthly is None for c in Catalog(db).profile_table("raw.events").profiles)
+
+
+def test_profile_details_tolerate_odd_values(tmp_path: Path) -> None:
+    """NaN・±inf・無限の日付・長すぎる期間でも、プロファイル全体は返す（#89 レビュー）。"""
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute(
+        "create table raw.odd as select * from (values"
+        " (1, 'nan'::double, 1e308, date 'infinity', timestamp '1990-01-01'),"
+        " (2, 'inf'::double, -1e308, date '2024-01-01', timestamp '2024-01-01'),"
+        " (3, 5.0, 0.0, date '2024-03-01', timestamp '2024-02-01'))"
+        " v(odd_id, with_nan, huge, d, long_span)"
+    )
+    con.close()
+    p = {c.column: c for c in Catalog(db).profile_table("raw.odd", detail=True).profiles}
+    assert p["with_nan"].histogram == [(5.0, 5.0, 1)]  # 有限の値だけ
+    assert p["huge"].histogram is None  # 幅が有限にならない
+    assert p["d"].monthly == [("2024-01", 1), ("2024-02", 0), ("2024-03", 1)]  # 無限の日付は除く
+    assert p["long_span"].monthly is None  # 120 か月を超える
