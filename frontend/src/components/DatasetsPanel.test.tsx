@@ -62,6 +62,20 @@ describe('DatasetsPanel', () => {
     expect(screen.getByText('返品')).toBeInTheDocument()
   })
 
+  it('源泉ごとに使っている fact / dim と、未活用・未整理の数を出す（#72）', () => {
+    const base = datasets.sources[0]
+    const sources = [
+      { ...base, name: 'raw.orders', used_by: ['fct_order_lines'] },
+      { ...base, name: 'raw.returns', used_by: [] },
+      { ...base, name: 'raw.inventory', used_by: [], unmapped: true },
+    ]
+    render(<DatasetsPanel datasets={{ ...datasets, sources }} />)
+    expect(screen.getByTestId('source-coverage')).toHaveTextContent('活用 1・未活用 1・未整理 1')
+    expect(screen.getByTestId('source-raw.orders')).toHaveTextContent('fct_order_lines')
+    expect(screen.getByTestId('source-raw.returns')).toHaveTextContent('未活用')
+    expect(screen.getByTestId('source-raw.inventory')).not.toHaveTextContent('未活用（')
+  })
+
   it('未整理の源泉には取り込みへのリンクを出す', () => {
     const sources = [{ ...datasets.sources[0], unmapped: true }]
     render(<DatasetsPanel datasets={{ ...datasets, sources }} />)

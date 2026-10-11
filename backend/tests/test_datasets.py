@@ -60,6 +60,9 @@ def test_datasets_lists_metrics_models_sources_beams(repo: Path) -> None:
     assert data.models[0].kind == "fct"
     orders = next(s for s in data.sources if s.name == "raw.orders")
     assert orders.row_count > 0 and orders.description
+    # 活用状況（#72）: 使っている fact / dim。使われていない源泉は空
+    assert orders.used_by == ["fct_order_lines"]
+    assert next(s for s in data.sources if s.name == "raw.payments").used_by == []
     assert (
         {c.name: c.data_type for c in orders.columns}["ordered_at"].upper().startswith("TIMESTAMP")
     )

@@ -69,6 +69,8 @@ class SourceInfo(BaseModel):
     columns: list[ColumnInfo] = Field(default_factory=list)
     unmapped: bool = False
     """オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69）。"""
+    used_by: list[str] = Field(default_factory=list)
+    """この源泉を（staging などを経由して）使っている fact / dim（空なら未活用。#72）。"""
 
 
 class BeamInfo(BaseModel):
@@ -309,6 +311,7 @@ class DatasetIndex:
         if self.catalog is None:
             return []
         mapped = self._mapped_sources()
+        manifest = self._manifest() or {}
         try:
             tables = self.catalog.list_sources()
             return [
@@ -321,6 +324,7 @@ class DatasetIndex:
                         for c in self.catalog.columns(t.qualified)
                     ],
                     unmapped=mapped is not None and t.qualified not in mapped,
+                    used_by=self._used_by(t.schema_name, t.name, manifest),
                 )
                 for t in tables
             ]
@@ -359,12 +363,18 @@ class DatasetIndex:
             **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
         )
 
-    def _used_by(self, schema: str, name: str) -> list[str]:
+    def _manifest(self) -> dict[str, Any] | None:
         try:
-            manifest = json.loads(
+            data: dict[str, Any] = json.loads(
                 (self.warehouse / "target" / "manifest.json").read_text(encoding="utf-8")
             )
         except (OSError, ValueError):
+            return None
+        return data
+
+    def _used_by(self, schema: str, name: str, manifest: dict[str, Any] | None = None) -> list[str]:
+        manifest = manifest if manifest is not None else self._manifest()
+        if manifest is None:
             return []
         children: dict[str, list[str]] = manifest.get("child_map", {})
         starts = [

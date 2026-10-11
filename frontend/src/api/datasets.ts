@@ -33,6 +33,8 @@ export interface SourceInfo {
   columns: ColumnInfo[]
   /** オントロジーのどの概念にもなっていない（未整理。取り込みが必要。#69） */
   unmapped?: boolean
+  /** この源泉を使っている fact / dim（空なら未活用。#72） */
+  used_by?: string[]
 }
 export interface BeamInfo {
   name: string
