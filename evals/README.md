@@ -10,9 +10,10 @@
 
 ## フィードバックから改善するサイクル（#45）
 
-1. **集計**: `make feedback-report`（`SUMMARY=1` で Claude による要約と改善案）。プロンプトのバージョン別・段階別・分類別の 👎 の割合と、👎 の発言の抜粋が出る（`.adp/reports/` に保存。会話の抜粋を含むので公開しない）。
-2. **eval 化**: `make feedback-drafts` で、低評価のセッションから eval シナリオの下書きが `.adp/eval-drafts/` にできる。フィードバックの分類に対応するチェックが入っている。**request と persona を合成した内容に書き換えてから** `evals/interview/` に置く（実データの会話をリポジトリに入れない）。
-3. **前後比較**: 変更前に `make eval REPEAT=3`、プロンプトを直して `PROMPT_VERSION` を上げ、もう一度 `make eval REPEAT=3`。`make eval-compare BEFORE=.adp/evals/<前> AFTER=.adp/evals/<後>` の表を PR に貼る（certificate C10）。前と後は**同じ eval のコード**で回す（チェックや数値の定義が変わると比べられない）。全体の行は前後の両方にあるシナリオだけで集計する。
+集計（`make feedback-report`）→ eval 化（`make feedback-drafts`）→ 前後比較（`make eval-compare`）の手順は [docs/feedback-loop.md](../docs/feedback-loop.md) にまとめている。前後比較の注意:
+
+- 前と後は**同じ eval のコード**で回す（チェックや数値の定義が変わると比べられない）。
+- 全体の行は前後の両方にあるシナリオだけで集計する。
 
 ### 会話の質のチェック（どのシナリオでも行う）
 

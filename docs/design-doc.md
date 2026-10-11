@@ -61,9 +61,9 @@
 4. Claude が 7W を順に聞く。誰が（顧客：会員ランク・地域）、何を（商品：カテゴリ）、いつ（注文日時）、どこで（店舗・チャネル）、なぜ（プロモーション）、どのように（支払方法）、いくつ（数量・金額）。それぞれ具体例も聞く。ソースに無い属性（例: 顧客の年収）を求められたら「データがありません」と伝え、記録して先へ進む。
 5. 画面右側の BEAM Canvas と Event Matrix が、回答に合わせて埋まっていく。
 6. Claude が粒度（「注文明細 1 行 = 1 レコード」）と優先度を確認し、要約を示す。A さんが「確定」を押す。
-7. 進捗表示が「スター設計 → dbt 生成 → Semantic Layer 生成 → テスト（自己修復）→ PR」と進む。
+7. 進捗表示が「作業ブランチを作成 → スター設計 → dbt・Semantic Layer・テストを生成 → テスト（失敗時は自己修復）→ チャートを生成 → commit / push → PR を作成」と進む。
 8. PR が作られる。本文には要求、Canvas、Matrix、ER 図、テスト結果、未解決事項（年収データなし）が書かれている。データエンジニアがレビューしてマージする。
-9. A さん（または BI）が `mf query --metrics revenue --group-by metric_time__day,store__store_name` で指標を取れる。
+9. A さん（または BI）が `mf query --metrics sales_amount_total --group-by metric_time__day,store__store_name` で指標を取れる。
 
 ### S2: 既存ディメンションを再利用する
 
@@ -73,8 +73,8 @@ S1 の後、別のユーザーが「商品カテゴリ別の返品率」を求�
 
 ### S3（v2）: 使えるデータを見てから要求し、チャートで見る
 
-1. A さんが開始画面を開くと、一番上に要求の入力欄があり、その下に「既存のデータ」（指標 — 件数と代表の数件。すべての指標は別ページ（`?metrics`）で、説明と、dimension ごとにまとめた切り口（例: 売上金額は期間・日付・顧客・商品・店舗で切れる。並びはバスマトリクスの列の順）を見られる（#107）。fact × dimension のバスマトリクス — 行が fact、列が dimension の属性で、集計できる組み合わせに ✓。検索で fact と結合できる dimension に絞り込める。✓ をクリックすると、その fact の指標をその属性の切り口でチャートに開き、空欄をクリックすると「『<fact>』を<属性>別に見たい」を入力欄に入れる（#70）。Semantic Layer に未登録のモデルはその下に一覧）、さらにその下に「使える源泉（元データ）」（注文・顧客・商品…）が並ぶ（#62）。入力欄の下には、元データから作った「カテゴリ別の返品数量を見たい」のような要求の例も出る（クリックで入力欄に入る）。源泉ごとの「プロファイル」から、列の型・NULL 率・ユニーク数・よく出る値・キーの候補・使っているモデルを別ページで見られる。
-2. 入力欄に要求を書くと、何を測るか（指標の表示名・説明）が似た既にある指標があれば「◯◯をチャートで見る」が出る（#75。切り口が同じだけの指標は出さない）。インタビュー中も参考として出し（確定は止めない）、切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えれば既存の fact に足せることを知らせる。「店舗別の売上」はすでにあるのでチャートを開くと、店舗・月別の棒グラフが表示される。切り口をチャネルに、粒度を週に、期間を直近 3 か月に変えると描き直される。
+1. A さんが開始画面を開くと、一番上に要求の入力欄があり、その下に「既存のデータ」（指標 — 件数と代表の数件。すべての指標は別ページ（`?metrics`）で、説明と、dimension ごとにまとめた切り口（例: 売上金額は期間・日付・顧客・商品・店舗で切れる。並びはバスマトリクスの列の順）を見られる（#107）。fact × dimension のバスマトリクス — 行が fact、列が dimension の属性で、集計できる組み合わせに ✓。検索で fact と結合できる dimension に絞り込める。✓ をクリックすると、その fact の指標をその属性の切り口でチャートに開き、空欄（dimension の列）をクリックすると「「<fact>」を<dimension>の<属性>別に見たい」を入力欄に入れる（#70）。Semantic Layer に未登録のモデルはその下に一覧）、さらにその下に「使える源泉（元データ）」（注文・顧客・商品…）が並ぶ（#62）。入力欄の下には、元データから作った「カテゴリ別の返品数量を見たい」のような要求の例も出る（クリックで入力欄に入る）。源泉ごとの「プロファイル」から、列の型・NULL 率・ユニーク数・よく出る値・キーの候補・使っているモデルを別ページで見られる。
+2. 入力欄に要求を書くと、何を測るか（指標の表示名・説明）が似た既にある指標があれば「◯◯をチャートで見る」が出る（#75。切り口が同じだけの指標は出さない）。インタビュー中も参考として出し（確定は止めない）、切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えれば既存の fact に足せることを知らせる。「店舗別の売上」はすでにあるのでチャートを開くと、月別の折れ線グラフが表示される。切り口を店舗やチャネルに、粒度を週に（「時間で分けない」にすると棒グラフ）、期間（開始・終了の日付）を変えると描き直される。
 3. 「返品率」は無いので、元データの一覧で返品のテーブルがあることを確認してから、「カテゴリ別の返品率を見たい」と要求する。インタビュー中も、画面の横で元データの一覧を参照できる。
 4. インタビュー → 確定 → PR。PR にはチャートの定義も含まれる。完了画面から、作った指標の描画画面へ移動できる。
 
@@ -162,14 +162,14 @@ flowchart TB
 
 | 種類 | 持ち主 | ファイル | 直し方 |
 |---|---|---|---|
-| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。それ以外の変更（方針・規約・知識の中身）は人間の承認が要る（[certificate](certificate.md) の T2） |
+| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。それ以外の変更（方針・規約・知識の中身）は人間の承認が要る（[certificate](certificate.md) の T3） |
 | 要求の定義 | AI が案 → **人間**が確定 | `beam/*.yml` | インタビューで直す（画面のチャット）。確定は人間が押す |
 | オントロジー | AI（使えなければプロファイルの規則）が案 → **人間**が確定。生成ジョブが作った fct / dim を書き足す | `ontology/ontology.yml` | 取り込み画面で直す。手で直してもよい（`make ontology` で検査） |
 | クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
 | eval のシナリオ | **人間**（フィードバックからプログラムが下書きを作る） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)）。既存のシナリオは開発時に Claude Code が書いたもので、これからは人間が確かめて足す |
 | アプリのコード・プロンプト | **AI**（Claude Code） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/`・`warehouse/macros/`・`warehouse/dbt_project.yml` など | 人間は issue で要求し、PR をレビューする |
-| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`・`_marts.yml`・`warehouse/tests/`・`warehouse/models/staging/_sources.yml`（取り込みが源泉を書き足す） | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
-| データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・生成した `fct_*` と Semantic Layer・テスト・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
+| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`・`_marts.yml`・`warehouse/models/staging/_sources.yml` | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
+| データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・`models/staging/_<source>__sources.yml`（取り込み・生成が、宣言の無い源泉を宣言する）・生成した `fct_*` と Semantic Layer・テスト（`warehouse/tests/assert_<fct>_reconciles_with_source.sql` を含む）・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
 | 実行時のデータ | アプリ | `.adp/`（セッション・フィードバック・worktree・ログ。git では追跡しない） | — |
 
 ### 構成
@@ -207,6 +207,14 @@ flowchart LR
 | `adp.generation` | `backend/src/adp/generation/` | dbt / Semantic Layer / テストの生成と自己修復ループ |
 | `adp.llm` | `backend/src/adp/llm/` | LLM 呼び出しの抽象化（モデルの段階的エスカレーション、認証の切り替え） |
 | `adp.vcs` | `backend/src/adp/vcs/` | git worktree / commit / PR 作成 |
+| `adp.api` | `backend/src/adp/api/` | FastAPI のルート（API の表）、セッション・ジョブの管理（`service.py`）、SQLite の永続化（`store.py`） |
+| `adp.pipeline` | `backend/src/adp/pipeline.py` | 確定から PR までの生成ジョブ（worktree・設計・生成・検証と自己修復・チャート・commit・PR） |
+| `adp.sync` | `backend/src/adp/sync.py` | マージ後の反映と自動反映（#74、#106） |
+| `adp.datasets` | `backend/src/adp/datasets.py` | 取得可能な指標・モデル・源泉・BEAM 成果物とバスマトリクスの一覧（#38、#62） |
+| `adp.charts` / `adp.chart_view` | `backend/src/adp/charts.py`・`chart_view.py` | チャートの元ファイルからのボードの書き出しと検査（ADR 0002）、描画画面のプロセス内の描画（ADR 0003） |
+| `adp.feedback` | `backend/src/adp/feedback.py` | インタビューへのフィードバックの型と分類（#44） |
+| `adp.evals` | `backend/src/adp/evals/` | インタビュー・自己修復の eval、前後比較、通しの E2E、フィードバックの集計と下書き |
+| `adp.warehouse` / `adp.markdown` / `adp.metricflow` | `backend/src/adp/` | 小さな共有モジュール: 接続先（ADR 0005）、文章の無害化、MetricFlow の where のリテラル |
 | warehouse | `warehouse/` | dbt プロジェクト（生成物の出力先）とサンプルデータの生成 |
 | beam | `beam/` | 確定した BEAM 成果物（要求の正本） |
 | ontology | `ontology/` | オントロジーの正本（`ontology.yml`）。`docs/ontology.md` はここから生成する |
@@ -247,7 +255,7 @@ MVP の段階では手動で計測する。
 
 ## Monitoring / alerting
 
-- 各ジョブの段階ごとに、所要時間・使用モデル・トークン数（取得できる場合）・再試行回数を SQLite に記録し、UI に表示する。
+- 各ジョブの段階ごとに、状態と詳細（自己修復の試行回数・使ったモデルなど）を SQLite（ジョブの steps）に記録し、UI に表示する。LLM の呼び出しごとの用途・モデル・所要時間・トークン数は `.adp/logs/llm.jsonl` に記録する（[guardrails.md](guardrails.md) の 6）。
 - アラートは MVP では設けない。eval の結果と再試行率を PR 本文に出す。
 
 ## Timeline
@@ -294,8 +302,8 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | POST | `/sessions` | セッションを開始する（最初の要求文を渡す） |
 | GET | `/sessions` | これまでの要求の一覧（タイトル・段階・生成ジョブ・PR と GitHub 上の状態（レビュー待ち / マージ済み / クローズ）・作った指標）。開始画面の「これまでの要求と PR」（`?history`）から開く（#73）。PR の状態は gh で問い合わせ、5 分間・マージ済みは以後ずっと使い回す |
 | POST | `/sessions/{id}/messages` | 回答を送る。応答は SSE で返す（テキストと BEAM 成果物の差分） |
-| GET | `/sync` | 手元（アプリが動いているチェックアウト）と origin/main の差（マージされた PR の数）と、取り込めるか（手元が main で変更が無いときだけ）、最新の反映ジョブ（#74）。`auto` は自動反映の状態（#106: backend が `ADP_AUTO_SYNC_INTERVAL_S` 秒（既定 60、0 で無効）ごとにマージを確かめ、取り込めるなら反映ジョブを始める。インタビューの応答中・直近 5 分に操作があるときは始めず、理由を `last_note` に残す。開始画面は 15 秒ごとに状態を確かめ、始まった反映を追って一覧を読み直す） |
-| POST | `/sync` | main の新しい変更を取り込み（`git pull --ff-only`）、dbt deps / build / parse と検査（Semantic Layer・オントロジー・クレンジング・チャート）をするジョブを始める。開始画面の「取り込んで更新する」から |
+| GET | `/sync` | 手元（アプリが動いているチェックアウト）と origin/main の差（マージされた PR の数）と、取り込めるか（手元が main で変更が無く、アプリのコード（`backend/`・`frontend/`・`Makefile`）の変更を含まないときだけ）、最新の反映ジョブ（#74）。`auto` は自動反映の状態（#106: backend が `ADP_AUTO_SYNC_INTERVAL_S` 秒（既定 60、0 で無効）ごとにマージを確かめ、取り込めるなら反映ジョブを始める。インタビューの応答中・直近 5 分に操作があるときは始めず、理由を `last_note` に残す。開始画面は 15 秒ごとに状態を確かめ、始まった反映を追って一覧を読み直す） |
+| POST | `/sync` | main の新しい変更を取り込み（fetch して確かめた origin/main のコミットへ `git merge --ff-only`）、dbt deps / build / parse と検査（Semantic Layer・オントロジー・クレンジング・チャート）をするジョブを始める。開始画面の「取り込んで更新する」から |
 | GET | `/sessions/{id}` | 会話と BEAM 成果物の現在状態を返す |
 | POST | `/sessions/{id}/finalize` | BEAM 成果物を確定し、生成ジョブを開始する |
 | POST | `/sessions/{id}/reopen` | 確定を取り消し、BEAM 成果物を直せるようにする。確定していないセッションと生成ジョブの実行中は 409、無いセッションは 404。もう一度確定すると新しい版で生成する |
@@ -345,7 +353,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 ## Security
 
 - **信頼の境界**: ソースデータ、カラムコメント、ユーザー入力は**データとして扱い、指示としては扱わない**。LLM に渡すときはタグで区切り、tool の結果は検証してから BEAM 成果物に反映する。
-- **生成エージェントの権限**: 作業はリポジトリ内の git worktree（`.adp/worktrees/<branch>`）に限る。許可するコマンドは `dbt`、`mf`、`git`（push は生成ブランチのみ）、`gh pr create` に絞る。ファイル操作は worktree の外を禁止する。
+- **生成エージェントの権限**: 作業はリポジトリ内の git worktree（`.adp/worktrees/<branch>`）に限る。エージェントに許可するコマンドは `dbt`・`mf` の検証用のサブコマンドに絞る。`git`（生成ブランチへの push を含む）と `gh pr create` はエージェントではなくパイプラインが決まった手順で実行する（[guardrails.md](guardrails.md) の 4・5）。ファイル操作は worktree の外を禁止する。
 - **シークレット**: `.env` に置き、git では追跡しない。生成物、PR 本文、ログに API キーやトークンを出さない。
 - **公開範囲**: リポジトリは public。サンプルデータは合成データのみとし、実データは入れない。
 
