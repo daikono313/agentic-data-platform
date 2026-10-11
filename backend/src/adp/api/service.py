@@ -32,6 +32,7 @@ from adp.llm import TextDelta, ToolCall
 from adp.onboarding.pipeline import ONBOARD_STEPS
 from adp.onboarding.proposal import OntologyPatch
 from adp.pipeline import STEPS, PipelineResult, StepUpdate
+from adp.sync import SYNC_STEPS
 
 SSEEvent = dict[str, str]
 """sse-starlette に渡す {"event": ..., "data": <JSON 文字列>}。"""
@@ -41,6 +42,9 @@ OnboardingRunner = Callable[
     [str, OntologyPatch, str, Callable[[StepUpdate], None]], Awaitable[PipelineResult]
 ]
 """(源泉, 追加案, クレンジングの定義の YAML, on_step) → 結果（#69）。"""
+SyncRunner = Callable[[Callable[[StepUpdate], None]], Awaitable[PipelineResult]]
+SYNC_ID = "sync:main"
+"""マージ後の反映ジョブの session_id（#74）。"""
 ONBOARD_PREFIX = "onboard:"
 """取り込みジョブの session_id（セッションの代わりに源泉で引く）。"""
 PrState = Callable[[str], str | None]
@@ -116,12 +120,14 @@ class SessionService:
         pipeline: PipelineRunner,
         onboarding: OnboardingRunner | None = None,
         pr_state: PrState | None = None,
+        sync: SyncRunner | None = None,
     ) -> None:
         self.store = store
         self.interviewer = interviewer
         self.pipeline = pipeline
         self.onboarding = onboarding
         self.pr_state = pr_state
+        self.sync = sync
         self._pr_cache: dict[str, tuple[float, str | None]] = {}
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
@@ -383,6 +389,28 @@ class SessionService:
 
     def onboarding_job(self, source: str) -> dict[str, Any] | None:
         return self._job_view(ONBOARD_PREFIX + source)
+
+    # --- マージ後の反映（#74） ------------------------------------------------------------------
+
+    def start_sync(self) -> dict[str, Any]:
+        if self.sync is None:
+            raise Conflict("反映は使えません")
+        last = self._job_view(SYNC_ID)
+        if last and last["status"] == "running":
+            raise Conflict("反映を実行中です")
+        job = Job(
+            id=uuid.uuid4().hex[:12],
+            session_id=SYNC_ID,
+            steps=[
+                {"step": s, "label": label, "status": "pending", "detail": ""}
+                for s, label in SYNC_STEPS
+            ],
+        )
+        self._start(job, self.sync)
+        return job.view()
+
+    def sync_job(self) -> dict[str, Any] | None:
+        return self._job_view(SYNC_ID)
 
     def reopen(self, session_id: str) -> dict[str, Any]:
         """確定を取り消して修正できるようにする。生成ジョブの実行中はできない。"""

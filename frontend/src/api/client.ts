@@ -1,7 +1,7 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
 import type { CleansingView, Datasets, OnboardingDraft, OntologyPatch, OntologyView, SourceProfile } from './datasets'
 import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
-import type { InterviewEvent, JobEvent, JobView, SessionSummary, SessionView } from './types'
+import type { InterviewEvent, JobEvent, JobView, SessionSummary, SessionView, SyncView } from './types'
 
 const BASE = '/api'
 
@@ -84,6 +84,12 @@ export const api = {
   },
   async history(): Promise<{ sessions: SessionSummary[] }> {
     return json(await fetch(`${BASE}/sessions`))
+  },
+  async syncStatus(): Promise<SyncView> {
+    return json(await fetch(`${BASE}/sync`))
+  },
+  async startSync(): Promise<JobView> {
+    return json(await fetch(`${BASE}/sync`, { method: 'POST' }))
   },
   async getSession(id: string): Promise<SessionView> {
     return json(await fetch(`${BASE}/sessions/${id}`))

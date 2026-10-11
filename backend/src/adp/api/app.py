@@ -25,6 +25,7 @@ from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
 from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
 from adp.onboarding.proposal import OntologyPatch
+from adp.sync import Sync
 
 
 class CreateSession(BaseModel):
@@ -52,6 +53,7 @@ def create_app(
     datasets: DatasetIndex | None = None,
     charts: ChartViews | None = None,
     onboarding: OnboardingPipeline | None = None,
+    sync: Sync | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ADP")
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
@@ -194,6 +196,25 @@ def create_app(
     def create_session(body: CreateSession) -> dict[str, Any]:
         return service.view(service.create(body.request))
 
+    @app.get("/sync")
+    async def sync_status() -> dict[str, Any]:
+        """手元と origin/main の差と、最新の反映ジョブ（#74）。"""
+        if sync is None:
+            raise HTTPException(503, "反映は使えません")
+        try:
+            status = await asyncio.to_thread(sync.status)
+        except Exception as e:  # git が使えないなど
+            raise HTTPException(503, f"状態を確かめられませんでした: {type(e).__name__}") from e
+        return {"status": status.model_dump(mode="json"), "job": service.sync_job()}
+
+    @app.post("/sync")
+    async def sync_start() -> dict[str, Any]:
+        """main の変更を取り込み、dbt build と検査をするジョブを始める（進捗は jobs の events）。"""
+        try:
+            return service.start_sync()
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from e
+
     @app.get("/sessions")
     async def list_sessions() -> dict[str, Any]:
         """これまでの要求と生成ジョブ・PR の状態の一覧（#73）。"""
@@ -319,7 +340,15 @@ def build_default_app() -> FastAPI:
         retention_days = RETENTION_DAYS
     store = Store(REPO_ROOT / ".adp" / "app.db", feedback_retention_days=retention_days)
     onboarding = OnboardingPipeline(pipeline.config, runner, settings)
+    sync = Sync(REPO_ROOT, Path(sys.executable).parent, GitWorkspace(REPO_ROOT))
     service = SessionService(
-        store, interviewer, pipeline.run, onboarding.run, pr_state=pipeline.github.pr_state
+        store,
+        interviewer,
+        pipeline.run,
+        onboarding.run,
+        pr_state=pipeline.github.pr_state,
+        sync=sync.run,
     )
-    return create_app(service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding)
+    return create_app(
+        service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding, sync
+    )

@@ -18,6 +18,7 @@ import { HistoryScreen } from '@/components/History'
 import { OntologyScreen } from '@/components/Ontology'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { SourceProfileScreen } from '@/components/SourceProfile'
+import { SyncBanner } from '@/components/SyncBanner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -402,6 +403,7 @@ function StartScreen({
   const similar = datasets && request.trim().length >= 4 ? similarMetrics(request, datasets.metrics) : []
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
+      <SyncBanner onDone={() => window.location.reload()} />
       <section className="space-y-3" aria-label="要求の入力">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
