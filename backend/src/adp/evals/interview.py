@@ -209,20 +209,30 @@ def _unexplained_jargon(messages: list[Any]) -> list[str]:
     return found
 
 
-_EFFORT = re.compile(r"工数|手間|作業量|作る(の|ため)の?(時間|コスト)")
+_EFFORT = re.compile(
+    r"(工数|作る手間|作業量|開発の規模|実装にかかる|作るのにかかる)"
+    r".{0,20}(見込|想定|見積|どのくらい|どれくらい|かかり|かかる)"
+)
 """工数を聞く質問（工数はモデラーが見積もる。ユーザーに聞かない。#76 のフィードバック）。"""
-_IRREGULAR = re.compile(r"イレギュラー|例外|特殊な(ケース|場合)|普段と違う|まれな(ケース|場合)")
+_IRREGULAR = re.compile(
+    r"イレギュラー|例外(?!なく)|(特殊|特別|まれ)な(ケース|場合)|普段と違う"
+    r"|取消|取り消し|マイナス|二重に"
+)
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
 
 
 def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
+    """アシスタントの質問のうち、pattern に合うもの（「…」で引用した言葉は除く）。"""
     return [
         q.strip()
         for m in messages
         if m.role == "assistant"
         for q in _QUESTION.findall(_shown(m))
-        if pattern.search(q)
+        if pattern.search(_QUOTED.sub("", q))
     ]
+
+
+_QUOTED = re.compile(r"「[^」]*」|『[^』]*』")
 
 
 def _shown(m: Any) -> str:
