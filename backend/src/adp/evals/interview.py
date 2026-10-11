@@ -28,6 +28,7 @@ from adp.catalog.tools import build_tools as catalog_tools
 from adp.design.check import design_issues
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
+from adp.interview.wording import POSITION
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 
@@ -143,7 +144,11 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
     return CheckResult(label, passed, detail)
 
 
-_POSITION_WORDS = ("上の選択肢", "下の選択肢", "上のボタンから", "下のボタンから", "ボタンから選")
+def _position_words(m: Any) -> bool:
+    """画面の位置を指す言い方があったか（本文から取り除いた文も、モデルの振る舞いとして数える）。"""
+    return bool(POSITION.search(m.text) or getattr(m, "removed", None))
+
+
 _PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()]")
 
 
@@ -249,13 +254,17 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "max_chars": max(lengths),
         "unexplained_jargon": len(_unexplained_jargon(messages)),
         "repeated_questions": len(_repeated_questions(messages)),
-        "position_words": sum(1 for m in assistant if any(w in m.text for w in _POSITION_WORDS)),
+        "position_words": sum(1 for m in assistant if _position_words(m)),
     }
 
 
 def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
-    position = [m.text[:60] for m in assistant if any(w in m.text for w in _POSITION_WORDS)]
+    position = [
+        ((getattr(m, "removed", None) or [""])[0] or m.text)[:60]
+        for m in assistant
+        if _position_words(m)
+    ]
     repeated = [
         m.text[:60]
         for m in assistant

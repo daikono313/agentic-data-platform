@@ -42,8 +42,12 @@ def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float
         if file.name == "meta.json":
             continue
         data = json.loads(file.read_text(encoding="utf-8"))
-        metrics = data.get("metrics") or transcript_metrics(
-            [SimpleNamespace(**({"question": None} | m)) for m in data.get("transcript", [])]
+        # 会話があれば今の定義で数え直す（検出の定義を変えても、前後を同じ物差しで比べる。#77）
+        transcript = data.get("transcript")
+        metrics = (
+            transcript_metrics([SimpleNamespace(**({"question": None} | m)) for m in transcript])
+            if transcript
+            else data.get("metrics") or {}
         )
         runs[data["scenario"]].append({**metrics, "passed": float(bool(data.get("passed")))})
         meta.setdefault("prompt_version", data.get("prompt_version"))

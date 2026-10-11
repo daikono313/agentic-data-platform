@@ -14,6 +14,7 @@ from adp.beam import BeamModel, EventMatrix, build_event_matrix
 from adp.interview import tools as beam_tools
 from adp.interview.prompts import prompt_version, system_prompt
 from adp.interview.state import ChatMessage, InterviewState, Phase
+from adp.interview.wording import strip_position_sentences
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 
 
@@ -160,6 +161,8 @@ class Interviewer:
         text = "".join(reply).strip()
         if result.is_error and not text:
             text = "（応答を作れませんでした。もう一度送ってください）"
+        # 画面の位置を指す文（「上の質問にお答えください」など）は取り除く（#77）
+        text, removed = strip_position_sentences(text)
         # 質問文は本文に混ぜずに別に持つ（画面ではボタンの上に 1 回だけ出す。#36）
         message = ChatMessage(
             role="assistant",
@@ -169,6 +172,7 @@ class Interviewer:
             phase=state.phase.value,
             prompt_version=prompt_version(),
             model=result.model,
+            removed=removed,
         )
         state.messages.append(message)
         yield TurnDone(result=result, message=message)
