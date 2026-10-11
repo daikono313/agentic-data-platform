@@ -92,13 +92,15 @@ class ProjectInfo:
                 return str(p.relative_to(self.warehouse_dir)), text
         return None
 
-    def declared_sources(self) -> set[str]:
-        declared = set()
+    def declared_sources(self) -> dict[str, str]:
+        declared: dict[str, str] = {}
         for doc in self._yaml_docs():
             for src in doc.get("sources", []) or []:
                 if isinstance(src, dict):
                     schema = src.get("schema", src.get("name"))
-                    declared |= {f"{schema}.{t['name']}" for t in src.get("tables", [])}
+                    for t in src.get("tables", []) or []:
+                        if isinstance(t, dict) and "name" in t:
+                            declared.setdefault(f"{schema}.{t['name']}", str(src.get("name")))
         return declared
 
     def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:

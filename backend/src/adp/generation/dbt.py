@@ -51,8 +51,8 @@ class WarehouseInfo(Protocol):
         """既存モデルの YAML に書かれている列。"""
         ...
 
-    def declared_sources(self) -> set[str]:
-        """dbt の sources に宣言済みのテーブル（`<schema>.<table>`）。"""
+    def declared_sources(self) -> dict[str, str]:
+        """dbt の sources に宣言済みのテーブル（`<schema>.<table>`）と、その dbt の source 名。"""
         ...
 
     def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
@@ -124,19 +124,22 @@ def staging_files(table: str, info: WarehouseInfo) -> list[GeneratedFile]:
     定義が無ければ既定の定義（キーと、型ごとの既定のクレンジングだけ）を一緒に作る。
     """
     schema, _, source_table = table.rpartition(".")
-    declared = table in info.declared_sources()
+    declared_as = info.declared_sources().get(table)
+    declared = declared_as is not None
+    # 宣言済みなら、その source 名を使う（生成 PR が別名で宣言した源泉も。#104）。
     # 未宣言のソースは、テーブルごとに別名のソースとして宣言する（既存の sources を編集しない）
-    source_name = schema if declared else f"adp_{source_table}"
+    source_name = declared_as or f"adp_{source_table}"
+    dbt_source = None if source_name == schema else source_name
     cleansing_dir = info.warehouse_dir / "cleansing"
     files: list[GeneratedFile] = []
     path = spec_path(cleansing_dir, table)
     if path.exists():
         # 定義の dbt_source は、宣言の有無に合わせる（未宣言なら下で別名の source を宣言する）
-        spec = load_spec(path).model_copy(update={"dbt_source": None if declared else source_name})
+        spec = load_spec(path).model_copy(update={"dbt_source": dbt_source})
     else:
         spec = CleansingSpec(
             source=table,
-            dbt_source=None if declared else source_name,
+            dbt_source=dbt_source,
             description=f"{table} をクレンジング",
             key=info.source_primary_key(table),
         )

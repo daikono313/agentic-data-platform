@@ -290,8 +290,8 @@ def test_generator_aligns_dbt_source_for_undeclared_sources() -> None:
     class Info:
         warehouse_dir = WAREHOUSE
 
-        def declared_sources(self) -> set[str]:
-            return set()
+        def declared_sources(self) -> dict[str, str]:
+            return {}
 
         def source_columns(self, table: str) -> list[tuple[str, str]]:
             return [("order_id", "INTEGER"), ("ordered_at", "TIMESTAMP")]
@@ -315,3 +315,24 @@ def test_draft_skips_unrepresentable_columns(tmp_path: Path) -> None:
     con.close()
     spec = draft(Catalog(db).profile_table("raw.t"))
     assert spec.key == "t_id" and spec.rule("Kind") is None and spec.rule("tabbed") is None
+
+
+def test_generator_uses_the_existing_source_name() -> None:
+    """別名（adp_<table>）で宣言済みの源泉は、その名前で参照する（宣言を増やさない。#104）。"""
+    from adp.generation.dbt import staging_files
+
+    class Info:
+        warehouse_dir = WAREHOUSE
+
+        def declared_sources(self) -> dict[str, str]:
+            return {"raw.orders": "adp_orders"}
+
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [("order_id", "INTEGER"), ("ordered_at", "TIMESTAMP")]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return "order_id"
+
+    files = {f.path: f.content for f in staging_files("raw.orders", Info())}  # type: ignore[arg-type]
+    assert "source('adp_orders', 'orders')" in files["models/staging/stg_orders.sql"]
+    assert not any(p.endswith("__sources.yml") for p in files)

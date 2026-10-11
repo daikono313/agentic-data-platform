@@ -109,6 +109,24 @@ class RepairEvalResult:
     error: str | None = None
 
 
+def strip_generated(warehouse: Path) -> None:
+    """アプリが生成してマージされたモデル・テスト・チャートを除き、生成前の warehouse にする。
+
+    源泉の宣言（`models/staging/_<source>__sources.yml`）は残す。クレンジング層（stg）と同じく
+    生成した fct / dim より手前の基盤で、stg がそれを参照している（#104）。
+    """
+    for path in [*(warehouse / "models").rglob("*"), *(warehouse / "tests").rglob("*")]:
+        if (
+            path.is_file()
+            and path.suffix in {".sql", ".yml"}
+            and not path.name.endswith("__sources.yml")
+            and path.read_text(encoding="utf-8").lstrip().startswith(GENERATED)
+        ):
+            path.unlink()
+    for path in [*warehouse.glob("charts/*.yml"), *warehouse.glob("chart_specs/*.yml")]:
+        path.unlink()
+
+
 def prepare_warehouse(dest: Path, orders: int = 500) -> Path:
     """生成前の warehouse（アプリが生成したモデル・チャートを除く）と小さなサンプルデータ。"""
     warehouse = dest / "warehouse"
@@ -117,15 +135,7 @@ def prepare_warehouse(dest: Path, orders: int = 500) -> Path:
         warehouse,
         ignore=shutil.ignore_patterns("target", "data", "logs", ".user.yml"),
     )
-    for path in [*(warehouse / "models").rglob("*"), *(warehouse / "tests").rglob("*")]:
-        if (
-            path.is_file()
-            and path.suffix in {".sql", ".yml"}
-            and path.read_text(encoding="utf-8").lstrip().startswith(GENERATED)
-        ):
-            path.unlink()
-    for path in [*warehouse.glob("charts/*.yml"), *warehouse.glob("chart_specs/*.yml")]:
-        path.unlink()
+    strip_generated(warehouse)
     spec = importlib.util.spec_from_file_location(
         "adp_sample_data", warehouse / "scripts" / "generate_sample_data.py"
     )
