@@ -40,7 +40,7 @@ LLM はローカルでは Claude Code のログイン認証で動きます。API
 3. 開始画面で、既存の指標・fact × dimension のバスマトリクス・使える源泉を見る。✓ からチャートを開き、空欄から要求を書ける
 4. 見たい指標を入力すると、Claude が BEAM✲ に沿って質問する。答えていくと BEAM Canvas と Event Matrix が埋まる
 5. 確定すると、生成ジョブが `.adp/worktrees/` で dbt・Semantic Layer・テストを生成して検証し（失敗すれば自己修復）、チャートを作って GitHub に PR を作る（直らなければ draft PR）
-6. PR をマージすると、アプリが自動で手元に取り込み、dbt build と検査をして一覧を更新する（`ADP_AUTO_SYNC_INTERVAL_S` 秒ごとに確かめる。既定 60、`0` で自動にしない）。開始画面の「取り込んで更新する」で手で反映してもよい。手元が main でない・変更がある・アプリのコード（`backend/`・`frontend/`・`Makefile`）が変わるときは取り込まない（`git pull`・`make setup`・再起動を手で行う）
+6. PR をマージすると、アプリが自動で手元に取り込み、dbt build と検査をして一覧を更新する（`ADP_AUTO_SYNC_INTERVAL_S` 秒ごとに確かめる。既定 60、`0` で自動にしない）。開始画面の「取り込んで更新する」で手で反映してもよい。手元が main でない・変更があるときは取り込まない。アプリのコード（`backend/`・`frontend/`・`Makefile`）が変わるときも取り込まない（`git pull`・`make setup`・再起動を手で行う）
 7. 新しい源泉は、源泉の一覧の「取り込む」から、オントロジーへの追加案とクレンジングの定義を確かめて PR にする
 
 PR は origin の所有者のアカウント（`gh auth token -u <owner>`）で作る。別のアカウントにする場合は `.env` に `ADP_GITHUB_ACCOUNT` を書く。

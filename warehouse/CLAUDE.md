@@ -6,10 +6,10 @@ dbt プロジェクト。**ここのコード（SQL・YAML）は AI か決定的
 |---|---|
 | `cleansing/*.yml` | プロファイルから雛形 → **人間**が確認・修正（手で直してよい） |
 | `models/staging/stg_*` | `cleansing/` から決定的に生成（`make cleansing`） |
-| 生成した `fct_*` と Semantic Layer・テスト | アプリの生成器（テンプレート）と生成エージェント（AI。テンプレートで作れない作業と修復） |
+| 生成した `fct_*` と Semantic Layer・テスト（`tests/assert_<fct>_reconciles_with_source.sql` を含む） | アプリの生成器（テンプレート）と生成エージェント（AI。テンプレートで作れない作業と修復） |
 | 共通ディメンション `models/marts/dim_*`・`_marts.yml` | 開発時に Claude Code が書いたもの（生成器の元ではない） |
 | `models/staging/_sources.yml` | Claude Code |
-| `models/staging/_<source>__sources.yml`・`tests/assert_<fct>_reconciles_with_source.sql` | 取り込み（#69）と生成が書く（宣言の無い源泉の宣言、fct の突合テスト） |
+| `models/staging/_<source>__sources.yml` | 取り込み（#69）と生成が書く（宣言の無い源泉の宣言） |
 | `chart_specs/` | 生成ジョブが書く（`store_sales.yml` は開発時の見本）。エージェントは書けない |
 | `charts/` | `chart_specs/` から決定的に書き出す（`make charts`）。エージェントは書けない |
 | `macros/`・`dbt_project.yml`・`profiles.yml`・`scripts/` | Claude Code（アプリの開発） |

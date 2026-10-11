@@ -42,7 +42,7 @@
 | 作業はリポジトリ内の作業ツリーだけ | `adp.pipeline`: `.adp/worktrees/<branch>` で作業する。開発中のチェックアウトや DuckDB には触れない（検証用の DB はコピーして使う） | `tests/test_pipeline.py` |
 | ファイル操作は作業ディレクトリ内だけ | `adp.generation.guard.WorkspaceGuard`（PreToolUse フック）。`~` を展開し、パスを解決して作業ディレクトリの外なら拒否。Glob のパターンも検査 | `tests/generation/test_repair.py`、実機確認（#14） |
 | 書き換えられるファイルを限定 | 書けるのは .sql / .yml / .yaml / .md だけ。`dbt_project.yml`・`profiles.yml`・`packages.yml`・`package-lock.yml`・`selectors.yml`・`dbt_charts.yml` と Python ファイルは不可。チャート（`charts/`、`chart_specs/`）はパイプラインが書き出すので、エージェントは書けない（#42）。クレンジングの定義（`cleansing/`）と、定義から生成したクレンジング層（先頭に `adp.cleansing により生成` の印がある stg）も書けない（#68）。マクロ（`macros/`）も書けない（汎用テストを上書きして、いつも通るようにできるため。#78）。書けるパスは ASCII だけにし、ファイル名・ディレクトリ名は大文字・小文字を区別せずに判定する（macOS のファイルシステムで `Charts/` や `chartſ/`（ſ は s と同じに扱われる）から迂回させない）。書き込み後の内容に `env_var` / `environ` / `getenv`、または dbt の実行中に任意の SQL を流す `run_query` / `call statement` / `adapter.execute` を含むものは不可（環境変数の秘密情報の持ち出し防止。Edit は既存の内容に置換を適用した結果で判定）。Python モデルがあれば検証で失敗 | 同上 |
-| 実行できるコマンドを限定 | Bash は `dbt`（parse / build / compile / test / ls）と `mf`（validate-configs / query / list）だけ。オプションも許可リスト（パスを取るものは不可）、シェルのメタ文字は禁止。`permission_mode=dontAsk` で許可リスト外の操作は確認せず拒否 | 同上 |
+| 実行できるコマンドを限定 | Bash は `dbt`（parse / build / compile / test / ls / list）と `mf`（validate-configs / query / list）だけ。オプションも許可リスト（パスを取るものは不可）、シェルのメタ文字は禁止。`permission_mode=dontAsk` で許可リスト外の操作は確認せず拒否 | 同上 |
 | dbt から外部のファイル・ネットワークに触れない | `warehouse/profiles.yml` で DuckDB の `enable_external_access: false`（read_text / COPY TO を禁止。モデルや hook から戻せない） | `test_duckdb_external_access_is_disabled` |
 | dbt Charts から外部に触れない（v2） | `dbt_charts.yml` は書き換え不可（独自の duckdb ソースで外部アクセスを戻せるため）。ソースは dbt プロファイル経由の `warehouse` だけにし、DuckDB の外部アクセス禁止が効く。ボードの元ファイルは許可リストで検査し（SQL・extends・ボードの入れ子・HTML・地図・`type: http`・URL は不可。絞り込みは構造化した filters だけで、値に Jinja の記号は不可。`charts/` には生成したボード以外を置けない）、生成時と `make dbt-build` で拒否する（#41 / #42）。`dct serve` は Host を検証しないので使わない。描画画面は backend のプロセス内で描き（ADR 0003）、画面からは指標名・切り口名・粒度・期間だけを受け取る（Semantic Layer の一覧と照合し、ボードは同じ許可リストを通す）。プロセス内の MetricFlow は SQL を作るだけで DB に接続しない | `test_dbt_charts.py`、`test_charts.py`、`test_chart_view.py` |
 | クレンジングの定義から任意の SQL を入れない（v3） | 定義は構造化された項目だけ（Pydantic で余計なキーを拒否）。識別子は英小文字、型変換は許可した型、タイムゾーンは名前の形式、値は文字列リテラルとしてエスケープし、`{` `}` `\` と制御文字（Jinja・エスケープ）を拒否。生成物は決定的（LLM を使わない） | `tests/cleansing/test_cleansing.py` |
@@ -78,7 +78,7 @@
 |---|---|---|
 | `.adp/app.db` | セッションの会話と BEAM 成果物 | 削除しない限り残る |
 | `~/.claude/projects/<作業ディレクトリ>/*.jsonl` | Claude Code CLI が保存する各エージェント実行の全記録（インタビューの再開に必要なので無効にできない） | Claude Code の設定に従う |
-| `.adp/evals/<日時>/*.json`、`.adp/evals/repair-<日時>/` | eval の会話・tool 呼び出し・成果物 | 削除しない限り残る |
+| `.adp/evals/<日時>/*.json`、`.adp/evals/repair-<日時>-<pid>/` | eval の会話・tool 呼び出し・成果物 | 削除しない限り残る |
 | `.adp/reports/feedback-*.md`、`.adp/eval-drafts/*.yml` | フィードバックの集計（👎 の発言の抜粋）と、低評価の会話から作った eval の下書き | 削除しない限り残る |
 | `.adp/e2e.db`、`.adp/e2e-pr-body.md` | 通しの E2E（`make e2e`）の会話と PR 本文 | 削除しない限り残る |
 

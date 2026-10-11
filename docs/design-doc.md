@@ -255,7 +255,7 @@ MVP の段階では手動で計測する。
 
 ## Monitoring / alerting
 
-- 各ジョブの段階ごとに、状態と詳細（自己修復の試行回数・使ったモデルなど）を SQLite（ジョブの steps）に記録し、UI に表示する。LLM の呼び出しごとの用途・モデル・所要時間・トークン数は `.adp/logs/llm.jsonl` に記録する（[guardrails.md](guardrails.md) の 6）。
+- 各ジョブの段階ごとに、状態と詳細（自己修復の試行回数など）を SQLite（ジョブの steps）に記録し、UI に表示する。自己修復の各試行のモデルは PR 本文に出す。LLM の呼び出しごとの用途・モデル・所要時間・トークン数は `.adp/logs/llm.jsonl` に記録する（[guardrails.md](guardrails.md) の 6）。
 - アラートは MVP では設けない。eval の結果と再試行率を PR 本文に出す。
 
 ## Timeline
@@ -353,7 +353,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 ## Security
 
 - **信頼の境界**: ソースデータ、カラムコメント、ユーザー入力は**データとして扱い、指示としては扱わない**。LLM に渡すときはタグで区切り、tool の結果は検証してから BEAM 成果物に反映する。
-- **生成エージェントの権限**: 作業はリポジトリ内の git worktree（`.adp/worktrees/<branch>`）に限る。エージェントに許可するコマンドは `dbt`・`mf` の検証用のサブコマンドに絞る。`git`（生成ブランチへの push を含む）と `gh pr create` はエージェントではなくパイプラインが決まった手順で実行する（[guardrails.md](guardrails.md) の 4・5）。ファイル操作は worktree の外を禁止する。
+- **生成エージェントの権限**: 作業はリポジトリ内の git worktree（`.adp/worktrees/<branch>`）に限る。エージェントに許可するコマンドは `dbt`・`mf` の検証用のサブコマンドに絞る。`git`（生成ブランチへの push を含む）と `gh pr create` はエージェントではなくパイプラインが決まった手順で実行する（[guardrails.md](guardrails.md) の 4）。ファイル操作は worktree の外を禁止する。
 - **シークレット**: `.env` に置き、git では追跡しない。生成物、PR 本文、ログに API キーやトークンを出さない。
 - **公開範囲**: リポジトリは public。サンプルデータは合成データのみとし、実データは入れない。
 
