@@ -208,14 +208,27 @@ describe('errorText', () => {
 })
 
 describe('similarMetrics', () => {
-  it('要求の文に似た既にある指標を出す（#75）', async () => {
+  const dims = [
+    { name: 'store__store_name', label: '店舗名', description: '', kind: 'categorical', entity: 'store' },
+    { name: 'product__category', label: '商品カテゴリ', description: '', kind: 'categorical', entity: 'product' },
+    { name: 'customer__membership_rank', label: '会員ランク', description: '', kind: 'categorical', entity: 'customer' },
+  ]
+  const metrics = [
+    { ...datasets.metrics[0], name: 'sales', label: '売上金額(税抜)', description: '店舗別の売上金額の合計はいくらか', dimensions: dims },
+    { ...datasets.metrics[0], name: 'quantity', label: '商品別販売数量', description: '販売した数量', dimensions: dims },
+  ]
+
+  it('何を測るか（表示名・説明）が似た指標を出す（#75）', async () => {
     const { similarMetrics } = await import('@/api/datasets')
-    const metrics = [
-      { ...datasets.metrics[0], name: 'sales', label: '売上金額(税抜)', description: '店舗別の売上金額', dimensions: [] },
-      { ...datasets.metrics[0], name: 'returns', label: '返品数量', description: '返品された数量', dimensions: [] },
-    ]
     expect(similarMetrics('店舗ごとの売上を見たい', metrics).map((m) => m.name)).toEqual(['sales'])
-    expect(similarMetrics('顧客の年齢層別の会員数を知りたい', metrics)).toEqual([])
-    expect(similarMetrics('売', metrics)).toEqual([])
+    expect(similarMetrics('売上を見たい', metrics).map((m) => m.name)).toEqual(['sales'])
+    expect(similarMetrics('販売数量を商品ごとに', metrics).map((m) => m.name)).toEqual(['quantity'])
+  })
+
+  it('切り口が同じだけの別の指標は出さない（#91 レビュー）', async () => {
+    const { similarMetrics } = await import('@/api/datasets')
+    expect(similarMetrics('商品カテゴリ別の返品率を知りたい', metrics)).toEqual([])
+    expect(similarMetrics('店舗ごと・商品カテゴリごとの入荷数量を月別に見たい', metrics)).toEqual([])
+    expect(similarMetrics('会員ランク別の顧客数', metrics)).toEqual([])
   })
 })

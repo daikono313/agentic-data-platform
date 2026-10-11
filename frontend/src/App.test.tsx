@@ -62,6 +62,56 @@ describe('App の開始画面（似た指標）', () => {
   })
 })
 
+describe('インタビュー画面（似た指標）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('似た既にある指標を参考に出す（確定は止めない。この BEAM 自身の指標は除く）', async () => {
+    const metric = (name: string, label: string, beam: string | null) => ({
+      name,
+      label,
+      description: '',
+      type: 'simple',
+      model: 'fct_order_lines',
+      beam,
+      dimensions: [],
+    })
+    const datasets = {
+      metrics: [metric('sales', '売上金額', 'store_sales'), metric('mine', '返品率', 'returns_rate')],
+      models: [],
+      beams: [],
+      errors: [],
+      sources: [],
+    }
+    const session = {
+      id: 's1',
+      phase: 'review',
+      beam: { schema_version: 1, name: 'returns_rate', title: '返品率', request: '売上を見たい', events: [], metrics: [], gaps: [] },
+      matrix: { columns: [], rows: [] },
+      issues: [],
+      choices: [],
+      question: null,
+      messages: [],
+      job: null,
+      versions: [],
+      feedback: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve(new Response(JSON.stringify(url.includes('/datasets') ? datasets : url.includes('/feedback') ? {} : session))),
+      ),
+    )
+    window.history.replaceState(null, '', '/?session=s1')
+    render(<App />)
+    const box = await screen.findByRole('status', { name: '似ている既にある指標' })
+    expect(box).toHaveTextContent('売上金額をチャートで見る')
+    expect(box).not.toHaveTextContent('返品率をチャートで見る')
+  })
+})
+
 describe('App の開始画面', () => {
   it('要求の例をクリックすると入力欄に入る', async () => {
     const body = {

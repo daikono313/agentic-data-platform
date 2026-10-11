@@ -288,9 +288,7 @@ def build_default_app() -> FastAPI:
         runner,
         settings,
         {SERVER_NAME: build_tools(catalog)},
-        design_issues=design_issues(
-            catalog, REPO_ROOT / "ontology" / "ontology.yml", repo_root=REPO_ROOT
-        ),
+        design_issues=design_issues(catalog, REPO_ROOT / "ontology" / "ontology.yml"),
     )
     account = (
         read_dotenv(REPO_ROOT / ".env").get("ADP_GITHUB_ACCOUNT")

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
 import type { ChatMessage, InterviewEvent, JobView, SessionView } from '@/api/types'
-import { errorText, exampleRequests, similarMetrics, type Datasets } from '@/api/datasets'
+import { errorText, exampleRequests, rankDimensions, similarMetrics, type Datasets } from '@/api/datasets'
 import { chartUrl } from '@/api/charts'
 import { findFeedback, mergeFeedback, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { BeamCanvas } from '@/components/BeamCanvas'
@@ -293,6 +293,13 @@ function InterviewApp() {
               </div>
             </details>
           )}
+          {!isDemo && !finalized && sharedDatasets.datasets && (
+            <SimilarExisting
+              texts={[session.beam.request, ...(session.beam.metrics ?? []).map((m) => m.label)]}
+              beam={session.beam.name}
+              datasets={sharedDatasets.datasets}
+            />
+          )}
           <section aria-label="BEAM Canvas">
             <BeamCanvas event={event} />
           </section>
@@ -447,7 +454,7 @@ function StartScreen({
           </a>
         </p>
         {similar.length > 0 && (
-          <div className="rounded-md border border-sky-500/50 p-2 text-xs" aria-label="似ている既にある指標">
+          <div className="rounded-md border border-sky-500/50 p-2 text-xs" role="status" aria-label="似ている既にある指標">
             <p className="text-muted-foreground">既にある指標で見られるかもしれません:</p>
             <ul className="mt-1 flex flex-wrap gap-2">
               {similar.map((m) => (
@@ -473,5 +480,39 @@ function StartScreen({
         }}
       />
     </main>
+  )
+}
+
+/**
+ * インタビュー中に、似た既にある指標を参考として出す（#75）。確定は止めない（インタビューの
+ * 振る舞いは変えない）。同じ指標ならチャートで見られること、切り口を足すだけならそう伝えれば
+ * 既存の fct に足せること（#46）を知らせる。
+ */
+function SimilarExisting({ texts, beam, datasets }: { texts: string[]; beam: string; datasets: Datasets }) {
+  // この BEAM 成果物自身が作った指標（確定し直し）は除く
+  const others = datasets.metrics.filter((m) => !beam || m.beam !== beam)
+  const found = new Map<string, Datasets['metrics'][number]>()
+  for (const t of texts) if (t) for (const m of similarMetrics(t, others)) found.set(m.name, m)
+  if (found.size === 0) return null
+  return (
+    <div className="rounded-lg border border-sky-500/50 p-3 text-xs" role="status" aria-label="似ている既にある指標">
+      <p className="font-semibold">似ている指標が既にあります</p>
+      <ul className="mt-1 space-y-1">
+        {[...found.values()].map((m) => (
+          <li key={m.name}>
+            <a href={chartUrl(m.name)} target="_blank" rel="noreferrer" className="text-primary underline">
+              {m.label}をチャートで見る
+            </a>
+            <span className="ml-1 text-muted-foreground">
+              （切り口: {rankDimensions(m.dimensions).slice(0, 5).map((d) => d.label).join('、') || 'なし'}）
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-muted-foreground">
+        同じ指標なら、作らずにチャートで見られます。切り口を足すだけなら「既にある◯◯に△△の切り口を足したい」と伝えると、既存の
+        fact に足して作れます。
+      </p>
+    </div>
   )
 }
