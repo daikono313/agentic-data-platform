@@ -32,7 +32,8 @@ def test_literal(value: Any, expected: str) -> None:
         "100%",
         "a\\b",
         "a\nb",
-        "a b",
+        "a\u2028b",
+        "a\u2029b",
         "x" * 201,
         math.nan,
         math.inf,

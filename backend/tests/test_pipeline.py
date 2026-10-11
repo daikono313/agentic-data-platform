@@ -368,8 +368,11 @@ async def test_heavy_work_runs_off_the_event_loop(
         workspace,
         GitHub(repo, "daikono313", recorded("gh", gh)),
     )
-    result = await pipeline.run(beam)
+    step_threads: list[int] = []
+    result = await pipeline.run(beam, lambda _: step_threads.append(threading.get_ident()))
     assert result.ok, result.error
+    # 進捗の通知（SSE のキューに入れる）はイベントループのスレッドだけから呼ぶ
+    assert step_threads and set(step_threads) == {loop_thread}
     calls += workspace.threads
     names = {name for name, _ in calls}
     assert {"dbt", "copy_database", "render_png", "gh"} <= names
@@ -421,12 +424,13 @@ async def test_job_steps_cleans_up_before_push_and_truncates_detail() -> None:
 async def test_job_steps_keeps_branch_after_push() -> None:
     workspace = FakeWorkspace(["a.sql"])
     job = JobSteps([("commit", "commit / push"), ("pr", "PR")], lambda _: None, workspace)  # type: ignore[arg-type]
-    order: list[str] = []
     wt = await job.create_worktree("b", "origin/main")
-    files = await job.commit_and_push(wt, ["x"], "m", before_push=lambda: order.append("image"))
+    files = await job.commit_and_push(
+        wt, ["x"], "m", before_push=lambda: workspace.calls.append("image")
+    )
     assert files == ["a.sql"]
-    assert workspace.calls == ["create_worktree", "stage", "commit", "push"]
-    assert order == ["image"]
+    # 画像の commit などは、commit の後・push の前
+    assert workspace.calls == ["create_worktree", "stage", "commit", "image", "push"]
     job.step("pr", StepStatus.RUNNING)
     result = await job.fail(PipelineResult(ok=False, branch="b"), RuntimeError("x" * 3000))
     assert result.branch == "b"
