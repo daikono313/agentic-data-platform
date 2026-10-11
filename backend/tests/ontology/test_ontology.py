@@ -238,3 +238,33 @@ def test_check_repository_ontology() -> None:
         warehouse / "target" / "manifest.json",
     )
     assert result.errors == []
+
+
+def test_model_without_concept_is_an_error(tmp_path: Path) -> None:
+    """どの概念にも結び付かない fact / dim はエラー（用途の重複を防ぐ。#114）。暦は対象外。"""
+    import json
+
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.close()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {
+                    "model.p.dim_date": {"resource_type": "model", "name": "dim_date"},
+                    "model.p.fct_sales_copy": {"resource_type": "model", "name": "fct_sales_copy"},
+                },
+                "sources": {},
+                "parent_map": {"model.p.dim_date": [], "model.p.fct_sales_copy": []},
+            }
+        )
+    )
+    ontology = Ontology.model_validate({"version": 1, "domains": [], "concepts": []})
+    result = check(ontology, Catalog(db), manifest)
+    assert result.unmapped_models == ["dim_date", "fct_sales_copy"]
+    assert [e for e in result.errors if "fct_sales_copy" in e]
+    assert not [e for e in result.errors if "dim_date" in e]
