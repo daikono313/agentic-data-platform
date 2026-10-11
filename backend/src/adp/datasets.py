@@ -139,8 +139,9 @@ class CleansingView(BaseModel):
     """定義のファイル（リポジトリからの相対パス）。"""
     existing: str | None = None
     """今の定義（無ければ None）。"""
-    draft: str
-    """プロファイルから作った雛形。"""
+    draft: str | None = None
+    """プロファイルから作った雛形（作れなければ None）。"""
+    draft_error: str | None = None
 
 
 class Datasets(BaseModel):
@@ -486,11 +487,17 @@ class DatasetIndex:
         profile = self.catalog.profile_table(table)
         source = f"{profile.schema_name}.{profile.name}"
         path = spec_path(self.warehouse / "cleansing", source)
-        return CleansingView(
+        view = CleansingView(
             path=str(path.relative_to(self.repo_root)),
             existing=path.read_text(encoding="utf-8") if path.exists() else None,
-            draft=dump_spec(draft(profile)),
         )
+        try:
+            view.draft = dump_spec(draft(profile))
+        except ValueError:  # 定義に書けない源泉の名前など。今の定義は返す
+            view.draft_error = (
+                "この源泉からは雛形を作れませんでした（名前に使えない文字があります）"
+            )
+        return view
 
     def all(self) -> Datasets:
         errors: list[str] = []

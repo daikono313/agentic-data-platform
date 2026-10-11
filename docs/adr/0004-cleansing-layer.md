@@ -11,6 +11,7 @@
 ## 決定
 
 - staging をクレンジング層とし、源泉ごとの**クレンジングの定義**（`warehouse/cleansing/<schema>.<table>.yml`）と、型ごとの既定（`warehouse/cleansing/_defaults.yml`）から、`stg_<table>.sql` と `.yml`（テスト）を**決定的に**生成する（`adp.cleansing`。LLM を使わない）。生成物の先頭に印を入れ、手で編集しない（`make cleansing`）。
+- 除外の条件の列が NULL の行は除外しない（`not coalesce(条件, false)`）。値の対応表・trim などは、型変換の後の型に合うものだけ書ける（検証で拒否する）。
 - 定義に書けるのは構造化された項目だけ:
   - 列: 型変換（try_cast。許可した型だけ）、タイムゾーン、trim、大文字小文字、空文字を NULL、値の対応表、列名の変更・削除、日付・月・年の切り出し、accepted_values / not_null のテスト
   - テーブル: 主キー（unique / not_null）、重複の除去（キーと優先順）、除外する行（is_null / in / equals）
@@ -27,6 +28,7 @@
 
 ## 影響
 
-- 既存の 6 つの stg は定義から再生成した。以前の手書きの stg と結果が同じことをテストで確かめた（`test_repository_definitions_reproduce_previous_staging`）。
+- 既存の 6 つの stg は定義から再生成した（stg の無かった 3 つの源泉 payments / shipments / returns は、取り込みのときに定義を作る）。以前の手書きの stg と結果が同じことをテストで確かめた（`test_repository_definitions_reproduce_previous_staging`）。ただし既定で文字列の列に trim と空文字の NULL 化をかけるので、「同じ結果」はサンプルデータ（前後の空白・空文字が無い）での話で、実データでは結果が変わりうる（それがクレンジングの目的）。
+- stg は手で書かない。定義の無い stg があれば検査で失敗にする。
 - `_stg_models.yml` は、モデルごとの生成物（`stg_<table>.yml`）に置き換えた。
 - 規約（modeling-conventions）と guardrails を更新した。

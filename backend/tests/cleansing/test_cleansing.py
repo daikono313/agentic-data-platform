@@ -44,6 +44,22 @@ TEXT = Defaults.model_validate({"text": {"trim": True, "empty_to_null": True}})
         {"columns": [{"name": "status"}, {"name": "status"}]},
         {"exclude": [{"column": "status", "is_null": True, "equals": "x"}]},
         {"columns": [{"name": "status", "sql": "select 1"}]},
+        # #86 レビュー
+        {
+            "columns": [
+                {
+                    "name": "created_at",
+                    "derive": [{"name": "d", "as": "date", "description": "{{ env_var('HOME') }}"}],
+                }
+            ]
+        },
+        {"columns": [{"name": "status", "accepted_values": [True, "x"]}]},  # YAML の yes / no
+        {"exclude": [{"column": "status", "equals": float("nan")}]},
+        {"exclude": [{"column": "status", "in": []}]},
+        {"columns": [{"name": "status", "cast": "decimal(99, 99)"}]},
+        {"columns": [{"name": "status", "cast": "decimal(5, 6)"}]},
+        {"columns": [{"name": "status", "rename": "order"}]},
+        {"model": "stg_other"},
     ],
 )
 def test_unsafe_or_invalid_definitions_are_rejected(over: dict[str, Any]) -> None:
@@ -77,7 +93,7 @@ def test_render_applies_rules_in_order() -> None:
         "cast(timezone('Asia/Tokyo', timezone('UTC', created_at)) as date) as created_on" in r.sql
     )
     assert "legacy" not in r.sql
-    assert "where not ((status in ('test', 'dummy')) or (id is null))" in r.sql
+    assert "where not coalesce((status in ('test', 'dummy')) or (id is null), false)" in r.sql
     assert "qualify row_number() over (partition by id order by updated_at desc) = 1" in r.sql
     assert "{{ source('raw', 't') }}" in r.sql
     assert "unique" in r.yml and "作成日" in r.yml
@@ -206,7 +222,8 @@ def test_orphan_generated_files_are_reported(tmp_path: Path) -> None:
     duckdb.connect(str(db)).execute("create schema raw").close()
     result = check_all(warehouse, Catalog(db))
     assert result.errors == [
-        "models/staging/stg_gone.sql: 定義（warehouse/cleansing/）が無い生成物が残っている"
+        "models/staging/stg_gone.sql: 定義（warehouse/cleansing/）が無い生成物が残っている",
+        "models/staging/stg_hand.sql: 定義（warehouse/cleansing/）が無い（stg は定義から生成する）",
     ]
 
 
@@ -227,3 +244,74 @@ def test_draft_from_profile(tmp_path: Path) -> None:
     assert spec.dedupe is not None and spec.dedupe.order_by[0].column == "updated_at"
     assert spec.rule("occurred_at").cast == "timestamp"  # type: ignore[union-attr]
     assert spec.rule("kind").accepted_values == ["a", "b"]  # type: ignore[union-attr]
+
+
+def test_exclude_keeps_rows_with_null() -> None:
+    """除外の条件の列が NULL の行は残す（#86 レビュー）。"""
+    con = duckdb.connect()
+    con.execute(
+        "create table t as select * from (values (1, 'TEST'), (2, NULL), (3, 'ok')) v(id, code)"
+    )
+    spec = _spec(exclude=[{"column": "code", "equals": "TEST"}])
+    cols = [SourceColumn("id", "INTEGER"), SourceColumn("code", "VARCHAR")]
+    sql = render(spec, Defaults(), cols).sql.split("\n", 1)[1]
+    sql = sql.replace("{{ source('raw', 't') }}", "t")
+    assert [r[0] for r in con.execute(sql + " order by id").fetchall()] == [2, 3]
+
+
+def test_key_on_derived_column_gets_tests() -> None:
+    spec = _spec(
+        key="created_on",
+        columns=[{"name": "created_at", "derive": [{"name": "created_on", "as": "date"}]}],
+    )
+    yml = render(spec, TEXT, COLUMNS).yml
+    assert "- name: created_on\n    data_tests:\n    - unique\n    - not_null" in yml
+
+
+def test_rules_must_fit_the_column_type() -> None:
+    spec = _spec(
+        columns=[
+            {"name": "id", "case": "lower"},
+            {"name": "status", "timezone": ["UTC", "Asia/Tokyo"]},
+            {"name": "amount_text", "cast": "integer", "values": {"1": "one"}},
+            {"name": "legacy", "derive": [{"name": "y", "as": "year"}]},
+            {"name": "created_at", "cast": "varchar", "trim": True},
+        ]
+    )
+    errors = validate(spec, COLUMNS)
+    assert len(errors) == 4, errors  # varchar に変換した列の trim は使える
+    assert any("raw.t.id" in e for e in errors) and any("raw.t.legacy" in e for e in errors)
+
+
+def test_generator_aligns_dbt_source_for_undeclared_sources() -> None:
+    """未宣言の源泉で既存の定義（dbt_source なし）を使うとき、別名の source に合わせる。"""
+    from adp.generation.dbt import staging_files
+
+    class Info:
+        warehouse_dir = WAREHOUSE
+
+        def declared_sources(self) -> set[str]:
+            return set()
+
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [("order_id", "INTEGER"), ("ordered_at", "TIMESTAMP")]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return "order_id"
+
+    files = {f.path: f.content for f in staging_files("raw.orders", Info())}  # type: ignore[arg-type]
+    assert "{{ source('adp_orders', 'orders') }}" in files["models/staging/stg_orders.sql"]
+    assert "models/staging/_adp_orders__sources.yml" in files
+
+
+def test_draft_skips_unrepresentable_columns(tmp_path: Path) -> None:
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute(
+        "create table raw.t as select * from"
+        " (values (1, 'a', 'x' || chr(9) || 'y'), (2, 'b', 'z')) v(t_id, \"Kind\", tabbed)"
+    )
+    con.close()
+    spec = draft(Catalog(db).profile_table("raw.t"))
+    assert spec.key == "t_id" and spec.rule("Kind") is None and spec.rule("tabbed") is None

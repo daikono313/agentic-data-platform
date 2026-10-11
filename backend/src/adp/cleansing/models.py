@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Literal
@@ -24,19 +25,73 @@ CAST_TYPES = {
     "timestamp",
     "boolean",
 }
-_DECIMAL = re.compile(r"^decimal\((\d{1,2}),\s*(\d{1,2})\)$")
-_TIMEZONE = re.compile(r"^(UTC|[A-Z][A-Za-z_]+/[A-Z][A-Za-z_]+)$")
+_DECIMAL = re.compile(r"decimal\((\d{1,2}),\s*(\d{1,2})\)")
+_TIMEZONE = re.compile(r"UTC|[A-Za-z_]+(/[A-Za-z0-9_+\-]+){1,2}")
+RESERVED = {
+    "all",
+    "and",
+    "as",
+    "asc",
+    "by",
+    "case",
+    "check",
+    "column",
+    "default",
+    "desc",
+    "distinct",
+    "end",
+    "false",
+    "from",
+    "group",
+    "having",
+    "in",
+    "is",
+    "limit",
+    "not",
+    "null",
+    "offset",
+    "on",
+    "or",
+    "order",
+    "primary",
+    "references",
+    "select",
+    "table",
+    "then",
+    "to",
+    "true",
+    "union",
+    "user",
+    "when",
+    "where",
+    "with",
+}
+"""出力の列名に使えない SQL の予約語（列名をクォートしないため）。"""
 
 Scalar = str | int | float | bool
 
 
 def _check_literal(value: Scalar) -> Scalar:
-    """SQL の文字列リテラルに入れる値。dbt の Jinja として解釈される文字と制御文字を拒否する。"""
+    """SQL のリテラルに入れる値。dbt の Jinja として解釈される文字と制御文字を拒否する。
+
+    真偽値は拒否する（YAML では yes / no / on / off が真偽値になり、意図しない値になるため。
+    文字列は引用符で囲む）。数値は有限のものだけ。
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"真偽値は使えない（文字列なら引用符で囲む）: {value!r}")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"有限の数値にする: {value!r}")
     if isinstance(value, str) and (
         any(ch in value for ch in "{}\\") or any(ord(ch) < 0x20 for ch in value)
     ):
         raise ValueError(f"値に使えない文字（{{ }} \\ や制御文字）が含まれる: {value!r}")
     return value
+
+
+def _check_output_name(name: str) -> str:
+    if name in RESERVED:
+        raise ValueError(f"SQL の予約語は列名にできない: {name}")
+    return name
 
 
 class _Strict(BaseModel):
@@ -51,6 +106,17 @@ class Derive(_Strict):
     description: str = ""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return _check_output_name(v)
+
+    @field_validator("description")
+    @classmethod
+    def _desc(cls, v: str) -> str:
+        _check_literal(v)
+        return v
 
 
 class ColumnRule(_Strict):
@@ -82,7 +148,10 @@ class ColumnRule(_Strict):
         if v is None:
             return v
         v = v.strip().lower()
-        if v not in CAST_TYPES and not _DECIMAL.match(v):
+        decimal = _DECIMAL.fullmatch(v)
+        if decimal and not (1 <= int(decimal[1]) <= 38 and int(decimal[2]) <= int(decimal[1])):
+            raise ValueError(f"decimal の桁は 1〜38、小数部は全体の桁以下にする: {v}")
+        if v not in CAST_TYPES and not decimal:
             allowed = ", ".join(sorted(CAST_TYPES))
             raise ValueError(f"cast に使えない型: {v}（{allowed}, decimal(p,s)）")
         return v
@@ -90,9 +159,14 @@ class ColumnRule(_Strict):
     @field_validator("timezone")
     @classmethod
     def _tz(cls, v: tuple[str, str] | None) -> tuple[str, str] | None:
-        if v is not None and not all(_TIMEZONE.match(x) for x in v):
+        if v is not None and not all(_TIMEZONE.fullmatch(x) for x in v):
             raise ValueError(f"タイムゾーンの名前が正しくない: {v}")
         return v
+
+    @field_validator("rename")
+    @classmethod
+    def _rename(cls, v: str | None) -> str | None:
+        return v if v is None else _check_output_name(v)
 
     @field_validator("values")
     @classmethod
@@ -126,7 +200,7 @@ class Exclude(_Strict):
     column: str = Field(pattern=IDENT)
     """源泉の列名（クレンジング前の値で判定する）。"""
     is_null: bool | None = None
-    in_: list[Scalar] | None = Field(default=None, alias="in")
+    in_: list[Scalar] | None = Field(default=None, alias="in", min_length=1)
     equals: Scalar | None = None
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
@@ -164,8 +238,6 @@ class Dedupe(_Strict):
 class CleansingSpec(_Strict):
     source: str = Field(pattern=TABLE)
     """`<schema>.<table>`（例: raw.orders）。"""
-    model: str | None = Field(default=None, pattern=r"^stg_[a-z0-9_]+$")
-    """生成するモデル名。省略時は stg_<table>。"""
     dbt_source: str | None = Field(default=None, pattern=IDENT)
     """dbt の source 名。省略時は schema（生成で別名の source として宣言した源泉で使う）。"""
     description: str = ""
@@ -191,7 +263,8 @@ class CleansingSpec(_Strict):
 
     @property
     def model_name(self) -> str:
-        return self.model or "stg_" + self.source.rpartition(".")[2]
+        """生成するモデル名（stg_<table>。生成器・設計がこの名前で参照する）。"""
+        return "stg_" + self.source.rpartition(".")[2]
 
     @property
     def schema_name(self) -> str:

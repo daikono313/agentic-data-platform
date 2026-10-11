@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import duckdb
+import yaml
+
 from adp.catalog.catalog import Catalog, TableProfile
-from adp.cleansing.models import CleansingSpec, ColumnRule, Dedupe, OrderBy, load_all, load_defaults
+from adp.cleansing.models import (
+    DEFAULTS_FILE,
+    IDENT,
+    CleansingSpec,
+    ColumnRule,
+    Dedupe,
+    OrderBy,
+    load_defaults,
+    load_spec,
+)
 from adp.cleansing.render import GENERATED, Rendered, SourceColumn, output_columns, render
 
 ACCEPTED_VALUES_MAX = 10
@@ -24,13 +37,37 @@ def source_columns(catalog: Catalog, source: str) -> list[SourceColumn]:
     return [SourceColumn(c.name, c.data_type) for c in catalog.columns(source)]
 
 
+def _kind(data_type: str) -> str:
+    t = data_type.upper()
+    if t.startswith(("VARCHAR", "TEXT", "STRING", "CHAR")):
+        return "text"
+    if t.startswith("TIMESTAMP"):
+        return "timestamp"
+    if t == "DATE":
+        return "date"
+    return "other"
+
+
 def validate(spec: CleansingSpec, columns: list[SourceColumn]) -> list[str]:
-    """定義が源泉の列と矛盾しないか（存在しない列・出力に無いキーなど）。"""
+    """定義が源泉の列と矛盾しないか（存在しない列・出力に無いキー・型に合わない処理など）。"""
     errors: list[str] = []
-    names = {c.name for c in columns}
+    types = {c.name: c.data_type for c in columns}
+    names = set(types)
     for rule in spec.columns:
         if rule.name not in names:
             errors.append(f"{spec.source}: 列 {rule.name} が源泉に無い")
+            continue
+        # 型変換の後の型で判定する
+        kind = _kind(rule.cast or types[rule.name])
+        where = f"{spec.source}.{rule.name}"
+        if kind != "text" and (rule.case or rule.trim or rule.empty_to_null):
+            errors.append(f"{where}: trim / case / empty_to_null は文字列の列にだけ使える")
+        if kind != "text" and rule.values:
+            errors.append(f"{where}: values（値の対応表）は文字列の列にだけ使える")
+        if kind != "timestamp" and rule.timezone:
+            errors.append(f"{where}: timezone は timestamp の列にだけ使える（cast も使える）")
+        if kind not in ("timestamp", "date") and rule.derive:
+            errors.append(f"{where}: derive は日時・日付の列にだけ使える（cast も使える）")
     for x in spec.exclude:
         if x.column not in names:
             errors.append(f"{spec.source}: exclude の列 {x.column} が源泉に無い")
@@ -66,9 +103,23 @@ def check_all(warehouse: Path, catalog: Catalog) -> CheckResult:
     """全定義を検証して生成物を作る。生成物が最新かどうかは呼び出し側で比べる。"""
     result = CheckResult()
     cleansing_dir = warehouse / "cleansing"
-    defaults = load_defaults(cleansing_dir)
+    try:
+        defaults = load_defaults(cleansing_dir)
+    except (ValueError, yaml.YAMLError) as e:
+        result.errors.append(f"cleansing/_defaults.yml: {e}")
+        return result
     sources = {t.qualified for t in catalog.list_sources()}
-    specs = load_all(cleansing_dir)
+    specs: list[CleansingSpec] = []
+    for path in sorted(cleansing_dir.glob("*.y*ml")):
+        if path.name == DEFAULTS_FILE:
+            continue
+        if path.suffix != ".yml":
+            result.errors.append(f"cleansing/{path.name}: 拡張子は .yml にする")
+            continue
+        try:
+            specs.append(load_spec(path))
+        except (ValueError, yaml.YAMLError) as e:
+            result.errors.append(f"cleansing/{path.name}: {e}")
     for spec in specs:
         if spec.source not in sources:
             result.errors.append(f"{spec.source}: 源泉がカタログに無い")
@@ -78,17 +129,22 @@ def check_all(warehouse: Path, catalog: Catalog) -> CheckResult:
         result.errors += errors
         if errors:
             continue
-        result.warnings += cast_failures(catalog, spec)
-        result.rendered.append(render(spec, defaults, columns))
-    # 定義が無くなったのに残っている生成物
-    expected = {r.sql_path for r in result.rendered} | {r.yml_path for r in result.rendered}
+        try:
+            result.warnings += cast_failures(catalog, spec)
+            result.rendered.append(render(spec, defaults, columns))
+        except (ValueError, duckdb.Error) as e:
+            result.errors.append(f"{spec.source}: {e}")
+    # 定義の無い stg（手で書いたもの、定義を消した後の残り）。stg は定義から生成する（ADR 0004）
     models = {spec.model_name for spec in specs}
     for path in sorted((warehouse / "models" / "staging").glob("stg_*.*")):
-        rel = f"models/staging/{path.name}"
-        if rel in expected or path.stem in models:
+        if path.stem in models:
             continue
-        if GENERATED in path.read_text(encoding="utf-8").split("\n", 1)[0]:
-            result.errors.append(f"{rel}: 定義（warehouse/cleansing/）が無い生成物が残っている")
+        rel = f"models/staging/{path.name}"
+        generated = GENERATED in path.read_text(encoding="utf-8").split("\n", 1)[0]
+        result.errors.append(
+            f"{rel}: 定義（warehouse/cleansing/）が無い"
+            + ("生成物が残っている" if generated else "（stg は定義から生成する）")
+        )
     return result
 
 
@@ -101,7 +157,9 @@ def draft(profile: TableProfile) -> CleansingSpec:
     """
     by_name = {p.column: p for p in profile.profiles}
     rules: list[ColumnRule] = []
-    for c in profile.columns:
+    # 定義に書けない列名（大文字など）は雛形に入れない（ユーザーが直す）
+    columns = [c for c in profile.columns if re.fullmatch(IDENT, c.name)]
+    for c in columns:
         p = by_name.get(c.name)
         text = c.data_type.upper().startswith("VARCHAR")
         kwargs: dict[str, object] = {"name": c.name}
@@ -117,24 +175,29 @@ def draft(profile: TableProfile) -> CleansingSpec:
             and not c.name.endswith(("_id", "_name"))
         ):
             values = sorted(v for v, _ in p.top_values if v is not None)
-            if values and all("{" not in v and "}" not in v and "\\" not in v for v in values):
+            if values:
                 kwargs["accepted_values"] = values
         if len(kwargs) > 1:
-            rules.append(ColumnRule.model_validate(kwargs))
+            try:
+                rules.append(ColumnRule.model_validate(kwargs))
+            except ValueError:  # 値に使えない文字（制御文字など）があれば、その列は雛形に入れない
+                continue
     # キーは `_id` の主キー候補を優先する（日時などがたまたま一意なだけの列を選ばない）
-    candidates = profile.primary_key_candidates
+    candidates = [k for k in profile.primary_key_candidates if re.fullmatch(IDENT, k)]
     id_keys = [c for c in candidates if c.endswith("_id")]
     key = id_keys[0] if id_keys else None
     dedupe = None
-    ids = [c.name for c in profile.columns if c.name.endswith("_id")]
-    updated = [c.name for c in profile.columns if c.name in ("updated_at", "loaded_at")]
+    ids = [c.name for c in columns if c.name.endswith("_id")]
+    updated = [c.name for c in columns if c.name in ("updated_at", "loaded_at")]
     if key is None and ids and updated:
         key = ids[0]
         dedupe = Dedupe(key=[ids[0]], order_by=[OrderBy(column=updated[0], desc=True)])
     elif key is None and candidates:
         key = candidates[0]
     # 説明は定義の文字列の検証（{ } \\ を拒否）に通るよう、その文字を除く
-    description = profile.description.split("\n")[0].translate(str.maketrans("", "", "{}\\"))
+    description = "".join(
+        ch for ch in profile.description.split("\n")[0] if ch not in "{}\\" and ord(ch) >= 0x20
+    )
     return CleansingSpec.model_validate(
         {
             "source": f"{profile.schema_name}.{profile.name}",

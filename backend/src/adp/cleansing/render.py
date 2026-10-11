@@ -38,6 +38,17 @@ def literal(value: Scalar) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _assert_no_jinja(spec: CleansingSpec, sql: str, yml: str) -> None:
+    """生成物に、source() の呼び出し以外の Jinja・エスケープの文字が無いこと。
+
+    定義の検証（値の文字の拒否）の二重化。
+    """
+    source_call = f"{{{{ source('{spec.dbt_source or spec.schema_name}', '{spec.table_name}') }}}}"
+    for name, text in (("sql", sql.replace(source_call, "", 1)), ("yml", yml)):
+        if any(ch in text for ch in "{}\\"):
+            raise ValueError(f"{spec.source}: 生成した {name} に使えない文字（{{ }} \\）が含まれる")
+
+
 def _is_text(data_type: str) -> bool:
     return data_type.upper().startswith(("VARCHAR", "TEXT", "STRING", "CHAR"))
 
@@ -132,7 +143,9 @@ def render(spec: CleansingSpec, defaults: Defaults, columns: list[SourceColumn])
     ]
     excludes = _exclude_sql(spec)
     if excludes:
-        lines.append("    where not (" + " or ".join(f"({x})" for x in excludes) + ")")
+        # 条件の列が NULL の行は除外しない（not (NULL) で消えないよう false にする）
+        conditions = " or ".join(f"({x})" for x in excludes)
+        lines.append(f"    where not coalesce({conditions}, false)")
     lines += [")", "", "select * from cleansed"]
     if spec.dedupe is not None:
         order = ", ".join(f"{o.column}{' desc' if o.desc else ''}" for o in spec.dedupe.order_by)
@@ -169,6 +182,8 @@ def render(spec: CleansingSpec, defaults: Defaults, columns: list[SourceColumn])
             derived: dict[str, Any] = {"name": d.name}
             if d.description:
                 derived["description"] = d.description
+            if d.name == spec.key:
+                derived["data_tests"] = ["unique", "not_null"]
             if len(derived) > 1:
                 yml_columns.append(derived)
     if yml_columns:
@@ -177,6 +192,7 @@ def render(spec: CleansingSpec, defaults: Defaults, columns: list[SourceColumn])
     yml += yaml.safe_dump(
         {"version": 2, "models": [model]}, allow_unicode=True, sort_keys=False, width=1000
     )
+    _assert_no_jinja(spec, sql, yml)
     return Rendered(
         sql_path=f"models/staging/{spec.model_name}.sql",
         sql=sql,

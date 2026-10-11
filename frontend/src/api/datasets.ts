@@ -90,7 +90,8 @@ export interface OntologyView {
 export interface CleansingView {
   path: string
   existing: string | null
-  draft: string
+  draft: string | null
+  draft_error?: string | null
 }
 
 export function sourceUrl(table: string): string {

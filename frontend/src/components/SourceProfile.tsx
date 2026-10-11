@@ -41,7 +41,7 @@ export function SourceProfileScreen({ table }: { table: string }) {
         </p>
       )}
       {profile && <ProfileBody profile={profile} />}
-      {profile && <CleansingCard table={table} />}
+      {profile && <CleansingCard key={table} table={table} />}
     </main>
   )
 }
@@ -188,7 +188,8 @@ function CleansingCard({ table }: { table: string }) {
   }, [table])
   if (error) return <p className="text-xs text-destructive">クレンジングの定義を取得できませんでした: {error}</p>
   if (!view) return null
-  const text = view.existing && !showDraft ? view.existing : view.draft
+  const text = (view.existing && !showDraft ? view.existing : view.draft) ?? view.draft_error ?? ''
+
   const copy = () => {
     navigator.clipboard
       ?.writeText(text)
@@ -215,7 +216,7 @@ function CleansingCard({ table }: { table: string }) {
       </CardHeader>
       <CardContent className="space-y-2 px-4">
         <div className="flex gap-2 text-xs">
-          {view.existing && (
+          {view.existing && view.draft && (
             <button type="button" className="underline" onClick={() => setShowDraft((d) => !d)}>
               {showDraft ? '今の定義を見る' : 'プロファイルからの雛形を見る'}
             </button>
