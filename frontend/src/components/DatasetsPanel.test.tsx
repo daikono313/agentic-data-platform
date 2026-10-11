@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
 
 import { exampleRequests, type Datasets } from '@/api/datasets'
 
@@ -20,7 +20,10 @@ const datasets: Datasets = {
       ],
     },
   ],
-  models: [{ name: 'fct_order_lines', kind: 'fct', description: '注文明細ファクト', columns: [] }],
+  models: [
+    { name: 'fct_order_lines', kind: 'fct', description: '注文明細ファクト', columns: [] },
+    { name: 'dim_store', kind: 'dim', description: '店舗ディメンション', columns: [{ name: 'channel', description: '販売チャネル' }] },
+  ],
   sources: [
     {
       name: 'raw.returns',
@@ -38,26 +41,84 @@ const datasets: Datasets = {
 }
 
 describe('DatasetsPanel', () => {
-  it('指標・モデル・元データを表示し、検索で絞り込む', () => {
+  it('既存のデータ（指標・fact・dimension）→ 源泉の順に表示し、検索で絞り込む', () => {
     render(<DatasetsPanel datasets={datasets} />)
+    const order = ['指標（metrics）', 'fact', 'dimension'].map((n) => screen.getByRole('region', { name: n }))
+    const source = screen.getByTestId('source-raw.returns')
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    }
+    expect(order[2].compareDocumentPosition(source) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByTestId('metric-revenue')).toHaveTextContent('販売チャネル')
-    expect(screen.getByText('fct_order_lines')).toBeInTheDocument()
-    expect(screen.getByText('返品')).toBeInTheDocument()
+    expect(within(order[1]).getByText('fct_order_lines')).toBeInTheDocument()
+    expect(within(order[2]).getByText('dim_store')).toBeInTheDocument()
+    expect(source).toHaveTextContent('1,620 行・3 列')
+    expect(within(source).getByRole('link', { name: /プロファイル/ })).toHaveAttribute('href', '?source=raw.returns')
+    fireEvent.click(within(source).getByRole('button'))
+    expect(source).toHaveTextContent('return_reason 返品理由')
     fireEvent.change(screen.getByLabelText('使えるデータを検索'), { target: { value: '返品' } })
     expect(screen.queryByTestId('metric-revenue')).not.toBeInTheDocument()
+    expect(screen.queryByText('dim_store')).not.toBeInTheDocument()
     expect(screen.getByText('返品')).toBeInTheDocument()
   })
 
-  it('要求の例をクリックすると入力欄に渡す', () => {
-    const pick = vi.fn()
-    render(<DatasetsPanel datasets={datasets} onPickExample={pick} />)
-    fireEvent.click(screen.getByRole('button', { name: '返品理由別の返品の返品数量を見たい' }))
-    expect(pick).toHaveBeenCalledWith('返品理由別の返品の返品数量を見たい')
+  it('インタビュー中（compact）はリンクを別タブで開く', () => {
+    render(<DatasetsPanel datasets={datasets} compact />)
+    expect(screen.getByRole('link', { name: /プロファイル/ })).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: 'チャートで見る' })).toHaveAttribute('target', '_blank')
   })
 
   it('読み込みエラーを表示する', () => {
     render(<DatasetsPanel datasets={null} error="503" />)
     expect(screen.getByText(/読み込めませんでした/)).toBeInTheDocument()
+  })
+})
+
+describe('バスマトリクス', () => {
+  const bus = {
+    groups: [
+      { name: 'dim_store', label: '店舗', kind: 'dim', attributes: [{ name: 'store__channel', label: '販売チャネル' }] },
+      { name: 'dim_promotion', label: 'プロモーション', kind: 'dim', attributes: [{ name: 'promotion__type', label: '種類' }] },
+      { name: 'fct_order_lines', label: '注文', kind: 'degenerate', attributes: [{ name: 'order_line__status', label: '注文ステータス' }] },
+    ],
+    rows: [{ name: 'fct_order_lines', label: '注文', groups: ['dim_store', 'fct_order_lines'] }],
+  }
+
+  it('fact × dimension の表を出し、結合できる属性に ✓ を付ける', () => {
+    const extra = { name: 'dim_unregistered', kind: 'dim', description: '未登録', columns: [] }
+    render(<DatasetsPanel datasets={{ ...datasets, models: [...datasets.models, extra], bus }} />)
+    const table = screen.getByRole('table', { name: 'バスマトリクス' })
+    expect(within(table).getByRole('columnheader', { name: /店舗/ })).toHaveAttribute('colspan', '1')
+    expect(within(table).getByRole('columnheader', { name: '販売チャネル' })).toBeInTheDocument()
+    const row = screen.getByTestId('bus-fct_order_lines')
+    expect(within(row).getByLabelText('fct_order_lines × 販売チャネル')).toBeInTheDocument()
+    expect(within(row).getByLabelText('fct_order_lines × 注文ステータス')).toBeInTheDocument()
+    expect(within(row).queryByLabelText('fct_order_lines × 種類')).not.toBeInTheDocument()
+    // バスマトリクスがあるときは fact / dimension の一覧は出さない。マトリクスに無いモデルだけ一覧にする
+    expect(screen.queryByRole('region', { name: 'dimension' })).not.toBeInTheDocument()
+    expect(screen.getByText('dim_unregistered')).toBeInTheDocument()
+    expect(screen.queryByText('dim_store', { selector: 'li span' })).not.toBeInTheDocument()
+  })
+
+  it('検索で fact と、結合できる dimension に絞り込む', () => {
+    const two = {
+      ...bus,
+      rows: [...bus.rows, { name: 'fct_returns', label: '返品', groups: ['dim_promotion'] }],
+    }
+    render(<DatasetsPanel datasets={{ ...datasets, bus: two }} />)
+    expect(screen.getByTestId('bus-fct_returns')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('使えるデータを検索'), { target: { value: '販売チャネル' } })
+    expect(screen.getByTestId('bus-fct_order_lines')).toBeInTheDocument()
+    expect(screen.queryByTestId('bus-fct_returns')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '種類' })).not.toBeInTheDocument()
+  })
+
+  it('compact では dimension ごとに 1 列にする', () => {
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
+    const row = screen.getByTestId('bus-fct_order_lines')
+    expect(within(row).getByLabelText('fct_order_lines × 店舗')).toBeInTheDocument()
+    expect(within(row).queryByLabelText('fct_order_lines × プロモーション')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '販売チャネル' })).not.toBeInTheDocument()
   })
 })
 

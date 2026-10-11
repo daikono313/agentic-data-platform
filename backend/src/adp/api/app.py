@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
@@ -16,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from adp.api.service import Conflict, NotFound, SessionService, SSEEvent
 from adp.api.store import Store
+from adp.catalog.catalog import CatalogUnavailable
 from adp.chart_view import ChartRequest, ChartView, ChartViews
 from adp.charts import ChartError
 from adp.datasets import DatasetIndex
@@ -52,6 +54,20 @@ def create_app(
         if datasets is None:
             raise HTTPException(503, "データ一覧は利用できません")
         return datasets.all().model_dump(mode="json")
+
+    @app.get("/sources/{table}/profile")
+    def source_profile(table: str) -> dict[str, Any]:
+        """源泉 1 つのデータプロファイル（列ごとの統計・キーの候補・使っているモデル。#62）。"""
+        if datasets is None:
+            raise HTTPException(503, "データ一覧は利用できません")
+        try:
+            return datasets.profile(table).model_dump(mode="json")
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        except CatalogUnavailable as e:
+            raise HTTPException(503, str(e)) from e
+        except duckdb.Error as e:  # DB の例外の本文は返さない（guardrails §3）
+            raise HTTPException(503, "プロファイルを計算できませんでした") from e
 
     def _chart_view(job_id: str | None) -> ChartView:
         if charts is None:

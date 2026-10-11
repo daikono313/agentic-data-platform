@@ -14,13 +14,14 @@ ADR 0003）。
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 
-from adp.catalog.catalog import Catalog, CatalogUnavailable
+from adp.catalog.catalog import Catalog, CatalogUnavailable, TableProfile
 from adp.charts import ChartError, MetricFlowCompiler
 
 
@@ -75,9 +76,53 @@ class BeamInfo(BaseModel):
     metrics: list[str]
 
 
+class SourceProfile(TableProfile):
+    used_by: list[str] = Field(default_factory=list)
+    """この源泉を（staging などを経由して）使っている整備済みのモデル（dim / fct）。"""
+
+
+class BusAttribute(BaseModel):
+    name: str
+    """MetricFlow の参照名（例: product__category）。"""
+    label: str
+
+
+class BusGroup(BaseModel):
+    """バスマトリクスの列のまとまり。
+
+    dimension 1 つか、fact 自身が持つ属性（退化ディメンション）。
+    """
+
+    name: str
+    """dim のモデル名。fact 自身の属性なら fact のモデル名。"""
+    label: str
+    kind: str
+    """dim / degenerate"""
+    attributes: list[BusAttribute] = Field(default_factory=list)
+
+
+class BusRow(BaseModel):
+    name: str
+    """fct のモデル名。"""
+    label: str
+    groups: list[str] = Field(default_factory=list)
+    """結合できる（✓ が付く）列のまとまりの name。"""
+
+
+class BusMatrix(BaseModel):
+    """Kimball のバスマトリクス（fact × dimension。#62）。
+
+    Semantic Layer の entity の結合関係から作る。
+    """
+
+    groups: list[BusGroup] = Field(default_factory=list)
+    rows: list[BusRow] = Field(default_factory=list)
+
+
 class Datasets(BaseModel):
     metrics: list[MetricInfo]
     models: list[ModelInfo]
+    bus: BusMatrix = Field(default_factory=BusMatrix)
     sources: list[SourceInfo]
     beams: list[BeamInfo]
     errors: list[str] = Field(default_factory=list)
@@ -260,16 +305,144 @@ class DatasetIndex:
                 errors.append(f"{path.name} を読めませんでした")
         return result
 
+    def profile(self, table: str) -> SourceProfile:
+        """源泉 1 つのデータプロファイル（#62）。
+
+        対象外のテーブルは ValueError、DB が使用中なら CatalogUnavailable。
+        """
+        if self.catalog is None:
+            raise CatalogUnavailable("元データのカタログが使えません")
+        profile = self.catalog.profile_table(table)
+        return SourceProfile(
+            **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
+        )
+
+    def _used_by(self, schema: str, name: str) -> list[str]:
+        try:
+            manifest = json.loads(
+                (self.warehouse / "target" / "manifest.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return []
+        children: dict[str, list[str]] = manifest.get("child_map", {})
+        starts = [
+            k
+            for k, v in manifest.get("sources", {}).items()
+            if v.get("schema") == schema and (v.get("identifier") or v.get("name")) == name
+        ]
+        seen: set[str] = set()
+        stack = list(starts)
+        while stack:
+            for child in children.get(stack.pop(), []):
+                if child.startswith("model.") and child not in seen:
+                    seen.add(child)
+                    stack.append(child)
+        models = {c.rsplit(".", 1)[-1] for c in seen}
+        return sorted(m for m in models if m.startswith(("dim_", "fct_")))
+
+    def bus_matrix(self, manifest: dict[str, Any] | None = None) -> BusMatrix:
+        """entity の結合関係から fact × dimension の表を作る。
+
+        fct の foreign entity が、dim の primary / unique entity と一致すれば結合できる
+        （MetricFlow と同じく entity 名で結合する）。
+        dim の foreign entity の先の dim（1 段の snowflake）も含める。
+        role-playing（別名の entity）は別の切り口として扱われ、ここでは ✓ にしない。
+        semantic manifest が無ければ空（理由は metrics() が errors に入れる）。
+        """
+        manifest = manifest if manifest is not None else self._semantic_manifest()
+        if manifest is None:
+            return BusMatrix()
+        models = sorted(
+            (m for m in manifest.get("semantic_models", []) if m.get("name")),
+            key=lambda m: m["name"],
+        )
+
+        def entities(sm: dict[str, Any], *types: str) -> list[str]:
+            return [e["name"] for e in sm.get("entities", []) if e.get("type") in types]
+
+        def primary(sm: dict[str, Any]) -> str | None:
+            found = entities(sm, "primary")
+            return found[0] if found else sm.get("primary_entity")
+
+        def attributes(sm: dict[str, Any], entity: str) -> list[BusAttribute]:
+            return [
+                BusAttribute(
+                    name=f"{entity}__{d['name']}",
+                    label=d.get("label") or _short(d.get("description") or "") or d["name"],
+                )
+                for d in sm.get("dimensions", [])
+                if d.get("name")
+            ]
+
+        groups: list[BusGroup] = []
+        dims_of_entity: dict[str, list[str]] = {}
+        dim_foreign: dict[str, list[str]] = {}
+        for sm in models:
+            entity = primary(sm)
+            if not sm["name"].startswith("dim_") or entity is None:
+                continue
+            for e in [entity, *entities(sm, "unique")]:
+                dims_of_entity.setdefault(e, []).append(sm["name"])
+            dim_foreign[sm["name"]] = entities(sm, "foreign")
+            groups.append(
+                BusGroup(
+                    name=sm["name"],
+                    label=_dim_label(sm),
+                    kind="dim",
+                    attributes=attributes(sm, entity),
+                )
+            )
+        rows: list[BusRow] = []
+        for sm in models:
+            if not sm["name"].startswith("fct_"):
+                continue
+            label = sm.get("label") or _short(sm.get("description") or "") or sm["name"]
+            joined = [d for e in entities(sm, "foreign") for d in dims_of_entity.get(e, [])]
+            joined += [
+                d for j in list(joined) for e in dim_foreign[j] for d in dims_of_entity.get(e, [])
+            ]
+            entity = primary(sm)
+            # primary entity の無い fct の属性は MetricFlow から参照できないので出さない
+            own = attributes(sm, entity) if entity else []
+            if own:
+                groups.append(
+                    BusGroup(name=sm["name"], label=label, kind="degenerate", attributes=own)
+                )
+                joined.append(sm["name"])
+            rows.append(BusRow(name=sm["name"], label=label, groups=list(dict.fromkeys(joined))))
+        # dim を先、fact 自身の属性を後ろに並べる
+        groups.sort(key=lambda g: g.kind != "dim")
+        return BusMatrix(groups=groups, rows=rows)
+
+    def _bus(self, errors: list[str]) -> BusMatrix:
+        try:
+            return self.bus_matrix()
+        except Exception as e:  # 壊れた manifest でも一覧の他の部分は返す
+            errors.append(f"バスマトリクスを作れませんでした: {type(e).__name__}")
+            return BusMatrix()
+
     def all(self) -> Datasets:
         errors: list[str] = []
         beams = self.beams(errors)
         return Datasets(
             metrics=self.metrics(beams, errors),
             models=self.models(errors),
+            bus=self._bus(errors),
             sources=self.sources(errors),
             beams=beams,
             errors=errors,
         )
+
+
+def _short(text: str) -> str:
+    """説明文の最初の句（「（」「。」まで）。表の見出しに使う。"""
+    return re.split(r"[（(。\n]", text, maxsplit=1)[0].strip()
+
+
+def _dim_label(sm: dict[str, Any]) -> str:
+    """dim の見出し。「顧客ディメンション（Who）」→「顧客」"""
+    label = sm.get("label") or _short(sm.get("description") or "")
+    return label.removesuffix("ディメンション").strip() or sm["name"]
 
 
 def _time_label(name: str) -> str:

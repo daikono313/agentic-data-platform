@@ -38,9 +38,55 @@ export interface BeamInfo {
   request: string
   metrics: string[]
 }
+/** GET /sources/{table}/profile の型（backend の adp.datasets.SourceProfile と対応） */
+export interface ColumnProfile {
+  column: string
+  data_type: string
+  row_count: number
+  null_count: number
+  distinct_count: number
+  min: string | null
+  max: string | null
+  top_values: [string | null, number][]
+  is_unique: boolean
+}
+export interface SourceProfile {
+  schema_name: string
+  name: string
+  description: string
+  row_count: number
+  columns: ColumnInfo[]
+  primary_key_candidates: string[]
+  foreign_key_candidates: { column: string; references: string; match_ratio: number }[]
+  profiles: ColumnProfile[]
+  used_by: string[]
+}
+
+export function sourceUrl(table: string): string {
+  return `?${new URLSearchParams({ source: table }).toString()}`
+}
+
+/** バスマトリクス（fact × dimension。#62） */
+export interface BusGroup {
+  name: string
+  label: string
+  kind: 'dim' | 'degenerate' | string
+  attributes: { name: string; label: string }[]
+}
+export interface BusRow {
+  name: string
+  label: string
+  groups: string[]
+}
+export interface BusMatrix {
+  groups: BusGroup[]
+  rows: BusRow[]
+}
+
 export interface Datasets {
   metrics: MetricInfo[]
   models: ModelInfo[]
+  bus?: BusMatrix
   sources: SourceInfo[]
   beams: BeamInfo[]
   errors: string[]

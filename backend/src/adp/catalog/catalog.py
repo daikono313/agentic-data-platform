@@ -83,6 +83,10 @@ class ColumnProfile(BaseModel):
     is_unique: bool
 
 
+class TableProfile(TableDetail):
+    profiles: list[ColumnProfile]
+
+
 class ColumnMatch(BaseModel):
     table: str
     column: str
@@ -252,28 +256,25 @@ class Catalog:
             info = {c.name: c for c in self._columns(con, schema, name)}
             if column not in info:
                 raise ValueError(f"列が見つかりません: {schema}.{name}.{column}")
-            q, col = _table(schema, name), _q(column)
-            row = con.execute(
-                f"select count(*), count(*) - count({col}), count(distinct {col}),"
-                f" cast(min({col}) as varchar), cast(max({col}) as varchar) from {q}"
-            ).fetchone()
-            assert row is not None
-            values = con.execute(
-                f"select cast({col} as varchar) v, count(*) n from {q}"
-                f" group by 1 order by n desc, v limit {int(top)}"
-            ).fetchall()
-        total, nulls, distinct, lo, hi = row
-        return ColumnProfile(
-            table=f"{schema}.{name}",
-            column=column,
-            data_type=info[column].data_type,
-            row_count=total,
-            null_count=nulls,
-            distinct_count=distinct,
-            min=lo,
-            max=hi,
-            top_values=[(v, int(n)) for v, n in values],
-            is_unique=total > 0 and nulls == 0 and distinct == total,
+            return _profile(con, schema, name, info[column], top)
+
+    def profile_table(self, table: str, top: int = 5) -> TableProfile:
+        """テーブルの全列のプロファイルと、主キー・外部キーの候補（源泉のプロファイル画面用）。"""
+        schema, name = self._resolve(table)
+        with self._connect() as con:
+            columns = self._columns(con, schema, name)
+            profiles = [_profile(con, schema, name, c, top) for c in columns]
+            count = profiles[0].row_count if profiles else 0
+            fks = self._foreign_keys(con, schema, name, columns)
+        return TableProfile(
+            schema_name=schema,
+            name=name,
+            description=self._descriptions.get((schema, name, None), ""),
+            row_count=count,
+            columns=columns,
+            primary_key_candidates=[p.column for p in profiles if p.is_unique],
+            foreign_key_candidates=fks,
+            profiles=profiles,
         )
 
     def search_columns(self, query: str) -> list[ColumnMatch]:
@@ -298,6 +299,34 @@ class Catalog:
                     )
                 )
         return matches
+
+
+def _profile(
+    con: duckdb.DuckDBPyConnection, schema: str, name: str, column: ColumnInfo, top: int
+) -> ColumnProfile:
+    q, col = _table(schema, name), _q(column.name)
+    row = con.execute(
+        f"select count(*), count(*) - count({col}), count(distinct {col}),"
+        f" cast(min({col}) as varchar), cast(max({col}) as varchar) from {q}"
+    ).fetchone()
+    assert row is not None
+    values = con.execute(
+        f"select cast({col} as varchar) v, count(*) n from {q}"
+        f" group by 1 order by n desc, v limit {int(top)}"
+    ).fetchall()
+    total, nulls, distinct, lo, hi = row
+    return ColumnProfile(
+        table=f"{schema}.{name}",
+        column=column.name,
+        data_type=column.data_type,
+        row_count=total,
+        null_count=nulls,
+        distinct_count=distinct,
+        min=lo,
+        max=hi,
+        top_values=[(v, int(n)) for v, n in values],
+        is_unique=total > 0 and nulls == 0 and distinct == total,
+    )
 
 
 def _is_unique(con: duckdb.DuckDBPyConnection, schema: str, name: str, column: str) -> bool:
