@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.returns.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_returns
+  description: raw.returns をクレンジング
+  columns:
+  - name: return_id
+    data_tests:
+    - unique
+    - not_null

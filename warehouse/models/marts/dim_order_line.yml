@@ -1,0 +1,38 @@
+# adp により生成
+version: 2
+models:
+- name: dim_order_line
+  description: 返品された注文明細ディメンション。SCD Type1。不明メンバーの行を含む
+  semantic_model:
+    enabled: true
+  columns:
+  - name: order_line_key
+    description: サロゲートキー
+    data_tests:
+    - unique
+    - not_null
+  - name: order_item_id
+    description: 返品された注文明細の自然キー
+    entity:
+      type: primary
+      name: order_line
+  - name: product_category
+    description: 商品カテゴリ
+    data_tests:
+    - accepted_values:
+        arguments:
+          values:
+          - 家電
+          - 日用品
+          - 書籍
+          - 衣料
+          - 食品
+          - 不明
+        config:
+          severity: warn
+    dimension:
+      type: categorical
+  - name: ordered_at
+    description: 元の注文日時
+    dimension:
+      type: categorical

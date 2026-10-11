@@ -1,0 +1,54 @@
+# adp が BEAM の指標要求から生成（SQL は書かない。ADR 0002）
+title: 商品カテゴリ別の返品率
+metric_queries:
+  sold_quantity_excl_cancelled:
+    metrics:
+    - sold_quantity_excl_cancelled
+    group_by:
+    - metric_time__month
+    - product__category
+    order:
+    - metric_time__month
+  returned_quantity_total:
+    metrics:
+    - returned_quantity_total
+    group_by:
+    - return__return_reason
+    - order_line__product_category
+  return_rate:
+    metrics:
+    - return_rate
+    group_by:
+    - metric_time__month
+    - order_line__product_category
+    order:
+    - metric_time__month
+charts:
+  sold_quantity_excl_cancelled:
+    query: sold_quantity_excl_cancelled
+    title: 販売数量(キャンセル除く)
+    y_label: 販売数量(キャンセル除く)
+    type: line
+    x: metric_time__month
+    y: sold_quantity_excl_cancelled
+    color: product__category
+  returned_quantity_total:
+    query: returned_quantity_total
+    title: 返品数量
+    y_label: 返品数量
+    type: bar
+    x: return__return_reason
+    y: returned_quantity_total
+    color: order_line__product_category
+  return_rate:
+    query: return_rate
+    title: 返品率
+    y_label: 返品率
+    type: line
+    x: metric_time__month
+    y: return_rate
+    color: order_line__product_category
+rows:
+- sold_quantity_excl_cancelled
+- returned_quantity_total
+- return_rate

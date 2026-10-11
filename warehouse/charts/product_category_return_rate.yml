@@ -1,0 +1,73 @@
+# adp により生成（chart_specs/product_category_return_rate.yml から `python -m adp.charts compile`）。編集しない
+title: 商品カテゴリ別の返品率
+source: warehouse
+queries:
+  sold_quantity_excl_cancelled:
+    sql: "SELECT\n  metric_time__month,\n  product__category,\n  SUM(sold_quantity_excl_cancelled) AS\
+      \ sold_quantity_excl_cancelled\nFROM (\n  SELECT\n    DATE_TRUNC('MONTH', fct_order_lines_src_10000.ordered_on)\
+      \ AS metric_time__month,\n    fct_order_lines_src_10000.order_status AS order_line__order_status,\n\
+      \    dim_product_src_10000.category AS product__category,\n    fct_order_lines_src_10000.sold_quantity\
+      \ AS sold_quantity_excl_cancelled\n  FROM \"main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n\
+      \  LEFT OUTER JOIN \"main\".\"dim_product\" AS dim_product_src_10000\n    ON fct_order_lines_src_10000.product_key\
+      \ = dim_product_src_10000.product_key\n) AS subq_5\nWHERE\n  order_line__order_status <> 'cancelled'\n\
+      GROUP BY\n  metric_time__month,\n  product__category\nORDER BY\n  metric_time__month"
+  returned_quantity_total:
+    sql: "SELECT\n  fct_returns_src_10000.return_reason AS return__return_reason,\n  dim_order_line_src_10000.product_category\
+      \ AS order_line__product_category,\n  SUM(fct_returns_src_10000.returned_quantity) AS returned_quantity_total\n\
+      FROM \"main\".\"fct_returns\" AS fct_returns_src_10000\nLEFT OUTER JOIN \"main\".\"dim_order_line\"\
+      \ AS dim_order_line_src_10000\n  ON fct_returns_src_10000.order_item_id = dim_order_line_src_10000.order_item_id\n\
+      GROUP BY\n  fct_returns_src_10000.return_reason,\n  dim_order_line_src_10000.product_category"
+  return_rate:
+    sql: "WITH rss_10003_cte AS (\n  SELECT\n    product_category,\n    order_item_id AS order_line\n\
+      \  FROM \"main\".\"dim_order_line\" AS dim_order_line_src_10000\n)\nSELECT\n  metric_time__month\
+      \ AS metric_time__month,\n  order_line__product_category AS order_line__product_category,\n  CAST(returned_quantity_total\
+      \ AS DOUBLE) / CAST(NULLIF(sold_quantity_excl_cancelled, 0) AS DOUBLE) AS return_rate\nFROM (\n\
+      \  SELECT\n    COALESCE(subq_8.metric_time__month, subq_18.metric_time__month) AS metric_time__month,\n\
+      \    COALESCE(subq_8.order_line__product_category, subq_18.order_line__product_category) AS order_line__product_category,\n\
+      \    MAX(subq_8.returned_quantity_total) AS returned_quantity_total,\n    MAX(subq_18.sold_quantity_excl_cancelled)\
+      \ AS sold_quantity_excl_cancelled\n  FROM (\n    SELECT\n      DATE_TRUNC('MONTH', fct_returns_src_10000.returned_on)\
+      \ AS metric_time__month,\n      rss_10003_cte.product_category AS order_line__product_category,\n\
+      \      SUM(fct_returns_src_10000.returned_quantity) AS returned_quantity_total\n    FROM \"main\"\
+      .\"fct_returns\" AS fct_returns_src_10000\n    LEFT OUTER JOIN rss_10003_cte\n      ON fct_returns_src_10000.order_item_id\
+      \ = rss_10003_cte.order_line\n    GROUP BY\n      DATE_TRUNC('MONTH', fct_returns_src_10000.returned_on),\n\
+      \      rss_10003_cte.product_category\n  ) AS subq_8\n  FULL OUTER JOIN (\n    SELECT\n      metric_time__month,\n\
+      \      order_line__product_category,\n      SUM(sold_quantity_excl_cancelled) AS sold_quantity_excl_cancelled\n\
+      \    FROM (\n      SELECT\n        DATE_TRUNC('MONTH', fct_order_lines_src_10000.ordered_on) AS\
+      \ metric_time__month,\n        fct_order_lines_src_10000.order_status AS order_line__order_status,\n\
+      \        rss_10003_cte.product_category AS order_line__product_category,\n        fct_order_lines_src_10000.sold_quantity\
+      \ AS sold_quantity_excl_cancelled\n      FROM \"main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n\
+      \      LEFT OUTER JOIN rss_10003_cte\n        ON fct_order_lines_src_10000.order_item_id = rss_10003_cte.order_line\n\
+      \    ) AS subq_14\n    WHERE\n      order_line__order_status <> 'cancelled'\n    GROUP BY\n    \
+      \  metric_time__month,\n      order_line__product_category\n  ) AS subq_18\n    ON (\n      subq_8.order_line__product_category\
+      \ = subq_18.order_line__product_category\n    )\n    AND (\n      subq_8.metric_time__month = subq_18.metric_time__month\n\
+      \    )\n  GROUP BY\n    COALESCE(subq_8.metric_time__month, subq_18.metric_time__month),\n    COALESCE(subq_8.order_line__product_category,\
+      \ subq_18.order_line__product_category)\n) AS subq_19\nORDER BY\n  metric_time__month"
+charts:
+  sold_quantity_excl_cancelled:
+    query: sold_quantity_excl_cancelled
+    title: 販売数量(キャンセル除く)
+    y_label: 販売数量(キャンセル除く)
+    type: line
+    x: metric_time__month
+    y: sold_quantity_excl_cancelled
+    color: product__category
+  returned_quantity_total:
+    query: returned_quantity_total
+    title: 返品数量
+    y_label: 返品数量
+    type: bar
+    x: return__return_reason
+    y: returned_quantity_total
+    color: order_line__product_category
+  return_rate:
+    query: return_rate
+    title: 返品率
+    y_label: 返品率
+    type: line
+    x: metric_time__month
+    y: return_rate
+    color: order_line__product_category
+rows:
+- sold_quantity_excl_cancelled
+- returned_quantity_total
+- return_rate

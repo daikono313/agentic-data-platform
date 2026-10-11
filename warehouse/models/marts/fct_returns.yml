@@ -1,0 +1,107 @@
+# adp により生成
+version: 2
+models:
+- name: fct_returns
+  description: '顧客が商品を返品する（transaction）。粒度: 返品 1 件につき 1 行'
+  semantic_model:
+    enabled: true
+  agg_time_dimension: returned_on
+  derived_semantics:
+    entities:
+    - type: foreign
+      name: date
+      expr: returned_on
+  metrics:
+  - name: returned_quantity_total
+    label: 返品数量
+    description: 返品理由ごとの返品数量はいくつか？
+    type: simple
+    agg: sum
+    expr: returned_quantity
+  columns:
+  - name: return_id
+    description: 返品ID（縮退ディメンション）
+    entity:
+      type: primary
+      name: return
+    data_tests:
+    - unique
+    - not_null
+  - name: returned_on
+    description: 返品日
+    granularity: day
+    dimension:
+      type: time
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_date')
+          field: date_day
+  - name: returned_at
+    description: 返品日（日時）
+  - name: order_line_key
+    description: 返品された注文明細
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_order_line')
+          field: order_line_key
+  - name: order_item_id
+    description: 返品された注文明細の自然キー（MetricFlow の order_line 結合用）
+    entity:
+      type: foreign
+      name: order_line
+  - name: return_reason
+    description: 返品理由（マスタなし）
+    dimension:
+      type: categorical
+    data_tests:
+    - accepted_values:
+        arguments:
+          values:
+          - イメージ違い
+          - サイズ違い
+          - 初期不良
+          - 誤配送
+        config:
+          severity: warn
+  - name: returned_quantity
+    description: 返品数量（個）
+metrics:
+- name: return_rate
+  label: 返品率
+  description: 商品カテゴリごとに、販売数量(キャンセル除く)のうち返品された数量の割合はどれくらいか？
+  type: ratio
+  numerator: returned_quantity_total
+  denominator: sold_quantity_excl_cancelled
+unit_tests:
+- name: test_fct_returns_example_1
+  description: BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する
+  model: fct_returns
+  given:
+  - input: ref('stg_returns')
+    rows:
+    - order_item_id: 1
+      quantity: 2
+      return_id: 1
+      return_reason: サイズ違い
+      returned_at: '2024-05-25 02:19:00'
+    - order_item_id: null
+      quantity: 1
+      return_id: 2
+      return_reason: x
+      returned_at: '2024-01-01 00:00:00'
+  expect:
+    rows:
+    - return_id: 1
+      returned_on: '2024-05-25'
+      order_line_key: c4ca4238a0b923820dcc509a6f75849b
+      return_reason: サイズ違い
+      returned_quantity: 2
+    - return_id: 2
+      returned_on: '2024-01-01'
+      order_line_key: 4fb8d4763fa5f060e796b4710c921eb8
+      return_reason: x
+      returned_quantity: 1

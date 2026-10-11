@@ -1,0 +1,315 @@
+schema_version: 1
+name: product_category_return_rate
+title: 商品カテゴリ別の返品率
+request: 商品カテゴリ別の返品率を知りたい
+events:
+- name: customer_orders_product
+  table_name: order_lines
+  label: 顧客が商品を注文する
+  subject: 顧客
+  verb: 注文する
+  object: 商品
+  story_type: discrete
+  grain: 注文の中の商品 1 つ(注文明細 1 件)につき 1 行
+  grain_keys:
+  - order_item_id
+  measures:
+  - name: sold_quantity
+    label: 販売数量
+    description: ''
+    aggregation: sum
+    additivity: additive
+    unit: 個
+    source:
+      table: raw.order_items
+      column: quantity
+    availability: available
+  dimensions:
+  - w: when
+    name: ordered_at
+    label: 注文日
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: day
+    fact_key:
+      table: raw.orders
+      column: ordered_at
+  - w: what
+    name: product
+    label: 商品
+    description: ''
+    attributes:
+    - name: category
+      label: 商品カテゴリ
+      description: ''
+      examples:
+      - 衣料
+      - 家電
+      - 日用品
+      - 書籍
+      - 食品
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: false
+    - name: subcategory
+      label: 商品サブカテゴリ
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: subcategory
+      availability: available
+      history_required: false
+    hierarchy:
+    - category
+    - subcategory
+    business_key:
+      table: raw.products
+      column: product_id
+    fact_key:
+      table: raw.order_items
+      column: product_id
+  - w: what
+    name: order_line
+    label: 注文明細
+    description: 返品側と同じ注文明細。返品率を商品カテゴリ・注文日でそろえて集計するために使う
+    attributes:
+    - name: product_category
+      label: 商品カテゴリ
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: false
+    - name: ordered_at
+      label: 元の注文日時
+      description: ''
+      examples: []
+      source:
+        table: raw.orders
+        column: ordered_at
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.order_items
+      column: order_item_id
+    fact_key:
+      table: raw.order_items
+      column: order_item_id
+  - w: how
+    name: order_status
+    label: 注文ステータス
+    description: ''
+    attributes:
+    - name: order_status
+      label: 注文ステータス
+      description: ''
+      examples:
+      - completed
+      - returned
+      - cancelled
+      source:
+        table: raw.orders
+        column: order_status
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: order_status
+    fact_key:
+      table: raw.orders
+      column: order_status
+  degenerate_dimensions:
+  - name: order_item_id
+    label: 注文明細ID
+    source:
+      table: raw.order_items
+      column: order_item_id
+  agg_time_dimension: ordered_at
+  examples:
+  - values:
+      order_item_id: 32
+      sold_quantity: 3
+      ordered_at: '2024-05-12 18:19:00'
+      product.category: 衣料
+      order_line.product_category: 衣料
+      order_line.ordered_at: '2024-05-12 18:19:00'
+      order_status.order_status: returned
+  priority: medium
+  impact: medium
+  effort: medium
+  source_tables:
+  - raw.order_items
+  - raw.orders
+  - raw.products
+- name: customer_returns_product
+  table_name: returns
+  label: 顧客が商品を返品する
+  subject: 顧客
+  verb: 返品する
+  object: 商品
+  story_type: discrete
+  grain: 返品 1 件につき 1 行
+  grain_keys:
+  - return_id
+  measures:
+  - name: returned_quantity
+    label: 返品数量
+    description: ''
+    aggregation: sum
+    additivity: additive
+    unit: 個
+    source:
+      table: raw.returns
+      column: quantity
+    availability: available
+  dimensions:
+  - w: when
+    name: returned_at
+    label: 返品日
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: day
+    fact_key:
+      table: raw.returns
+      column: returned_at
+  - w: what
+    name: order_line
+    label: 返品された注文明細
+    description: 返品の元になった注文明細。元の注文日・商品カテゴリをたどるために使う
+    attributes:
+    - name: product_category
+      label: 商品カテゴリ
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: false
+    - name: ordered_at
+      label: 元の注文日時
+      description: ''
+      examples: []
+      source:
+        table: raw.orders
+        column: ordered_at
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.order_items
+      column: order_item_id
+    fact_key:
+      table: raw.returns
+      column: order_item_id
+  - w: why
+    name: return_reason
+    label: 返品理由
+    description: ''
+    attributes:
+    - name: return_reason
+      label: 返品理由
+      description: ''
+      examples:
+      - サイズ違い
+      - イメージ違い
+      - 誤配送
+      - 初期不良
+      source:
+        table: raw.returns
+        column: return_reason
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.returns
+      column: return_reason
+    fact_key:
+      table: raw.returns
+      column: return_reason
+  degenerate_dimensions:
+  - name: return_id
+    label: 返品ID
+    source:
+      table: raw.returns
+      column: return_id
+  agg_time_dimension: returned_at
+  examples:
+  - values:
+      return_id: 1
+      returned_quantity: 2
+      returned_at: '2024-05-25 02:19:00'
+      order_line.product_category: 衣料
+      order_line.ordered_at: '2024-05-12 18:19:00'
+      return_reason.return_reason: サイズ違い
+  priority: medium
+  impact: medium
+  effort: medium
+  source_tables:
+  - raw.returns
+  - raw.order_items
+  - raw.orders
+  - raw.products
+metrics:
+- name: sold_quantity_excl_cancelled
+  label: 販売数量(キャンセル除く)
+  question: 販売数量は、キャンセルされた注文を除いて数えてください
+  framed_question: キャンセルされていない注文の販売数量はいくつか？
+  type: simple
+  event: customer_orders_product
+  measure: sold_quantity
+  filter: キャンセルされた注文を除く
+  filters:
+  - ref: order_status.order_status
+    operator: '!='
+    values:
+    - cancelled
+  group_by:
+  - product.category
+  - ordered_at.month
+  status: draft
+- name: returned_quantity_total
+  label: 返品数量
+  question: 返品された数量が、どの理由でどれくらいあったかが分かれば十分です
+  framed_question: 返品理由ごとの返品数量はいくつか？
+  type: simple
+  event: customer_returns_product
+  measure: returned_quantity
+  filters: []
+  group_by:
+  - return_reason.return_reason
+  - order_line.product_category
+  - order_line.ordered_at
+  status: draft
+- name: return_rate
+  label: 返品率
+  question: 商品カテゴリ別の返品率を知りたい
+  framed_question: 商品カテゴリごとに、販売数量(キャンセル除く)のうち返品された数量の割合はどれくらいか？
+  type: ratio
+  event: customer_returns_product
+  numerator: returned_quantity_total
+  denominator: sold_quantity_excl_cancelled
+  filters: []
+  group_by:
+  - order_line.product_category
+  - order_line.ordered_at
+  status: draft
+gaps:
+- kind: deferred
+  description: 返品数量を元の注文日・商品カテゴリで集計するため、返品側は注文明細(order_line)経由で注文日・カテゴリをたどる。ソースの結合(returns→order_items→orders/products)は生成時に実装が必要
+  event: customer_returns_product
+  w: when
+  related: order_line.ordered_at
+- kind: deferred
+  description: 工数(中)はモデラーの見積もり。販売(注文明細)と返品の 2 つの出来事を注文明細経由で結ぶ必要があるため
+  related: effort
+finalized_at: '2026-10-11T10:26:29.565068Z'

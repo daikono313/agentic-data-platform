@@ -12,6 +12,7 @@ select
     t1.order_status as order_status,
     t1.payment_method as payment_method,
     t0.quantity * t0.unit_price - t0.discount_amount as sales_amount,
-    t0.quantity as quantity
+    t0.quantity as quantity,
+    t0.quantity as sold_quantity
 from {{ ref('stg_order_items') }} as t0
 left join {{ ref('stg_orders') }} as t1 on t0.order_id = t1.order_id

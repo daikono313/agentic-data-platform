@@ -198,6 +198,7 @@ concepts:
   kind: event
   source: raw.returns
   key: return_id
+  model: fct_returns
   attributes:
   - name: returned_at
     label: 返品日時

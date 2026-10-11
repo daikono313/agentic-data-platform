@@ -81,7 +81,7 @@ flowchart LR
 | 注文明細 `order_line` | 出来事 | 販売 | `raw.order_items`（`order_item_id`） | `fct_order_lines` | 数量（`quantity`）、販売単価（`unit_price`）、値引額（`discount_amount`） |
 | 支払 `payment` | 出来事 | 決済・配送・返品 | `raw.payments`（`payment_id`） | 未整備 | 支払方法（`payment_method`）、支払金額（`amount`）、支払日時（`paid_at`） |
 | 配送 `shipment` | 出来事 | 決済・配送・返品 | `raw.shipments`（`shipment_id`） | 未整備 | 配送方法（`shipping_method`）、出荷日時（`shipped_at`）、配達日時（`delivered_at`） |
-| 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | 未整備 | 返品日時（`returned_at`）、返品数量（`quantity`）、返品理由（`return_reason`） |
+| 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | `fct_returns` | 返品日時（`returned_at`）、返品数量（`quantity`）、返品理由（`return_reason`） |
 
 ## 関係
 
