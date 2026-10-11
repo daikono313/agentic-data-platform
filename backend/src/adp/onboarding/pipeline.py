@@ -15,7 +15,6 @@ import re
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
-from pathlib import Path
 
 import yaml
 
@@ -41,6 +40,8 @@ from adp.ontology.check import check as check_ontology
 from adp.ontology.models import Ontology, dump, load
 from adp.ontology.render import markdown, mermaid
 from adp.pipeline import (
+    ONTOLOGY,
+    JobSteps,
     PipelineConfig,
     PipelineError,
     PipelineResult,
@@ -48,7 +49,7 @@ from adp.pipeline import (
     StepUpdate,
     prepare_warehouse,
 )
-from adp.vcs import GitHub, GitWorkspace, Worktree
+from adp.vcs import GitHub, GitWorkspace
 from adp.vcs.pr_body import _safe
 from adp.warehouse import warehouse_db
 
@@ -64,7 +65,6 @@ ONBOARD_STEPS: list[tuple[str, str]] = [
     ("commit", "commit / push"),
     ("pr", "PR を作成"),
 ]
-ONTOLOGY = Path("ontology") / "ontology.yml"
 
 
 def onboarding_branch(source: str, today: date | None = None) -> str:
@@ -169,17 +169,9 @@ class OnboardingPipeline:
         cleansing: str,
         on_step: Callable[[StepUpdate], None] = lambda _: None,
     ) -> PipelineResult:
-        labels = dict(ONBOARD_STEPS)
-        current = ""
-
-        def step(name: str, status: StepStatus, detail: str = "") -> None:
-            nonlocal current
-            current = name
-            on_step(StepUpdate(name, labels[name], status, detail))
-
+        job = JobSteps(ONBOARD_STEPS, on_step, self.workspace, detail_limit=2000)
+        step = job.step
         result = PipelineResult(ok=False)
-        worktree: Worktree | None = None
-        pushed = False
         # git・DB のコピー・dbt などの重い処理はスレッドで行う（進捗の SSE などを止めない）
         thread = asyncio.to_thread
         try:
@@ -190,10 +182,7 @@ class OnboardingPipeline:
             await thread(self.github.check)
 
             step("worktree", StepStatus.RUNNING)
-            wt = await thread(
-                self.workspace.create_worktree, onboarding_branch(source), self.config.base
-            )
-            worktree = wt
+            wt = await job.create_worktree(onboarding_branch(source), self.config.base)
             result.branch = wt.branch
             # 手元ではなく、取り込む先（main）のオントロジーで確かめ直す（既に取り込み済みなど）
             base_ontology = load(wt.path / ONTOLOGY)
@@ -240,15 +229,12 @@ class OnboardingPipeline:
             step("verify", StepStatus.DONE, checked.summary)
 
             step("commit", StepStatus.RUNNING)
-            staged = await thread(
-                self.workspace.stage, wt, ["warehouse", "ontology", "docs/ontology.md"]
+            staged = await job.commit_and_push(
+                wt,
+                ["warehouse", "ontology", "docs/ontology.md"],
+                f"feat(onboard): 源泉 {source} を取り込む",
             )
-            if not staged:
-                raise PipelineError("commit するファイルがありません")
             result.files = staged
-            await thread(self.workspace.commit, wt, f"feat(onboard): 源泉 {source} を取り込む")
-            await thread(self.workspace.push, wt)
-            pushed = True
             step("commit", StepStatus.DONE, f"{len(staged)} ファイル")
 
             step("pr", StepStatus.RUNNING)
@@ -262,16 +248,7 @@ class OnboardingPipeline:
             result.ok = True
             return result
         except Exception as e:
-            result.error = str(e)
-            if current:
-                step(current, StepStatus.FAILED, str(e)[:2000])
-            if worktree is not None and not pushed:
-                try:
-                    await thread(self.workspace.remove_worktree, worktree, True)
-                    result.branch = None
-                except Exception:
-                    pass
-            return result
+            return await job.fail(result, e)
 
     @staticmethod
     def _body(source: str, patch: OntologyPatch, files: list[str]) -> str:
