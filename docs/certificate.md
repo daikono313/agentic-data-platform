@@ -16,15 +16,16 @@
 | C6 | CI が green | GitHub Actions |
 | C7 | 敵対的レビューで blocking な指摘がない | **新しいコンテキストの subagent** が、issue の完了条件・[design-doc.md](design-doc.md)・差分を読んでレビューする。指摘は PR コメントに残す |
 | C8 | 秘密情報が含まれない | 差分に `.env` の値、トークン、鍵が含まれない（CI で検査する） |
-| C9 | 設計と矛盾しない | Resolved issues の決定を覆す変更なら、ADR（`docs/adr/`）を追加し、design-doc を更新している |
+| C9 | 設計と矛盾しない | Resolved issues の決定を覆す変更なら、ADR（`docs/adr/`）を `Proposed` で追加し、design-doc を更新している。ADR を `Accepted` にしてマージするのはオーナーの承認の後（T3） |
 | C10 | プロンプトの変更は eval の前後比較で効果を示す（インタビューのプロンプト・知識ファイル・tool の説明を変える PR のみ） | 変更の前と後で `make eval REPEAT=3` を回し、`make eval-compare BEFORE=… AFTER=…` の表を PR 本文に貼る。合格率が下がらず、狙った数値（フィードバックの分類に対応するもの）がよくなっていること。プロンプトのバージョン（`PROMPT_VERSION`）を上げる（[evals/README.md](../evals/README.md)） |
 
 ## Promotion policy（マージの扱い）
 
 | Tier | 対象 | マージ |
 |---|---|---|
-| T1 | このリポジトリ内で完結する変更すべて | certificate を得たら Claude が squash merge してよい |
+| T1 | このリポジトリ内で完結する変更（T2・T3 に当たるものを除く） | certificate を得たら Claude が squash merge してよい |
 | T2 | **このディレクトリの外**での操作が必要なもの（グローバル設定、他のリポジトリ、システムへのインストールなど） | 実行前にオーナーに確認する |
+| T3 | **人間が持ち主のドキュメント**の中身の変更: design-doc の Goals・Non-goals・Resolved issues・原則、この certificate、guardrails の制限を緩める・外す変更、ADR を Accepted にする、規約（modeling-conventions）・知識（`docs/knowledge/`）の変更 | オーナーの承認を得てからマージする（[design-doc の「ファイルの持ち主」](design-doc.md#ファイルの持ち主)）。PR 本文に「T3」と書く。コードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直すこと、guardrails に制限を足すことは T1 |
 | — | システム（このディレクトリの外）に対する変更・削除 | **行わない** |
 
 ## 失敗時の扱い
@@ -34,13 +35,13 @@
 
 ## MVP の完了（/goal の終了条件）
 
-1. Umbrella [#18](https://github.com/daikono313/auto_data_platform/issues/18) の子 issue がすべて close されている
+1. Umbrella [#18](https://github.com/daikono313/agentic-data-platform/issues/18) の子 issue がすべて close されている
 2. design-doc の S1 シナリオがローカルで通しで動く（実際の LLM を使用、#17）
 3. main の CI が green
 
 ## v2 の完了
 
-1. Umbrella [#47](https://github.com/daikono313/auto_data_platform/issues/47) の子 issue がすべて close されている
+1. Umbrella [#47](https://github.com/daikono313/agentic-data-platform/issues/47) の子 issue がすべて close されている
 2. design-doc の S3 と S4 の 1〜2 が通しで動く: 自動テスト（`backend/tests/test_e2e_v2.py`、CI）と、実際の LLM（`make e2e SCENARIO=return_rate_by_category V2=1`）
 3. main の CI が green
 
@@ -48,7 +49,7 @@
 
 終了条件は結果だけで判定する（進め方の順序は条件にしない）。
 
-1. Umbrella [#82](https://github.com/daikono313/auto_data_platform/issues/82) 本文のチェックリストにある issue が、次のどちらかになっている
+1. Umbrella [#82](https://github.com/daikono313/agentic-data-platform/issues/82) 本文のチェックリストにある issue が、次のどちらかになっている
    - close されている
    - オーナーの判断待ちで open のまま: `needs-owner` ラベルが付き、issue に「理由」と「オーナーがやること（実行するコマンドや判断事項）」が書かれている。対象になりうるのは次のものだけ
      - #80: 本物の PR が 1 件残るため、実行してよいかをオーナーが決める

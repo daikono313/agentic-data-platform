@@ -164,7 +164,7 @@ def pr_body(
 
     lines += [
         "---",
-        "このPRは auto_data_platform が BEAM✲ のヒアリング結果から生成しました。"
+        "このPRは agentic-data-platform が BEAM✲ のヒアリング結果から生成しました。"
         f"要求の正本は `beam/{beam.name}.yml` です。",
     ]
     return "\n".join(lines) + "\n"

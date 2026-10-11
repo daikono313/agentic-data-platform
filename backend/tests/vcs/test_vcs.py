@@ -51,7 +51,7 @@ def repo(tmp_path: Path) -> Path:
 @pytest.mark.parametrize(
     ("out", "expected"),
     [
-        ("daikono313/auto_data_platform\n", "daikono313/auto_data_platform"),
+        ("daikono313/agentic-data-platform\n", "daikono313/agentic-data-platform"),
         ("", None),
         ("a/b)](https://evil", None),
     ],

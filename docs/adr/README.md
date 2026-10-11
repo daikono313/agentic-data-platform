@@ -4,6 +4,7 @@
 
 - ファイル名: `NNNN-<kebab-case-title>.md`（例: `0001-metricflow-on-duckdb.md`）
 - 書いたら、design-doc の Resolved issues / Open issues も更新する。
+- **ADR は人間の決定の記録。** AI が `Proposed` で下書きしてよいが、`Accepted` にするのはオーナー（certificate の T3）。
 
 ## テンプレート
 
