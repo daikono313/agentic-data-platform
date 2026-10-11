@@ -42,6 +42,7 @@ from adp.vcs import (
     pr_body,
     pr_title,
 )
+from adp.warehouse import warehouse_db
 
 ASSETS_DIR = "pr_assets"
 """PR 本文に載せる画像。commit して push した直後の commit で消す（main に残さない）。"""
@@ -144,7 +145,7 @@ class GenerationPipeline:
             step("worktree", StepStatus.DONE, wt.branch)
 
             step("design", StepStatus.RUNNING)
-            catalog = Catalog(warehouse / "data" / "dev.duckdb")
+            catalog = Catalog(warehouse_db(warehouse))
             ontology_path = wt.path / "ontology" / "ontology.yml"
             ontology = load_ontology(ontology_path)
             design = DesignBuilder(CatalogSchema(catalog), ontology=ontology).build(beam)
@@ -264,7 +265,7 @@ class GenerationPipeline:
         失敗してもモデルと指標の PR は作る（チャートは含めず、理由を PR 本文に書く）。
         """
         warehouse = wt.path / "warehouse"
-        info = ProjectInfo(warehouse, Catalog(warehouse / "data" / "dev.duckdb"))
+        info = ProjectInfo(warehouse, Catalog(warehouse_db(warehouse)))
 
         def cardinality(ref: str) -> int | None:
             column = source_of(beam, ref)
@@ -386,7 +387,7 @@ def prepare_warehouse(config: PipelineConfig, wt: Worktree) -> Path:
     (warehouse / "data").mkdir(parents=True, exist_ok=True)
     if not config.source_db.exists():
         raise PipelineError(f"検証用の DuckDB がありません: {config.source_db}")
-    copy_database(config.source_db, warehouse / "data" / "dev.duckdb")
+    copy_database(config.source_db, warehouse_db(warehouse))
     packages = config.repo_root / "warehouse" / "dbt_packages"
     if packages.exists() and not (warehouse / "dbt_packages").exists():
         shutil.copytree(packages, warehouse / "dbt_packages")

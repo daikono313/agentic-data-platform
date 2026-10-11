@@ -15,6 +15,7 @@ from pathlib import Path
 from adp.catalog.catalog import Catalog
 from adp.cleansing.check import check_all, draft
 from adp.cleansing.models import dump_spec
+from adp.warehouse import warehouse_db
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WAREHOUSE = REPO_ROOT / "warehouse"
@@ -25,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["build", "check", "draft"])
     parser.add_argument("source", nargs="?")
     args = parser.parse_args(argv)
-    catalog = Catalog(WAREHOUSE / "data" / "dev.duckdb", WAREHOUSE / "target" / "manifest.json")
+    catalog = Catalog(warehouse_db(WAREHOUSE), WAREHOUSE / "target" / "manifest.json")
 
     if args.command == "draft":
         if not args.source:

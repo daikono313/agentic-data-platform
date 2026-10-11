@@ -41,6 +41,7 @@ from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, ensure_deps, test_inventory
 from adp.llm import AgentRunner, LLMSettings
 from adp.llm.settings import REPO_ROOT
+from adp.warehouse import warehouse_db
 
 SCENARIO_DIR = REPO_ROOT / "evals" / "repair"
 GENERATED = ("-- adp により生成", "# adp により生成")
@@ -132,7 +133,7 @@ def prepare_warehouse(dest: Path, orders: int = 500) -> Path:
     gen = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = gen
     spec.loader.exec_module(gen)
-    gen.load(warehouse / "data" / "dev.duckdb", gen.generate(orders, 3))
+    gen.load(warehouse_db(warehouse), gen.generate(orders, 3))
     return warehouse
 
 
@@ -148,7 +149,7 @@ async def run_scenario(
     result = RepairEvalResult(scenario.name, passed=False, ok=False, expect=scenario.expect)
     try:
         warehouse = prepare_warehouse(work)
-        catalog = Catalog(warehouse / "data" / "dev.duckdb")
+        catalog = Catalog(warehouse_db(warehouse))
         info = ProjectInfo(warehouse, catalog)
         beam = load(REPO_ROOT / scenario.beam)
         generation = generate_models(DesignBuilder(CatalogSchema(catalog)).build(beam), info, beam)

@@ -9,9 +9,9 @@ sources:
         description: 顧客マスタ（Who）
         columns:
           - {name: customer_id, description: 顧客ID, data_tests: [unique, not_null]}
-          - {name: customer_name, description: 顧客名}
+          - {name: customer_name, description: 顧客名, meta: {pii: true}}
           - {name: gender, description: 性別}
-          - {name: birth_date, description: 生年月日}
+          - {name: birth_date, description: 生年月日, meta: {pii: true}}
           - {name: prefecture, description: 居住都道府県}
           - {name: region, description: 居住地方}
           - {name: membership_rank, description: 会員ランク（bronze / silver / gold / platinum）}

@@ -225,3 +225,147 @@ def test_profile_details_tolerate_odd_values(tmp_path: Path) -> None:
     assert p["huge"].histogram is None  # 幅が有限にならない
     assert p["d"].monthly == [("2024-01", 1), ("2024-02", 0), ("2024-03", 1)]  # 無限の日付は除く
     assert p["long_span"].monthly is None  # 120 か月を超える
+
+
+def test_pii_columns_are_masked(tmp_path: Path) -> None:
+    """個人情報の列は、値（最小・最大・よく出る値・分布）を画面にもエージェントにも出さない（#81）。"""
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute(
+        "create table raw.people as select * from (values"
+        " (1, '佐藤 翔', 'a@example.com', '東京都', 'gold', 'x'),"
+        " (2, '鈴木 蓮', 'b@example.com', '大阪府', 'silver', 'y'))"
+        " v(person_id, customer_name, email, prefecture, rank, nickname)"
+    )
+    con.close()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "sources": {
+                    "source.p.raw.people": {
+                        "schema": "raw",
+                        "name": "people",
+                        "columns": {
+                            "nickname": {"name": "nickname", "meta": {"pii": True}},
+                            "email": {"name": "email", "meta": {"pii": False}},
+                        },
+                    }
+                },
+                "nodes": {},
+            }
+        )
+    )
+    catalog = Catalog(db, manifest)
+    p = {c.column: c for c in catalog.profile_table("raw.people", detail=True).profiles}
+    for col in ("customer_name", "nickname"):  # 列名からの推定と、sources の meta.pii
+        assert p[col].masked and p[col].top_values == [] and p[col].min is None
+        assert p[col].distinct_count == 2  # 件数は出す
+    assert not p["email"].masked  # meta.pii: false で上書きできる
+    assert not p["prefecture"].masked and p["prefecture"].top_values  # 集計の区分は出す
+    assert not p["person_id"].masked
+    tool = catalog.profile_column("raw.people", "customer_name")
+    assert tool.masked and tool.top_values == [] and tool.max is None
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "customer_name",
+        "CUSTOMER_NAME",
+        "customerName",
+        "Email",
+        "emailAddress",
+        "email1",
+        "address1",
+        "addr1",
+        "tel1",
+        "phone_number",
+        "zipcode",
+        "post_code",
+        "postcode",
+        "birthdate",
+        "birth_date",
+        "mail",
+        "furigana",
+        "username",
+        "cust_name",
+        "client_name",
+        "name",
+        "fax",
+        "e_mail",
+        "氏名",
+        "電話番号",
+        "住所",
+    ],
+)
+def test_pii_names(column: str) -> None:
+    """実データでよくある書き方（大文字・camelCase・末尾の数字・日本語）も拾う（#96 レビュー）。"""
+    from adp.catalog.catalog import looks_like_pii
+
+    assert looks_like_pii(column)
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "customer_id",
+        "customer_key",
+        "prefecture",
+        "shipping_address_prefecture",
+        "gender",
+        "region",
+        "store_name",
+        "product_name",
+        "is_email_verified",
+        "email_opt_in",
+        "mobile_os",
+        "order_date",
+        "sales_amount",
+        "rank",
+    ],
+)
+def test_not_pii_names(column: str) -> None:
+    from adp.catalog.catalog import looks_like_pii
+
+    assert not looks_like_pii(column)
+
+
+def test_pii_meta_is_read_from_sources_yml_without_manifest(tmp_path: Path) -> None:
+    """manifest の無い生成の worktree でも、sources の meta.pii で値を出さない（#96 レビュー）。"""
+    import duckdb
+
+    (tmp_path / "dbt_project.yml").write_text("name: x\n")
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "_sources.yml").write_text(
+        "sources:\n  - name: raw\n    tables:\n      - name: people\n        columns:\n"
+        "          - {name: nickname, meta: {pii: true}}\n"
+        "          - {name: email, config: {meta: {pii: false}}}\n"
+    )
+    (tmp_path / "data").mkdir()
+    db = tmp_path / "data" / "dev.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute("create table raw.people as select 'a' nickname, 'b@example.com' email")
+    con.close()
+    catalog = Catalog(db)
+    assert catalog.profile_column("raw.people", "nickname").masked
+    assert not catalog.profile_column("raw.people", "email").masked
+
+
+def test_masked_columns_have_no_distinct_values(tmp_path: Path) -> None:
+    """個人情報の列は accepted_values やチャートの系列数に使わない（値が漏れる。#96 レビュー）。"""
+    import duckdb
+
+    from adp.generation.project import ProjectInfo
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute("create table raw.people as select * from (values ('a'), ('b')) v(customer_name)")
+    con.close()
+    info = ProjectInfo(tmp_path, Catalog(db))
+    assert info.distinct_values("raw.people", "customer_name", 20) is None

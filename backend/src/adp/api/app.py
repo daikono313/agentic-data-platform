@@ -26,6 +26,7 @@ from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
 from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
 from adp.onboarding.proposal import OntologyPatch
 from adp.sync import Sync
+from adp.warehouse import warehouse_db, warehouse_kind
 
 
 class CreateSession(BaseModel):
@@ -301,9 +302,11 @@ def build_default_app() -> FastAPI:
     from adp.pipeline import GenerationPipeline, PipelineConfig
     from adp.vcs import GitWorkspace
 
+    # 接続先（いまは DuckDB だけ。未対応の指定なら起動時に止める。#81）
+    warehouse_kind(REPO_ROOT / ".env")
     settings = load_settings()
     runner = ClaudeAgentRunner(settings)
-    db = REPO_ROOT / "warehouse" / "data" / "dev.duckdb"
+    db = warehouse_db(REPO_ROOT / "warehouse")
     catalog = Catalog(db, REPO_ROOT / "warehouse" / "target" / "manifest.json")
     interviewer = Interviewer(
         runner,

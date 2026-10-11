@@ -103,7 +103,9 @@ class ProjectInfo:
 
     def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
         profile = self.catalog.profile_column(table, column, top=limit)
-        if profile.distinct_count > limit:
+        if (
+            profile.masked or profile.distinct_count > limit
+        ):  # 個人情報の値はテストやチャートに出さない
             return None
         return sorted(v for v, _ in profile.top_values if v is not None)
 

@@ -41,6 +41,7 @@ from adp.llm import ClaudeAgentRunner, load_settings
 from adp.llm.settings import REPO_ROOT, read_dotenv
 from adp.pipeline import GenerationPipeline, PipelineConfig
 from adp.vcs import GitHub, GitWorkspace, Worktree
+from adp.warehouse import warehouse_db
 
 
 class DryRunGitHub(GitHub):
@@ -59,7 +60,7 @@ class DryRunWorkspace(GitWorkspace):
 async def main(args: argparse.Namespace) -> int:
     settings = load_settings()
     runner = ClaudeAgentRunner(settings)
-    db = REPO_ROOT / "warehouse" / "data" / "dev.duckdb"
+    db = warehouse_db(REPO_ROOT / "warehouse")
     catalog = Catalog(db, REPO_ROOT / "warehouse" / "target" / "manifest.json")
     interviewer = Interviewer(
         runner,

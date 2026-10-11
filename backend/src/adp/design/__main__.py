@@ -13,6 +13,7 @@ from adp.catalog.catalog import Catalog
 from adp.design.builder import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.design.er import er_diagram
+from adp.warehouse import warehouse_db
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -20,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("beam", type=Path)
-    parser.add_argument("--db", type=Path, default=REPO_ROOT / "warehouse" / "data" / "dev.duckdb")
+    parser.add_argument("--db", type=Path, default=warehouse_db(REPO_ROOT / "warehouse"))
     parser.add_argument("--er", action="store_true", help="ER 図（mermaid）を出力する")
     args = parser.parse_args()
     design = DesignBuilder(CatalogSchema(Catalog(args.db))).build(load(args.beam))

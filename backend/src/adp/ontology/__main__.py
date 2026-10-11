@@ -14,6 +14,7 @@ from adp.catalog.catalog import Catalog, CatalogUnavailable
 from adp.ontology.check import check
 from adp.ontology.models import dump, load
 from adp.ontology.render import markdown
+from adp.warehouse import warehouse_db
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ONTOLOGY = REPO_ROOT / "ontology" / "ontology.yml"
@@ -37,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         print("docs/ontology.md が ontology.yml と一致しません（make ontology で生成し直す）")
         failed = True
     warehouse = REPO_ROOT / "warehouse"
-    db = warehouse / "data" / "dev.duckdb"
+    db = warehouse_db(warehouse)
     manifest = warehouse / "target" / "manifest.json"
     if not db.exists() or not manifest.exists():
         print("源泉・dbt との照合には DB と manifest が要る（make dbt-build を先に実行する）")
