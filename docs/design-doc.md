@@ -4,9 +4,9 @@
 |---|---|
 | 著者 | daikono313 (Daisuke Harato) |
 | 作成日 | 2026-10-10 |
-| 正本 URL | https://github.com/daikono313/auto_data_platform/blob/main/docs/design-doc.md |
+| 正本 URL | https://github.com/daikono313/agentic-data-platform/blob/main/docs/design-doc.md |
 | ステータス | **In review**（承認は PR のマージをもって記録する） |
-| Umbrella issue | [#18](https://github.com/daikono313/auto_data_platform/issues/18) |
+| Umbrella issue | [#18](https://github.com/daikono313/agentic-data-platform/issues/18) |
 
 ## Objective
 

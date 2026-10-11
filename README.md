@@ -1,10 +1,10 @@
-# auto_data_platform
+# agentic-data-platform
 
 ビジネスユーザーが「xxx の売上指標を取りたい」と入力すると、Claude が BEAM✲ に沿ってヒアリングし、dbt（dim / fct）・dbt Semantic Layer・テスト・チャートを実装した PR を自動で作る、AI 駆動のデータ基盤・モデリング開発の Web アプリ。新しい源泉は、オントロジー → クレンジング層 → fact / dim の順に取り込む。
 
 - 設計（全体のフローと担当）: [docs/design-doc.md](docs/design-doc.md#全体のフローと担当)
 - 合格条件: [docs/certificate.md](docs/certificate.md)
-- 進捗: Umbrella issue [#18](https://github.com/daikono313/auto_data_platform/issues/18)（MVP）・[#47](https://github.com/daikono313/auto_data_platform/issues/47)（v2）・[#82](https://github.com/daikono313/auto_data_platform/issues/82)（v3）
+- 進捗: Umbrella issue [#18](https://github.com/daikono313/agentic-data-platform/issues/18)（MVP）・[#47](https://github.com/daikono313/agentic-data-platform/issues/47)（v2）・[#82](https://github.com/daikono313/agentic-data-platform/issues/82)（v3）
 
 構成: FastAPI + React / DuckDB + dbt + MetricFlow + dbt Charts / Claude Agent SDK
 

@@ -1,4 +1,4 @@
-# auto_data_platform (ADP)
+# agentic-data-platform (ADP)
 
 ビジネスユーザーの指標要求を、Claude が BEAM✲ でヒアリングし、dbt（dim / fct）・Semantic Layer・テストを実装した PR にする Web アプリとデータ基盤。
 
