@@ -10,6 +10,7 @@ import duckdb
 import yaml
 
 from adp.catalog.catalog import Catalog, TableProfile
+from adp.catalog.types import is_text_type
 from adp.cleansing.models import (
     DEFAULTS_FILE,
     IDENT,
@@ -38,9 +39,9 @@ def source_columns(catalog: Catalog, source: str) -> list[SourceColumn]:
 
 
 def _kind(data_type: str) -> str:
-    t = data_type.upper()
-    if t.startswith(("VARCHAR", "TEXT", "STRING", "CHAR")):
+    if is_text_type(data_type):
         return "text"
+    t = data_type.upper()
     if t.startswith("TIMESTAMP"):
         return "timestamp"
     if t == "DATE":
@@ -161,7 +162,7 @@ def draft(profile: TableProfile) -> CleansingSpec:
     columns = [c for c in profile.columns if re.fullmatch(IDENT, c.name)]
     for c in columns:
         p = by_name.get(c.name)
-        text = c.data_type.upper().startswith("VARCHAR")
+        text = is_text_type(c.data_type)
         kwargs: dict[str, object] = {"name": c.name}
         if text and c.name.endswith("_at"):
             kwargs["cast"] = "timestamp"

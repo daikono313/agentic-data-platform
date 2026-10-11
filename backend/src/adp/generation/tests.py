@@ -17,6 +17,7 @@ from typing import Any
 import duckdb
 
 from adp.beam import BeamModel, BusinessEvent, EventExample
+from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
 from adp.design.builder import is_masterless
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
@@ -63,7 +64,7 @@ def fact_column_tests(fact: FactTable, info: WarehouseInfo) -> dict[str, list[An
         if c.role != ColumnRole.DEGENERATE or c.name in fact.grain_columns or m is None:
             continue
         types = dict(info.source_columns(tables[m.group(1)]))
-        if types.get(m.group(2), "").upper() != "VARCHAR":
+        if not is_text_type(types.get(m.group(2), "")):
             continue
         test = accepted_values(info, tables[m.group(1)], m.group(2))
         if test:
@@ -79,7 +80,7 @@ def dim_column_tests(dim: DimTable, info: WarehouseInfo) -> dict[str, list[Any]]
         if c.role != ColumnRole.ATTRIBUTE or m is None:
             continue
         types = dict(info.source_columns(tables[m.group(1)]))
-        if types.get(m.group(2), "").upper() != "VARCHAR":
+        if not is_text_type(types.get(m.group(2), "")):
             continue
         test = accepted_values(info, tables[m.group(1)], m.group(2), include_unknown=True)
         if test:
