@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
 import { matches, onboardUrl, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
-import { BusMatrixView, filterBus } from '@/components/BusMatrix'
+import { BusMatrixView, filterBus, type BusMetric } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 
@@ -65,9 +65,13 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
   const inBus = new Set([...(datasets.bus?.groups.map((g) => g.name) ?? []), ...(datasets.bus?.rows.map((r) => r.name) ?? [])])
   const unlisted = models.filter((m) => !inBus.has(m.name))
   // fct ごとの指標（バスマトリクスの ✓ から、その切り口のチャートへ）
-  const metricsByFact = new Map<string, { name: string; label: string }[]>()
-  for (const m of datasets.metrics) {
-    if (m.model) metricsByFact.set(m.model, [...(metricsByFact.get(m.model) ?? []), { name: m.name, label: m.label }])
+  const metricsByFact = new Map<string, BusMetric[]>()
+  // 単純な指標を先に（比率などは分母の fact の切り口に限られる）
+  const ordered = [...datasets.metrics].sort((a, b) => Number(a.type !== 'simple') - Number(b.type !== 'simple'))
+  for (const m of ordered) {
+    if (!m.model) continue
+    const dims = m.dimensions.filter((d) => d.kind !== 'time').map((d) => d.name)
+    metricsByFact.set(m.model, [...(metricsByFact.get(m.model) ?? []), { name: m.name, label: m.label, dimensions: dims }])
   }
   const sources = datasets.sources.filter((s) => matches(query, s.name, s.description, ...s.columns.map((c) => c.description)))
   const maxDims = compact ? 6 : 10

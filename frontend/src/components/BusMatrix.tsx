@@ -33,6 +33,8 @@ export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): B
 export interface BusMetric {
   name: string
   label: string
+  /** 指標の切り口（カテゴリの切り口の名前）。✓ のリンクは、この属性を切り口に持つ指標だけ */
+  dimensions: string[]
 }
 
 /**
@@ -134,36 +136,46 @@ export function BusMatrixView({
               {bus.groups.flatMap((g, i) =>
                 columns(g).map((a) => {
                   const joined = r.groups.includes(g.name)
-                  const metric = metrics?.get(r.name)?.[0]
+                  const candidates = metrics?.get(r.name) ?? []
+                  // この属性で切れる指標（無ければ切り口なしで最初の指標）
+                  const sliced = compact ? undefined : candidates.find((m) => m.dimensions.includes(a.name))
+                  const metric = sliced ?? candidates[0]
                   const check = <Check role="img" className="mx-auto size-3.5" aria-label={`${r.name} × ${a.label}`} />
                   let content: React.ReactNode = joined ? check : null
                   if (joined && metric && !r.candidate) {
                     // ✓ → その fact の指標を、この属性の切り口でチャートに（compact は属性が無いので切り口なし）
+                    const label = sliced
+                      ? `${metric.label}を${g.kind === 'dim' ? `${g.label}の` : ''}${a.label}別にチャートで見る`
+                      : `${metric.label}をチャートで見る（この切り口では切れません）`
                     content = (
                       <a
-                        href={chartUrl(metric.name, null, compact ? null : a.name)}
-                        title={`${metric.label}を${a.label}別にチャートで見る`}
-                        className="block py-1 hover:bg-primary/20"
+                        href={chartUrl(metric.name, null, sliced ? a.name : null)}
+                        title={label}
+                        aria-label={label}
+                        className="block py-1 hover:bg-primary/20 focus-visible:outline-2 focus-visible:outline-primary"
                         {...(compact ? { target: '_blank', rel: 'noreferrer' } : {})}
                       >
                         {check}
                       </a>
                     )
-                  } else if (!joined && onRequest && !r.candidate) {
-                    // 空欄 → 「<fact>を<属性>別に見たい」を要求に入れる（作れる候補として見せる）
-                    const text = `「${r.label}」を${a.label}別に見たい`
+                  } else if (joined) {
+                    content = <span className="block py-1">{check}</span>
+                  } else if (onRequest && !r.candidate && g.kind === 'dim') {
+                    // 空欄 → 「<fact>を<dim の属性>別に見たい」を要求に入れる（作れる候補として見せる）。
+                    // 別の fact 自身の属性（退化ディメンション）は、この fact とは関係が無いので出さない
+                    const text = `「${r.label}」を${g.label}の${a.label}別に見たい`
                     content = (
                       <button
                         type="button"
                         title={`${text}（要求に入れる）`}
                         aria-label={`要求に入れる: ${text}`}
-                        className="block h-full min-h-6 w-full hover:bg-amber-500/20"
+                        className="absolute inset-0 hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-amber-500"
                         onClick={() => onRequest(text)}
                       />
                     )
                   }
                   return (
-                    <td key={`${g.name}:${a.name}`} className={cn('w-8 min-w-8 max-w-8 border p-0 text-center', shade(i))}>
+                    <td key={`${g.name}:${a.name}`} className={cn('relative w-8 min-w-8 max-w-8 border p-0 text-center', shade(i))}>
                       {content}
                       <span className="sr-only">{joined ? '集計できる' : '-'}</span>
                     </td>

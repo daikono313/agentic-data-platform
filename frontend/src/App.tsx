@@ -437,7 +437,8 @@ function StartScreen({
         datasets={datasets}
         error={datasetsError}
         onRequest={(text) => {
-          setRequest(text)
+          // 書きかけの要求は上書きしない（後ろに足す）
+          setRequest((current) => (current.trim() ? `${current.trim()}。${text}` : text))
           window.scrollTo({ top: 0, behavior: 'smooth' })
           input.current?.focus()
         }}
