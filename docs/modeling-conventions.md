@@ -12,6 +12,16 @@
 
 集計済みマート（`agg_*`）は作らない。集計は Semantic Layer（MetricFlow）で行う（design-doc R5）。
 
+## 新しい指標の作り方（探す順序。#113）
+
+用途が同じ fact や dimension を作らない。新しい指標（Semantic Layer）は、次の順に探して作る。
+
+1. **既存の fact**: 整備済みの fact に、使える項目（measure・切り口）があれば、その fact に指標を足す（イベントの `table_name` を既存の fact にそろえる）
+2. **データ全体**: 無ければ、源泉（未整理のものを含む）にあるかを探す
+3. **新規作成**: 2 で見つかれば、その源泉のクレンジング層（stg）と fact を新しく作る。源泉がオントロジーに無ければ、先に取り込む（オントロジーへの追加。CLAUDE.md の規約）
+
+fact / dim はオントロジーの概念と 1 対 1 にする（出来事 → fct、もの・人・場所 → dim）。同じ概念の 2 つ目のモデルは作らない（設計の段階で止まり、`make dbt-build` の検査でも落ちる）。共通の暦（`dim_date`）だけは概念を持たない。
+
 ## BEAM 成果物との対応（生成ルール）
 
 BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで機械的に名前と構造を決める。例は `backend/tests/fixtures/beam/sales_by_store.yml` → `fct_order_lines`。

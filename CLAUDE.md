@@ -54,7 +54,8 @@ make dev        # backend と frontend を起動
 - **作業はこのディレクトリの中で完結させる。** ディレクトリの外で操作が必要なとき（グローバル設定、システムへのインストールなど）は、実行前にオーナーに確認する。システムに対する変更・削除は行わない。
 - issue ごとにブランチ（`<type>/<issue番号>-<slug>`、例: `feat/7-beam-schema`）を切って PR を作る。certificate を満たしたら squash merge してよい（[certificate.md](docs/certificate.md)）。ただし人間が持ち主のドキュメントの中身を変える PR（T3）は、オーナーの承認を得てから。
 - PR 本文には `Closes #<issue>` と、certificate の各項目の結果を書く。
-- 敵対的レビューは、実装したコンテキストとは別の **新しい subagent** で行う。
+- 敵対的レビューは、実装したコンテキストとは別の **新しい subagent** で行う。レビューの観点に「用途の重複が無いか」（certificate の C11）を必ず入れる。
+- コードもドキュメントも MECE に保つ。新しく足す前に、同じ役割のものが無いかを探し、あれば使うか統合する（重複した helper・処理・文書の節を作らない）。
 - design-doc の決定（Resolved issues）を覆す必要が出たら、`docs/adr/` に ADR を `Proposed` で追加し、design-doc も更新する。`Accepted` にするのはオーナー（T3）。
 - 新しい依存を入れるときはライセンス（MIT / Apache-2.0 / BSD 系）を確認し、PR に書く。
 - 同じ種類の失敗が続いたら、個別の修正ではなく、プロンプト・テンプレート・certificate の側を直す。

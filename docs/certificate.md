@@ -18,6 +18,7 @@
 | C8 | 秘密情報が含まれない | 差分に `.env` の値、トークン、鍵が含まれない（CI で検査する） |
 | C9 | 設計と矛盾しない | Resolved issues の決定を覆す変更なら、ADR（`docs/adr/`）を `Proposed` で追加し、design-doc を更新している。ADR を `Accepted` にしてマージするのはオーナーの承認の後（T3） |
 | C10 | プロンプトの変更は eval の前後比較で効果を示す（インタビューのプロンプト・知識ファイル・tool の説明を変える PR のみ） | 変更の前と後で `make eval REPEAT=3` を回し、`make eval-compare BEFORE=… AFTER=…` の表を PR 本文に貼る。合格率が下がらず、狙った数値（フィードバックの分類に対応するもの）がよくなっていること。プロンプトのバージョン（`PROMPT_VERSION`）を上げる（[evals/README.md](../evals/README.md)） |
+| C11 | 用途の重複が無い（MECE） | 新しく足したモデル・モジュール・関数・画面・ドキュメントの節が、既存のものと役割が重ならない。重なるなら既存を使うか統合する。敵対的レビュー（C7）の観点に含める。fact / dim はオントロジーの概念と 1 対 1（どの概念にも結び付かないモデルは `make dbt-build` の検査で落ちる。#114） |
 
 ## Promotion policy（マージの扱い）
 
@@ -57,7 +58,7 @@
      - #76 のうち、画面で集まった本物のフィードバックが無い部分（自分で作ったフィードバックで「1 周」したことにしない）
 2. 新しい源泉（在庫 `raw.inventory` を #69 でサンプルデータに追加する）を足して「オントロジーの更新 → クレンジング層 → fact / dim → 指標 → チャート（画像が生成される）」が通しで動く
    - 自動テスト: `backend/tests/test_e2e_v3.py`（CI。LLM はモック）
-   - 実際の LLM: `make e2e SCENARIO=inventory V3=1`（ローカル。#69 で追加）
+   - 実際の LLM: `make e2e SCENARIO=inventory V3=1`（ローカル。#69 で追加。在庫は取り込み済みになったので、いまは `make e2e V3=1`（未整理の源泉 raw.reviews を取り込む。#113）で同じ流れを確かめる）
 3. main の CI が green
 
 1〜3 を満たしたら /goal を終了し、`needs-owner` の issue の一覧をオーナーに報告する。
