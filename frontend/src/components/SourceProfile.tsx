@@ -1,8 +1,8 @@
 import { ArrowLeft, KeyRound, Link2, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { api } from '@/api/client'
-import { errorText, exampleRequests, type CleansingView, type ColumnProfile, type SourceProfile } from '@/api/datasets'
+import { api, errorText } from '@/api/client'
+import { exampleRequests, type CleansingView, type ColumnProfile, type SourceProfile } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'

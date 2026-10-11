@@ -5,11 +5,43 @@ import type { InterviewEvent, JobEvent, JobView, SessionSummary, SessionView, Sy
 
 const BASE = '/api'
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(body || `${res.status} ${res.statusText}`)
+/**
+ * API のエラーの本文（FastAPI の {"detail": ...}）から、画面に出す文を取り出す。
+ * detail が入力の検証エラーの一覧なら、項目名と msg をつなぐ。JSON でなければそのまま
+ */
+export function detailText(body: string): string {
+  let detail: unknown
+  try {
+    detail = (JSON.parse(body) as { detail?: unknown } | null)?.detail
+  } catch {
+    return body
   }
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // 入力の検証エラー（422）。どの項目かが分かるように loc の末尾を付ける
+    const msgs = detail.map((d: unknown) => {
+      if (!d || typeof d !== 'object' || !('msg' in d)) return JSON.stringify(d)
+      const loc = 'loc' in d && Array.isArray(d.loc) ? d.loc.at(-1) : undefined
+      return loc !== undefined ? `${String(loc)}: ${String(d.msg)}` : String(d.msg)
+    })
+    if (msgs.length) return `入力が正しくありません（${msgs.join(' / ')}）`
+  }
+  return body
+}
+
+/** 失敗した応答を、detail を取り出したエラーにする（画面に生の JSON を出さない） */
+async function apiError(res: Response): Promise<Error> {
+  const body = await res.text().catch(() => '')
+  return new Error(body ? detailText(body) : `${res.status} ${res.statusText}`)
+}
+
+/** 例外を画面に出す文にする（`Error: ` を付けない。API のエラーは detail だけ） */
+export function errorText(e: unknown): string {
+  return detailText(e instanceof Error ? e.message : String(e))
+}
+
+async function json<T>(res: Response): Promise<T> {
+  if (!res.ok) throw await apiError(res)
   return (await res.json()) as T
 }
 
@@ -17,7 +49,7 @@ async function json<T>(res: Response): Promise<T> {
 export async function* readSSE<T extends { event: string; data: unknown }>(
   res: Response,
 ): AsyncGenerator<T> {
-  if (!res.ok || !res.body) throw new Error(await res.text())
+  if (!res.ok || !res.body) throw await apiError(res)
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
   let buffer = ''
   for (;;) {
@@ -138,4 +170,37 @@ export const api = {
   async *jobEvents(jobId: string): AsyncGenerator<JobEvent> {
     yield* readSSE<JobEvent>(await fetch(`${BASE}/jobs/${jobId}/events`))
   },
+}
+
+export const STREAM_INTERRUPTED = '進捗の受信が途切れました。再読み込みしてください'
+
+/**
+ * ジョブ（生成・取り込み・反映）の進捗を追う。step と done のイベントを当てた JobView を onUpdate に
+ * 渡し（最初に initial も渡す）、最後の状態を返す。done が届かずにストリームが終わったら（backend の
+ * 再起動・通信の切断など）、実行中のまま固めずに失敗にする（例外はそのまま投げ直す）
+ */
+export async function trackJob(
+  initial: JobView,
+  onUpdate: (job: JobView) => void,
+  interrupted: string = STREAM_INTERRUPTED,
+): Promise<JobView> {
+  let job = initial
+  onUpdate(job)
+  try {
+    for await (const ev of api.jobEvents(job.id)) {
+      if (ev.event === 'step') {
+        const step = ev.data
+        job = { ...job, steps: job.steps.map((x) => (x.step === step.step ? step : x)) }
+      } else {
+        job = ev.data
+      }
+      onUpdate(job)
+    }
+  } finally {
+    if (job.status === 'running') {
+      job = { ...job, status: 'failed', error: interrupted }
+      onUpdate(job)
+    }
+  }
+  return job
 }

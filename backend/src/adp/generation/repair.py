@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -21,6 +20,7 @@ from adp.generation.guard import BUILTIN_TOOLS, WorkspaceGuard, allowed_patterns
 from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, TurnResult
 from adp.llm.settings import REPO_ROOT
+from adp.warehouse import tool_env
 
 LOG_TAIL = 6000
 COMMAND_TIMEOUT_S = 600
@@ -73,19 +73,13 @@ class RepairResult:
         return not self.ok
 
 
-# dbt のプロファイルの DB の場所を変える環境変数。検証は作業ツリーの DB で行うので渡さない
-# （設定されていると、手元の本物の DB に書いてしまう）
-_DROP_ENV = ("ADP_DUCKDB_PATH",)
-
-
 def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
-    env |= {"DBT_PROFILES_DIR": str(cwd), "NO_COLOR": "1"}
+    """warehouse（cwd）で dbt / mf を動かす。検証は作業ツリーの DB で行う（tool_env）。"""
     try:
         return subprocess.run(
             args,
             cwd=cwd,
-            env=env,
+            env=tool_env(cwd),
             capture_output=True,
             text=True,
             check=False,

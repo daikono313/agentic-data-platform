@@ -1,9 +1,9 @@
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { api } from '@/api/client'
+import { api, errorText } from '@/api/client'
 import { chartUrl } from '@/api/charts'
-import { errorText, filterMetrics, groupDimensions, type BusMatrix, type Datasets, type MetricInfo } from '@/api/datasets'
+import { filterMetrics, groupDimensions, type BusMatrix, type Datasets, type MetricInfo } from '@/api/datasets'
 import { Input } from '@/components/ui/input'
 
 /** 指標 1 件: 説明・切り口（dimension ごと）・チャートで見る（#107） */

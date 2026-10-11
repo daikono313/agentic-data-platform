@@ -33,6 +33,7 @@ from adp.generation.repair import _clean_log, _run
 from adp.pipeline import PipelineResult, StepStatus, StepUpdate
 from adp.vcs import GitWorkspace
 from adp.vcs.git import GIT_LOCK
+from adp.warehouse import tool_env
 
 SYNC_STEPS: list[tuple[str, str]] = [
     ("pull", "main の新しい変更を取り込む"),
@@ -334,10 +335,15 @@ def _check(args: list[str], backend: Path, warehouse: Path) -> subprocess.Comple
     """検査のコマンド。mf は warehouse で、python -m adp.* は backend で動かす。"""
     if args[0].endswith("mf"):
         return _run(args, warehouse)
-    env = os.environ | {"NO_COLOR": "1"}
     try:
         return subprocess.run(
-            args, cwd=backend, env=env, capture_output=True, text=True, check=False, timeout=600
+            args,
+            cwd=backend,
+            env=tool_env(warehouse),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 124, "", "600 秒で打ち切りました")

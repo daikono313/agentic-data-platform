@@ -1,8 +1,8 @@
 import { ArrowLeft, Bot, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import { api } from '@/api/client'
-import { errorText, sourceUrl, type OnboardingDraft, type OntologyPatch } from '@/api/datasets'
+import { api, errorText, trackJob } from '@/api/client'
+import { sourceUrl, type OnboardingDraft, type OntologyPatch } from '@/api/datasets'
 import type { JobView } from '@/api/types'
 import { BusMatrixView } from '@/components/BusMatrix'
 import { JobProgress } from '@/components/JobProgress'
@@ -48,19 +48,7 @@ export function OnboardingScreen({ table }: { table: string }) {
     [table, cleansingEdited],
   )
 
-  const follow = useCallback(async (initial: JobView) => {
-    let current = initial
-    setJob(current)
-    for await (const ev of api.jobEvents(current.id)) {
-      if (ev.event === 'step') {
-        const s = ev.data
-        current = { ...current, steps: current.steps.map((x) => (x.step === s.step ? s : x)) }
-      } else {
-        current = ev.data
-      }
-      setJob(current)
-    }
-  }, [])
+  const follow = useCallback((initial: JobView) => trackJob(initial, setJob), [])
 
   useEffect(() => {
     // 実行中・実行済みの取り込みがあればそれを出す。無ければ下書きを作る

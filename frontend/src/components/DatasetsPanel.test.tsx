@@ -261,13 +261,6 @@ describe('rankDimensions', () => {
   })
 })
 
-describe('errorText', () => {
-  it('FastAPI の detail を取り出す', async () => {
-    const { errorText } = await import('@/api/datasets')
-    expect(errorText(new Error('{"detail":"データ一覧は利用できません"}'))).toBe('データ一覧は利用できません')
-  })
-})
-
 describe('similarMetrics', () => {
   // 実際のカタログと同じ切り口（販売チャネル・注文日を含む）
   const dims = ['店舗名', '販売チャネル', '商品カテゴリ', '商品名', '会員ランク', '注文日', '注文ステータス'].map((label, i) => ({

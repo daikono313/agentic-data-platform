@@ -77,6 +77,15 @@ describe('OnboardingScreen', () => {
     )
   })
 
+  it('実行中の取り込みの進捗が途中で切れたら、実行中のまま固めずに失敗を出す', async () => {
+    vi.spyOn(api, 'onboardingStatus').mockResolvedValue({
+      job: { id: 'j1', status: 'running', steps: [{ step: 'worktree', label: '作業ブランチを作成', status: 'running', detail: '' }] },
+    })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {})
+    render(<OnboardingScreen table="raw.inventory" />)
+    expect(await screen.findByText(/進捗の受信が途切れました/)).toBeInTheDocument()
+  })
+
   it('エージェントに案を作らせ直せる', async () => {
     vi.spyOn(api, 'onboardingStatus').mockResolvedValue({ job: null })
     const load = vi

@@ -1,7 +1,7 @@
 import { Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useState } from 'react'
 
-import { errorText } from '@/api/datasets'
+import { errorText } from '@/api/client'
 import { MAX_COMMENT, type FeedbackCategories, type FeedbackIn, type FeedbackView } from '@/api/feedback'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
