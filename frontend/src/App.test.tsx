@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import demo from '@/demo/sales_by_store.json'
 
 describe('App', () => {
   beforeEach(() => {
@@ -146,5 +147,43 @@ describe('App の開始画面', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '返品理由別の返品の返品数量を見たい' }))
     expect(screen.getByLabelText('見たい指標')).toHaveValue('返品理由別の返品の返品数量を見たい')
+  })
+})
+
+describe('インタビュー画面（確定ボタンを押せない理由。#108）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('確定までの課題が残った review の画面で、ボタンの近くに理由と課題を出す', async () => {
+    const session = {
+      id: 's1',
+      phase: 'review',
+      beam: demo.beam,
+      matrix: demo.matrix,
+      issues: ['設計: 指標 sales の group_by が見つかりません'],
+      choices: [],
+      question: null,
+      messages: [],
+      job: null,
+      versions: [],
+      feedback: [],
+    }
+    const datasets = { metrics: [], models: [], beams: [], errors: [], sources: [] }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve(new Response(JSON.stringify(url.includes('/datasets') ? datasets : url.includes('/feedback') ? {} : session))),
+      ),
+    )
+    window.history.replaceState(null, '', '/?session=s1')
+    render(<App />)
+    const button = await screen.findByRole('button', { name: '確定して実装へ' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription(/確定までに残っている課題が 1 件あります/)
+    expect(screen.getByRole('list', { name: '確定までに残っている課題' })).toHaveTextContent(
+      '設計: 指標 sales の group_by が見つかりません',
+    )
   })
 })

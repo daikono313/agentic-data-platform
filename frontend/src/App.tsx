@@ -11,6 +11,7 @@ import { ChartScreen } from '@/components/ChartScreen'
 import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
+import { FinalizeControl } from '@/components/FinalizeControl'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { OnboardingScreen } from '@/components/Onboarding'
@@ -234,8 +235,6 @@ function InterviewApp() {
 
   const event = session.beam.events?.[0]
   const finalized = session.phase === 'finalized'
-  const canFinalize =
-    !finalized && !state.busy && session.issues.length === 0 && (session.beam.events?.length ?? 0) > 0
   const jobRunning = session.job?.status === 'running'
 
   return (
@@ -319,19 +318,14 @@ function InterviewApp() {
                 </>
               ) : (
                 <>
-                  {session.issues.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground">確定までに残っている課題</p>
-                      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
-                        {session.issues.slice(0, 8).map((i) => (
-                          <li key={i}>{i}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <Button onClick={finalize} disabled={!canFinalize || isDemo}>
-                    確定して実装へ
-                  </Button>
+                  <FinalizeControl
+                    issues={session.issues}
+                    eventCount={session.beam.events?.length ?? 0}
+                    busy={state.busy}
+                    demo={isDemo}
+                    finalized={finalized}
+                    onFinalize={finalize}
+                  />
                 </>
               )}
             </CardContent>
