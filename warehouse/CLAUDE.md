@@ -1,6 +1,16 @@
 # warehouse（dbt + DuckDB + MetricFlow）
 
-ここは手書きのリファレンスモデルと、アプリが生成するモデルの両方の置き場所。生成コードのお手本になるので、規約を厳密に守る。
+dbt プロジェクト。**ここのコード（SQL・YAML）はすべて AI か決定的なプログラムが書き、人間は手で書かない**（[design-doc の「ファイルの持ち主」](../docs/design-doc.md#ファイルの持ち主)）。
+
+| 場所 | 誰が書くか |
+|---|---|
+| `cleansing/*.yml` | プロファイルから雛形 → **人間**が確認・修正（手で直してよい） |
+| `models/staging/stg_*` | `cleansing/` から決定的に生成（`make cleansing`） |
+| `models/marts/dim_*`・`fct_*` と Semantic Layer・テスト | アプリの生成器（決定的）と修復エージェント（AI）。共通ディメンションは開発時に Claude Code が書いたもの |
+| `chart_specs/`・`charts/` | パイプラインが生成（エージェントも書けない） |
+| `macros/`・`dbt_project.yml`・`profiles.yml`・`scripts/` | Claude Code（アプリの開発） |
+
+生成コードのお手本になるので、規約を厳密に守る。
 
 **規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、手書きのリファレンス fct は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。
 

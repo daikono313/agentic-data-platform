@@ -22,6 +22,14 @@
 
 各ディレクトリの規約は、そのディレクトリの `CLAUDE.md` を参照する。
 
+## 人間と AI の担当
+
+**コードは AI が書き、ドキュメント（方針・規約・知識）は人間が書いて直す。** 全体のフローとファイルごとの持ち主は [design-doc の「全体のフローと担当」](docs/design-doc.md#全体のフローと担当) を参照。
+
+- アプリのコード・プロンプト（`backend/`・`frontend/` など）は Claude Code が書く。
+- ドキュメントは人間が持ち主。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよいが、方針（Goals・Non-goals・Resolved issues・certificate・guardrails の制限・ADR の採否）を変えるときはオーナーの承認を得る（certificate の T2）。
+- 生成物（`warehouse/models/**`・`warehouse/charts/`・`warehouse/chart_specs/`・`docs/ontology.md`・`frontend/src/generated/`）は手で直さない。元の定義（`beam/`・`ontology/`・`warehouse/cleansing/`）か、規約・生成器を直して作り直す。
+
 ## コマンド
 
 ```

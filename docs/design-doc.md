@@ -26,6 +26,8 @@
 - [docs/knowledge/beam.md](knowledge/beam.md) — BEAM✲ の手法リファレンス（インタビューエージェントの知識源）
 - [docs/adr/](adr/) — この設計書の確定後に生じた設計変更の記録
 - [docs/guardrails.md](guardrails.md) — 生成コードとエージェントの安全な実行のための制限の一覧
+- [docs/feedback-loop.md](feedback-loop.md) — フィードバックからプロンプトを直す一周の手順
+- [docs/ontology.md](ontology.md) — オントロジーの図（`ontology/ontology.yml` から生成）
 - dbt Semantic Layer: https://docs.getdbt.com/docs/use-dbt-semantic-layer/dbt-sl?version=2 / latest spec: https://docs.getdbt.com/docs/build/latest-metrics-spec
 
 ## Goals
@@ -88,6 +90,74 @@ S1 の後、別のユーザーが「商品カテゴリ別の返品率」を求�
 4. マージ後に「店舗ごと・商品カテゴリごとの入荷数量を月別に見たい」と要求すると、インタビュー → `fct_inventory_movements`（既存の `dim_store` / `dim_product` を再利用）・指標・チャートの PR ができ、作った fct がオントロジーの概念に書き込まれる。ディメンションの名前がオントロジーの概念の dim と食い違うと、確定前の課題に出る。
 
 ## Diagrams
+
+### 全体のフローと担当
+
+青 = **人間**が画面で操作・判断する、橙 = **AI**（Claude のエージェント）が作る、灰 = **決定的なプログラム**（LLM を使わない。同じ入力なら同じ出力）が作る。
+
+```mermaid
+flowchart TB
+  classDef human fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
+  classDef ai fill:#ffedd5,stroke:#c2410c,color:#7c2d12
+  classDef prog fill:#f3f4f6,stroke:#6b7280,color:#111827
+  classDef store fill:#ffffff,stroke:#9ca3af,color:#374151
+
+  subgraph ONB["1. 源泉の取り込み（S5）"]
+    SRC[("新しい源泉<br/>raw.*")]:::store
+    O_AI["取り込みエージェント<br/>オントロジーへの追加案"]:::ai
+    O_RULE["プロファイルからの案<br/>クレンジングの定義の雛形"]:::prog
+    O_H["案を確認・修正して確定"]:::human
+    O_GEN["ontology.yml に追加・図の生成<br/>クレンジング層（stg）の生成<br/>dbt build で検証"]:::prog
+    SRC --> O_AI & O_RULE --> O_H --> O_GEN
+  end
+
+  subgraph REQ["2. 要求から PR まで（S1〜S3）"]
+    R_H["要求を入力<br/>（バスマトリクスの空欄からも）"]:::human
+    I_AI["インタビューエージェント<br/>質問・BEAM 成果物を書く"]:::ai
+    I_H["質問に答える・具体例を確かめる<br/>確定を押す"]:::human
+    DES["スター設計"]:::prog
+    GEN["dbt・Semantic Layer・テストの生成"]:::prog
+    VER{"検証<br/>dbt build / mf"}:::prog
+    REP["修復エージェント<br/>（直せなければ人に渡す）"]:::ai
+    CH["チャートの定義と画像"]:::prog
+    R_H --> I_AI <--> I_H
+    I_H --> DES --> GEN --> VER
+    VER -- 失敗 --> REP --> VER
+    VER -- 成功 --> CH
+  end
+
+  PR["GitHub の PR<br/>（PR 本文も決定的に作る）"]:::prog
+  MERGE["PR をレビューしてマージ<br/>（データエンジニア）"]:::human
+  SYNC["取り込んで更新する<br/>→ dbt build と検査"]:::prog
+  VIEW["バスマトリクス・チャートで見る"]:::human
+  FB["発言への 👍 / 👎・全体の評価"]:::human
+  DEV["開発者: 集計・eval 化<br/>プロンプトを直す方針を決める"]:::human
+  CODE["Claude Code がアプリのコードと<br/>プロンプトを直す PR"]:::ai
+
+  O_GEN --> PR
+  CH --> PR
+  PR --> MERGE --> SYNC --> VIEW
+  VIEW --> R_H
+  VIEW -. 未整理の源泉 .-> SRC
+  I_H --> FB --> DEV --> CODE --> PR
+```
+
+### ファイルの持ち主
+
+原則: **コードは AI が書き、ドキュメント（方針・規約・知識）は人間が書いて直す**。要求やオントロジーのような定義（YAML）は、AI が案を作り、人間が確認して確定する（人間が直接直してもよい）。AI が生成したファイルは、手で直さずに、元の定義・規約・プロンプトを直して作り直す。
+
+| 種類 | 持ち主 | ファイル | 直し方 |
+|---|---|---|---|
+| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。方針（Goals・Non-goals・Resolved issues・certificate・guardrails の制限・ADR の採否）を変えるのは人間（[certificate](certificate.md) の T2） |
+| 要求の定義 | AI が案 → **人間**が確定 | `beam/*.yml` | インタビューで直す（画面のチャット）。確定は人間が押す |
+| オントロジー | AI（またはプロファイルの規則）が案 → **人間**が確定 | `ontology/ontology.yml` | 取り込み画面で直す。手で直してもよい（`make ontology` で検査） |
+| クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
+| eval のシナリオ | **人間**（フィードバックから AI が下書き） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)） |
+| アプリのコード・プロンプト | **AI**（Claude Code。/goal） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/` | 人間は issue で要求し、PR をレビューする |
+| データ基盤の生成物 | **AI / 決定的なプログラム**（アプリ） | `warehouse/models/**`（stg・dim・fct・Semantic Layer・テスト）・`warehouse/chart_specs/`・`warehouse/charts/`・`docs/ontology.md`・`frontend/src/generated/` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
+| 実行時のデータ | アプリ | `.adp/`（セッション・フィードバック・worktree・ログ。git では追跡しない） | — |
+
+### 構成
 
 ```mermaid
 flowchart LR
@@ -181,12 +251,16 @@ MVP の段階では手動で計測する。
 | v2-1 | データ一覧 | 開始画面で使えるデータ・指標が見られる。源泉のデータプロファイル | #38, #39, #62 |
 | v2-2 | 可視化 | dbt Charts で Semantic Layer の指標を描画できる画面、生成 PR にチャート定義 | #40〜#43 |
 | v2-3 | フィードバック | 発言ごとの評価と、eval・プロンプト改善のサイクル | #44, #45 |
-| v3-2 | データ基盤の整理 | オントロジー、クレンジング層、源泉の取り込み（S5） | #67, #68, #69 |
 | v2-E2E | 通し | S3 と S4 の 1〜2（フィードバックが集計に出るまで）が通しで動く。S4 の 3（改善）は開発者の手順 | #46 |
+| v3-1 | 入口と一覧 | ホームへの導線、バスマトリクスを入口にする、要求と PR の一覧、源泉の活用状況・プロファイルの詳細 | #66, #70〜#73 |
+| v3-2 | データ基盤の整理 | オントロジー、クレンジング層、源泉の取り込み（S5） | #67, #68, #69 |
+| v3-3 | 運用と品質 | マージ後の同期、既存の指標との重複の案内、フィードバックの一周、インタビューの言い回し、自己修復の eval、生成の強化、実データへの準備 | #74〜#81 |
 
 ## Interfaces
 
-### UI（ラフ）
+### UI（ラフ。MVP 時点）
+
+v2 以降は、開始画面（要求の入力・既存の指標とバスマトリクス・源泉の一覧）、源泉のプロファイル、取り込み、オントロジー、描画、要求と PR の一覧の画面がある（S3・S5）。
 
 ```
 ┌───────────── チャット ─────────────┬──────── BEAM Canvas ────────┐
@@ -226,7 +300,11 @@ MVP の段階では手動で計測する。
 
 - `beam/<event_name>.yml`: BEAM 成果物。JSON Schema は `adp.beam` から生成し、frontend の TS 型もここから生成する。
 - `warehouse/models/**`: dbt の SQL と YAML（Semantic Layer は latest spec で model YAML 内に書く）。
-- `warehouse/charts/*.yml`（v2）: dbt Charts のチャート定義。指標名と切り口で書き、集計の SQL を手で書かない（O4 の仕組みで生成する）。
+- `warehouse/chart_specs/*.yml`（v2）: チャートを指標名と切り口で書いたもの（パイプラインが生成）。`warehouse/charts/*.yml` は、そこから MetricFlow の SQL を埋め込んで書き出す dbt Charts のボード（R18）。どちらも手で書かない。
+- `ontology/ontology.yml`（v3）: オントロジーの正本。`docs/ontology.md`（Mermaid の図）はここから生成する（#67）。
+- `warehouse/cleansing/<schema>.<table>.yml`（v3）: クレンジングの定義。`models/staging/stg_*` はここから生成する（ADR 0004）。
+
+各ファイルを誰が書くかは「ファイルの持ち主」の表を参照。
 
 ## Dependencies / infrastructure
 
