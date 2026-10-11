@@ -168,7 +168,11 @@ class Store:
             rows = db.exec(select(JobRow).where(JobRow.status == "running")).all()
             for row in rows:
                 row.status = "failed"
-                row.error = "サーバーの再起動で中断されました。再開して確定し直してください"
+                row.error = (
+                    "サーバーの再起動で中断されました。もう一度実行してください"
+                    if row.session_id.startswith(("sync:", "onboard:"))
+                    else "サーバーの再起動で中断されました。再開して確定し直してください"
+                )
                 db.add(row)
             db.commit()
             return len(rows)

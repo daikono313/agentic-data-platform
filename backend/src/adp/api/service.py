@@ -32,6 +32,7 @@ from adp.llm import TextDelta, ToolCall
 from adp.onboarding.pipeline import ONBOARD_STEPS
 from adp.onboarding.proposal import OntologyPatch
 from adp.pipeline import STEPS, PipelineResult, StepUpdate
+from adp.sync import SYNC_STEPS
 
 SSEEvent = dict[str, str]
 """sse-starlette に渡す {"event": ..., "data": <JSON 文字列>}。"""
@@ -41,6 +42,9 @@ OnboardingRunner = Callable[
     [str, OntologyPatch, str, Callable[[StepUpdate], None]], Awaitable[PipelineResult]
 ]
 """(源泉, 追加案, クレンジングの定義の YAML, on_step) → 結果（#69）。"""
+SyncRunner = Callable[[Callable[[StepUpdate], None]], Awaitable[PipelineResult]]
+SYNC_ID = "sync:main"
+"""マージ後の反映ジョブの session_id（#74）。"""
 ONBOARD_PREFIX = "onboard:"
 """取り込みジョブの session_id（セッションの代わりに源泉で引く）。"""
 PrState = Callable[[str], str | None]
@@ -116,12 +120,14 @@ class SessionService:
         pipeline: PipelineRunner,
         onboarding: OnboardingRunner | None = None,
         pr_state: PrState | None = None,
+        sync: SyncRunner | None = None,
     ) -> None:
         self.store = store
         self.interviewer = interviewer
         self.pipeline = pipeline
         self.onboarding = onboarding
         self.pr_state = pr_state
+        self.sync = sync
         self._pr_cache: dict[str, tuple[float, str | None]] = {}
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
@@ -338,6 +344,7 @@ class SessionService:
         running = self._job_view(session_id)
         if running and running["status"] == "running":
             raise Conflict("生成ジョブを実行中です")
+        self._check_not_syncing()
         try:
             beam = self.interviewer.finalize(state)
         except ValueError as e:
@@ -347,6 +354,16 @@ class SessionService:
         job = Job(id=uuid.uuid4().hex[:12], session_id=session_id)
         self._start(job, lambda on_step: self.pipeline(beam, on_step))
         return self.view(session_id)
+
+    def _check_not_syncing(self) -> None:
+        sync = self._jobs_running(SYNC_ID)
+        if sync:
+            raise Conflict("main の反映（dbt build）を実行中です。終わってから実行してください")
+
+    def _jobs_running(self, session_id: str) -> bool:
+        return any(
+            j.status == "running" and j.session_id == session_id for j in list(self._jobs.values())
+        )
 
     def _start(
         self,
@@ -369,6 +386,7 @@ class SessionService:
         last = self._job_view(ONBOARD_PREFIX + source)
         if last and last["status"] == "running":
             raise Conflict("この源泉の取り込みを実行中です")
+        self._check_not_syncing()
         if last and last["status"] == "succeeded" and not redo:
             # 同じ源泉の PR を 2 本作らない。前の PR を閉じた場合だけ、明示してやり直す
             raise Conflict(
@@ -389,6 +407,33 @@ class SessionService:
 
     def onboarding_job(self, source: str) -> dict[str, Any] | None:
         return self._job_view(ONBOARD_PREFIX + source)
+
+    # --- マージ後の反映（#74） ------------------------------------------------------------------
+
+    def start_sync(self) -> dict[str, Any]:
+        if self.sync is None:
+            raise Conflict("反映は使えません")
+        last = self._job_view(SYNC_ID)
+        if last and last["status"] == "running":
+            raise Conflict("反映を実行中です")
+        # 反映の dbt build は共有の DuckDB に書く。生成・取り込みのジョブ（DB を写す）と重ねない
+        if any(
+            j.status == "running" and j.session_id != SYNC_ID for j in list(self._jobs.values())
+        ):
+            raise Conflict("生成・取り込みのジョブを実行中です。終わってから反映してください")
+        job = Job(
+            id=uuid.uuid4().hex[:12],
+            session_id=SYNC_ID,
+            steps=[
+                {"step": s, "label": label, "status": "pending", "detail": ""}
+                for s, label in SYNC_STEPS
+            ],
+        )
+        self._start(job, self.sync)
+        return job.view()
+
+    def sync_job(self) -> dict[str, Any] | None:
+        return self._job_view(SYNC_ID)
 
     def reopen(self, session_id: str) -> dict[str, Any]:
         """確定を取り消して修正できるようにする。生成ジョブの実行中はできない。"""

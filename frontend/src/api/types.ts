@@ -92,3 +92,19 @@ export interface SessionSummary {
   /** GitHub の PR の状態（取れなければ null） */
   pr_state: 'OPEN' | 'MERGED' | 'CLOSED' | null
 }
+
+/** GET /sync（#74） */
+export interface SyncView {
+  status: {
+    branch: string
+    clean: boolean
+    behind: number
+    can_pull: boolean
+    /** 手元が main で変更が無い（dbt の作り直しだけはできる） */
+    can_rebuild?: boolean
+    reason: string | null
+    /** origin の最新を取れなかった理由 */
+    fetch_error?: string | null
+  }
+  job: JobView | null
+}
