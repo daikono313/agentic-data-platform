@@ -43,3 +43,9 @@
 1. Umbrella [#47](https://github.com/daikono313/auto_data_platform/issues/47) の子 issue がすべて close されている
 2. design-doc の S3 と S4 の 1〜2 が通しで動く: 自動テスト（`backend/tests/test_e2e_v2.py`、CI）と、実際の LLM（`make e2e SCENARIO=return_rate_by_category V2=1`）
 3. main の CI が green
+
+## v3 の完了（/goal の終了条件）
+
+1. Umbrella [#82](https://github.com/daikono313/auto_data_platform/issues/82) の子 issue がすべて close されている（#80 の本物の PR の確認、#81 の実データ接続など、外部への操作やオーナーの判断が要るものは、確認を取ってから行う。取れない場合は理由を issue に書いて close せず、オーナーに残す）
+2. 新しい源泉（例: 在庫）を追加して「オントロジーの更新 → クレンジング層 → fact / dim → 指標 → チャート」が通しで動く: 自動テスト（CI）と、実際の LLM（ローカル）
+3. main の CI が green
