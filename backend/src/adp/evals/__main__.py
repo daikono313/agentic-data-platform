@@ -18,6 +18,7 @@ from pathlib import Path
 import anyio
 
 from adp.llm.settings import REPO_ROOT
+from adp.warehouse import warehouse_db
 
 APP_DB = REPO_ROOT / ".adp" / "app.db"
 
@@ -38,7 +39,7 @@ async def _interview(args: argparse.Namespace) -> int:
     settings = load_settings()
     runner = ClaudeAgentRunner(settings)
     catalog = Catalog(
-        REPO_ROOT / "warehouse" / "data" / "dev.duckdb",
+        warehouse_db(REPO_ROOT / "warehouse"),
         REPO_ROOT / "warehouse" / "target" / "manifest.json",
     )
     paths = sorted(SCENARIO_DIR.glob("*.yml"))

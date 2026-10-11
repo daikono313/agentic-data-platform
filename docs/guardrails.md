@@ -29,6 +29,7 @@
 | ソースを書き換えない、外部のファイルに触れない | `read_only=True` かつ `enable_external_access=False` で接続 | `tests/catalog/test_catalog.py`（悪意のあるテーブル名でファイルが作られない） |
 | SQL インジェクション | 呼び出し側の名前は識別子のみ許可し、対象スキーマに限定。DB から読んだ名前も必ず `_q()` でクォートする | 同上 |
 | エラーメッセージからの情報漏れ | DuckDB の例外は定型文に置き換えて返す | 同上 |
+| 個人情報の値を出さない（v3、#81） | 個人情報の列（sources の `meta: {pii: true}`、または列名からの推定: 顧客名・氏名・メール・電話・住所・郵便番号・生年月日など）は、プロファイル（画面）とソースカタログの tool（エージェント）で件数だけを出し、値（最小・最大・よく出る値・分布）は出さない。`meta: {pii: false}` で推定を外せる。方針はオーナーの承認待ち（ADR 0005） | `tests/catalog/test_catalog.py`、`SourceProfile.test.tsx` |
 | 画面からの参照（源泉のプロファイル、#62） | `GET /sources/{table}/profile` もエージェントと同じ Catalog（同じ識別子・スキーマの制限、読み取り専用）を通す。DuckDB の例外は定型文の 503。NULL 以外の値がすべて違う列（ID・メールアドレスなど）は、画面で上位の値を出さない | `tests/test_datasets.py`、`SourceProfile.test.tsx` |
 
 ## 4. 生成エージェント（自己修復）

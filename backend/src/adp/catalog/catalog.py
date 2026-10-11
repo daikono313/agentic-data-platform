@@ -21,6 +21,14 @@ from pydantic import BaseModel
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FK_MIN_MATCH_RATIO = 0.95
+PII_NAME = re.compile(
+    r"((^|_)(customer|user|person|member|contact|staff|employee|recipient)_name"
+    r"|(^|_)(first|last|full|given|family)_name|(^|_)kana($|_)"
+    r"|(^|_)(email|e_mail|mail_address|phone|phone_number|tel|mobile|address|addr|zip|zip_code"
+    r"|postal_code|birth|birthday|birth_date|dob)($|_))"
+)
+"""個人情報と推定する列名（dbt の sources の meta: {pii: true} が無くても値を出さない。#81）。
+集計に使う区分（都道府県・地方・性別など）は含めない。"""
 _CAST_TYPE = re.compile(
     r"^(integer|bigint|double|varchar|date|timestamp|boolean|decimal\(\d{1,2},\s*\d{1,2}\))$"
 )
@@ -89,6 +97,8 @@ class ColumnProfile(BaseModel):
     """日付・日時の列の月ごとの件数（YYYY-MM。0 件の月も含む）。プロファイル画面用（#71）。"""
     histogram: list[tuple[float, float, int]] | None = None
     """数値の列の分布（下限・上限・件数。等幅 HISTOGRAM_BINS 区間）。"""
+    masked: bool = False
+    """個人情報の列のため、値（最小・最大・よく出る値・分布）を出していない（#81）。"""
 
 
 HISTOGRAM_BINS = 10
@@ -117,6 +127,14 @@ class Catalog:
         self.db_path = db_path
         self.schemas = schemas
         self._descriptions = _load_descriptions(manifest_path)
+        self._pii = _load_pii(manifest_path)
+
+    def is_pii(self, schema: str, name: str, column: str) -> bool:
+        """個人情報の列か（sources の meta.pii、または列名からの推定。ID・キーは除く）。"""
+        flagged = self._pii.get((schema, name, column))
+        if flagged is not None:
+            return flagged
+        return bool(PII_NAME.search(column)) and not column.endswith(("_id", "_key"))
 
     @contextmanager
     def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
@@ -277,7 +295,9 @@ class Catalog:
             info = {c.name: c for c in self._columns(con, schema, name)}
             if column not in info:
                 raise ValueError(f"列が見つかりません: {schema}.{name}.{column}")
-            return _profile(con, schema, name, info[column], top)
+            return _profile(
+                con, schema, name, info[column], top, masked=self.is_pii(schema, name, column)
+            )
 
     def profile_table(self, table: str, top: int = 5, detail: bool = False) -> TableProfile:
         """テーブルの全列のプロファイルと、主キー・外部キーの候補（源泉のプロファイル画面用）。
@@ -287,7 +307,18 @@ class Catalog:
         schema, name = self._resolve(table)
         with self._connect() as con:
             columns = self._columns(con, schema, name)
-            profiles = [_profile(con, schema, name, c, top, detail=detail) for c in columns]
+            profiles = [
+                _profile(
+                    con,
+                    schema,
+                    name,
+                    c,
+                    top,
+                    detail=detail,
+                    masked=self.is_pii(schema, name, c.name),
+                )
+                for c in columns
+            ]
             count = profiles[0].row_count if profiles else 0
             fks = self._foreign_keys(con, schema, name, columns)
         return TableProfile(
@@ -347,6 +378,7 @@ def _profile(
     column: ColumnInfo,
     top: int,
     detail: bool = False,
+    masked: bool = False,
 ) -> ColumnProfile:
     q, col = _table(schema, name), _q(column.name)
     row = con.execute(
@@ -371,6 +403,12 @@ def _profile(
         top_values=[(v, int(n)) for v, n in values],
         is_unique=total > 0 and nulls == 0 and distinct == total,
     )
+    if masked:
+        # 個人情報の列は件数だけ（値・範囲・分布は画面にもエージェントにも出さない。#81）
+        profile.min = profile.max = None
+        profile.top_values = []
+        profile.masked = True
+        return profile
     if detail and total > nulls:
         kind = column.data_type.upper()
         try:
@@ -461,6 +499,24 @@ def _scalar(con: duckdb.DuckDBPyConnection, sql: str) -> Any:
     row = con.execute(sql).fetchone()
     assert row is not None
     return row[0]
+
+
+def _load_pii(manifest_path: Path | None) -> dict[tuple[str, str, str], bool]:
+    """dbt の sources の列の meta.pii（true / false）。キーは (schema, table, column)。"""
+    if manifest_path is None or not manifest_path.exists():
+        return {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    result: dict[tuple[str, str, str], bool] = {}
+    for node in manifest.get("sources", {}).values():
+        schema, table = node["schema"], node.get("identifier") or node["name"]
+        for col in node.get("columns", {}).values():
+            meta = col.get("meta") or col.get("config", {}).get("meta") or {}
+            if "pii" in meta:
+                result[(schema, table, col["name"])] = bool(meta["pii"])
+    return result
 
 
 def _load_descriptions(manifest_path: Path | None) -> dict[tuple[str, str, str | None], str]:

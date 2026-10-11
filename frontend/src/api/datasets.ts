@@ -57,6 +57,8 @@ export interface ColumnProfile {
   monthly?: [string, number][] | null
   /** 数値の列の分布（下限・上限・件数） */
   histogram?: [number, number, number][] | null
+  /** 個人情報の列のため、値（最小・最大・よく出る値・分布）を出していない（#81） */
+  masked?: boolean
 }
 export interface SourceProfile {
   schema_name: string

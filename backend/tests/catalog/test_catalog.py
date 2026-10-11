@@ -225,3 +225,47 @@ def test_profile_details_tolerate_odd_values(tmp_path: Path) -> None:
     assert p["huge"].histogram is None  # 幅が有限にならない
     assert p["d"].monthly == [("2024-01", 1), ("2024-02", 0), ("2024-03", 1)]  # 無限の日付は除く
     assert p["long_span"].monthly is None  # 120 か月を超える
+
+
+def test_pii_columns_are_masked(tmp_path: Path) -> None:
+    """個人情報の列は、値（最小・最大・よく出る値・分布）を画面にもエージェントにも出さない（#81）。"""
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute(
+        "create table raw.people as select * from (values"
+        " (1, '佐藤 翔', 'a@example.com', '東京都', 'gold', 'x'),"
+        " (2, '鈴木 蓮', 'b@example.com', '大阪府', 'silver', 'y'))"
+        " v(person_id, customer_name, email, prefecture, rank, nickname)"
+    )
+    con.close()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "sources": {
+                    "source.p.raw.people": {
+                        "schema": "raw",
+                        "name": "people",
+                        "columns": {
+                            "nickname": {"name": "nickname", "meta": {"pii": True}},
+                            "email": {"name": "email", "meta": {"pii": False}},
+                        },
+                    }
+                },
+                "nodes": {},
+            }
+        )
+    )
+    catalog = Catalog(db, manifest)
+    p = {c.column: c for c in catalog.profile_table("raw.people", detail=True).profiles}
+    for col in ("customer_name", "nickname"):  # 列名からの推定と、sources の meta.pii
+        assert p[col].masked and p[col].top_values == [] and p[col].min is None
+        assert p[col].distinct_count == 2  # 件数は出す
+    assert not p["email"].masked  # meta.pii: false で上書きできる
+    assert not p["prefecture"].masked and p["prefecture"].top_values  # 集計の区分は出す
+    assert not p["person_id"].masked
+    tool = catalog.profile_column("raw.people", "customer_name")
+    assert tool.masked and tool.top_values == [] and tool.max is None

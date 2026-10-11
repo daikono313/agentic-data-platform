@@ -50,6 +50,7 @@ from adp.pipeline import (
 )
 from adp.vcs import GitHub, GitWorkspace, Worktree
 from adp.vcs.pr_body import _safe
+from adp.warehouse import warehouse_db
 
 
 class AlreadyOnboarded(Exception):
@@ -209,7 +210,7 @@ class OnboardingPipeline:
             path = spec_path(warehouse / "cleansing", source)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(dump_spec(spec), encoding="utf-8")
-            catalog = Catalog(warehouse / "data" / "dev.duckdb")
+            catalog = Catalog(warehouse_db(warehouse))
             info = ProjectInfo(warehouse, catalog)
             # 定義（上で書いた）から stg を生成する。既にある stg（make cleansing で作ったもの
             # など）は定義から作り直す（stg は定義の生成物。ADR 0004）

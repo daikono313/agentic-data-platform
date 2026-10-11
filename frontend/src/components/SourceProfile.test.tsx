@@ -178,6 +178,15 @@ describe('SourceProfileScreen', () => {
     expect(screen.getByTestId('column-ordered_at')).toHaveTextContent('期間が長いため月別は省略')
   })
 
+  it('個人情報の列は値を出さない（#81）', async () => {
+    vi.spyOn(api, 'sourceProfile').mockResolvedValue({
+      ...profile,
+      profiles: [col('customer_name', { masked: true, min: null, max: null, top_values: [], is_unique: false })],
+    })
+    render(<SourceProfileScreen table="raw.customers" />)
+    expect(await screen.findByTestId('column-customer_name')).toHaveTextContent('個人情報のため、値は表示しません')
+  })
+
   it('取得に失敗したらエラーを表示する', async () => {
     vi.spyOn(api, 'sourceProfile').mockRejectedValue(new Error('{"detail":"対象外のテーブルです: x.y"}'))
     render(<SourceProfileScreen table="x.y" />)
