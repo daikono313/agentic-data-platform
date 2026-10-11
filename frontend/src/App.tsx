@@ -11,6 +11,7 @@ import { ChartScreen } from '@/components/ChartScreen'
 import { DatasetsPanel } from '@/components/DatasetsPanel'
 import { ChatPanel } from '@/components/ChatPanel'
 import { EventMatrixView } from '@/components/EventMatrixView'
+import { FinalizeControl } from '@/components/FinalizeControl'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { OnboardingScreen } from '@/components/Onboarding'
@@ -137,9 +138,12 @@ function InterviewApp() {
     error: null,
   })
   const session = state.session
+  // 確定の失敗（409 など）は、ボタンの近くに出す（#108）。次の発言・確定し直しで消す
+  const [finalizeError, setFinalizeError] = useState<string | null>(null)
 
   const send = useCallback(
     async (id: string, text: string) => {
+      setFinalizeError(null)
       dispatch({ type: 'user', text })
       try {
         for await (const event of api.send(id, text)) dispatch({ type: 'event', event })
@@ -173,9 +177,22 @@ function InterviewApp() {
 
   const finalize = async () => {
     if (!session) return
+    let s: SessionView
     try {
-      const s = await api.finalize(session.id)
-      dispatch({ type: 'session', session: s })
+      s = await api.finalize(session.id)
+    } catch (e) {
+      setFinalizeError(errorText(e))
+      // 課題の一覧などを backend の今の状態に合わせる（別のタブでの変更・設計の課題の変化）
+      try {
+        dispatch({ type: 'session', session: await api.getSession(session.id) })
+      } catch {
+        // 読み直せなくても、失敗の理由は出ている
+      }
+      return
+    }
+    setFinalizeError(null)
+    dispatch({ type: 'session', session: s })
+    try {
       if (s.job) await followJob(s.job)
     } catch (e) {
       dispatch({ type: 'error', error: errorText(e) })
@@ -184,6 +201,7 @@ function InterviewApp() {
 
   const reopen = async () => {
     if (!session) return
+    setFinalizeError(null)
     try {
       dispatch({ type: 'session', session: { ...(await api.reopen(session.id)), job: null } })
     } catch (e) {
@@ -234,8 +252,6 @@ function InterviewApp() {
 
   const event = session.beam.events?.[0]
   const finalized = session.phase === 'finalized'
-  const canFinalize =
-    !finalized && !state.busy && session.issues.length === 0 && (session.beam.events?.length ?? 0) > 0
   const jobRunning = session.job?.status === 'running'
 
   return (
@@ -317,22 +333,24 @@ function InterviewApp() {
                     </Button>
                   )}
                 </>
-              ) : (
-                <>
-                  {session.issues.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground">確定までに残っている課題</p>
-                      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
-                        {session.issues.slice(0, 8).map((i) => (
-                          <li key={i}>{i}</li>
-                        ))}
-                      </ul>
-                    </div>
+              ) : finalized ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs text-muted-foreground">確定済みです（実装のジョブはありません）。</p>
+                  {!isDemo && (
+                    <Button variant="outline" size="sm" onClick={reopen}>
+                      修正して確定し直す
+                    </Button>
                   )}
-                  <Button onClick={finalize} disabled={!canFinalize || isDemo}>
-                    確定して実装へ
-                  </Button>
-                </>
+                </div>
+              ) : (
+                <FinalizeControl
+                  issues={session.issues}
+                  eventCount={session.beam.events?.length ?? 0}
+                  busy={state.busy}
+                  demo={isDemo}
+                  error={finalizeError}
+                  onFinalize={finalize}
+                />
               )}
             </CardContent>
           </Card>
