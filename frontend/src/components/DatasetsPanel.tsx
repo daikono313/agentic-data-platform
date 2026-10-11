@@ -2,7 +2,7 @@ import { BarChart3, Boxes, Database, Table2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { chartUrl } from '@/api/charts'
-import { matches, onboardUrl, rankDimensions, sourceUrl, type Datasets } from '@/api/datasets'
+import { filterMetrics, groupDimensions, matches, METRICS_URL, onboardUrl, sourceUrl, type Datasets } from '@/api/datasets'
 import { BusMatrixView, filterBus, type BusMetric } from '@/components/BusMatrix'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -52,9 +52,7 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
   if (error) return <p className="text-sm text-destructive">使えるデータを読み込めませんでした: {error}</p>
   if (!datasets) return <p className="text-sm text-muted-foreground">使えるデータを読み込んでいます…</p>
 
-  const metrics = datasets.metrics.filter((m) =>
-    matches(query, m.label, m.name, m.description, ...m.dimensions.map((d) => d.label)),
-  )
+  const metrics = filterMetrics(datasets.metrics, query)
   const models = datasets.models.filter((m) =>
     matches(query, m.name, m.description, ...m.columns.map((c) => c.description)),
   )
@@ -74,7 +72,8 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
     metricsByFact.set(m.model, [...(metricsByFact.get(m.model) ?? []), { name: m.name, label: m.label, dimensions: dims }])
   }
   const sources = datasets.sources.filter((s) => matches(query, s.name, s.description, ...s.columns.map((c) => c.description)))
-  const maxDims = compact ? 6 : 10
+  // 開始画面には代表の数件だけ。すべては指標の一覧のページで（#107）
+  const maxMetrics = compact ? 3 : 4
   const linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement> = compact ? { target: '_blank', rel: 'noreferrer' } : {}
 
   return (
@@ -103,34 +102,30 @@ export function DatasetsPanel({ datasets, error, compact, onRequest }: Props) {
         </h2>
         <Section icon={<BarChart3 className="size-4" />} title="指標（metrics）" count={metrics.length} note="すぐチャートで見られる">
           {metrics.length === 0 && <p className="text-xs text-muted-foreground">まだありません。要求すると作れます。</p>}
-          <ul className={compact ? 'space-y-2' : 'grid gap-2 md:grid-cols-2'}>
-            {metrics.map((m) => (
-              <li key={m.name} className="rounded-md border p-2" data-testid={`metric-${m.name}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">
-                    {m.label}
-                    <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">{m.name}</span>
-                  </p>
-                  <a href={chartUrl(m.name)} className="shrink-0 text-xs text-primary underline" {...linkProps}>
-                    チャートで見る
-                  </a>
-                </div>
-                {m.description && <p className="text-xs text-muted-foreground">{m.description}</p>}
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {rankDimensions(m.dimensions)
-                    .slice(0, maxDims)
-                    .map((d) => (
-                      <Badge key={d.name} variant={d.kind === 'time' ? 'outline' : 'secondary'} title={d.description || d.name}>
-                        {d.label}
-                      </Badge>
-                    ))}
-                  {m.dimensions.length > maxDims && (
-                    <span className="text-xs text-muted-foreground">ほか {m.dimensions.length - maxDims}</span>
-                  )}
-                </div>
+          <ul className={compact ? 'space-y-1' : 'grid gap-x-4 gap-y-1 md:grid-cols-2'}>
+            {metrics.slice(0, maxMetrics).map((m) => (
+              <li key={m.name} className="flex items-baseline justify-between gap-2 text-xs" data-testid={`metric-${m.name}`}>
+                <span className="min-w-0">
+                  <span className="text-sm font-medium">{m.label}</span>
+                  <span className="ml-1 text-muted-foreground">
+                    {groupDimensions(m.dimensions, datasets.bus)
+                      .map((g) => g.label)
+                      .join('・')}
+                  </span>
+                </span>
+                <a href={chartUrl(m.name)} className="shrink-0 text-primary underline" {...linkProps}>
+                  チャートで見る
+                </a>
               </li>
             ))}
           </ul>
+          {datasets.metrics.length > 0 && (
+            <a href={METRICS_URL} className="inline-block text-xs text-primary underline" {...linkProps}>
+              {metrics.length > maxMetrics
+                ? `ほか ${metrics.length - maxMetrics} 件。すべての指標（説明・切り口）を見る`
+                : 'すべての指標（説明・切り口）を見る'}
+            </a>
+          )}
         </Section>
 
         {bus ? (

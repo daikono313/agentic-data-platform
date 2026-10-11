@@ -259,3 +259,40 @@ export function similarMetrics(request: string, metrics: MetricInfo[], limit = 3
     .slice(0, limit)
     .map((x) => x.m)
 }
+
+export interface DimensionGroup {
+  key: string
+  label: string
+  dimensions: DimensionInfo[]
+}
+
+/**
+ * 指標の切り口を、dimension（entity）ごとにまとめる（#107）。
+ * 時間の切り口は「期間」に、それ以外は entity ごと（バスマトリクスに表示名があればそれを使う）に分ける。
+ * 並びは「期間」→ 切り口の多い順（同数なら表示名順）で、各グループの中は rankDimensions の順。
+ */
+export function groupDimensions(dims: DimensionInfo[], bus?: BusMatrix | null): DimensionGroup[] {
+  const groupOf = new Map<string, BusGroup>()
+  for (const g of bus?.groups ?? []) for (const a of g.attributes) groupOf.set(a.name, g)
+  const groups = new Map<string, DimensionGroup>()
+  for (const d of rankDimensions(dims)) {
+    const bg = groupOf.get(d.name)
+    const key = d.kind === 'time' ? '__time' : bg ? bg.name : (d.entity ?? '__other')
+    const label = d.kind === 'time' ? '期間' : bg ? bg.label : (d.entity ?? 'その他')
+    const group = groups.get(key) ?? { key, label, dimensions: [] }
+    group.dimensions.push(d)
+    groups.set(key, group)
+  }
+  const rest = [...groups.values()].filter((g) => g.key !== '__time')
+  rest.sort((a, b) => b.dimensions.length - a.dimensions.length || a.label.localeCompare(b.label, 'ja'))
+  const time = groups.get('__time')
+  return time ? [time, ...rest] : rest
+}
+
+/** 指標の一覧のページ（#107） */
+export const METRICS_URL = '?metrics'
+
+/** 検索語に合う指標（表示名・名前・説明・切り口の表示名で絞り込む） */
+export function filterMetrics(metrics: MetricInfo[], query: string): MetricInfo[] {
+  return metrics.filter((m) => matches(query, m.label, m.name, m.description, ...m.dimensions.map((d) => d.label)))
+}

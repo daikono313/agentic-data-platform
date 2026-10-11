@@ -49,7 +49,9 @@ describe('DatasetsPanel', () => {
       expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     }
     expect(order[2].compareDocumentPosition(source) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(screen.getByTestId('metric-revenue')).toHaveTextContent('販売チャネル')
+    // 開始画面の指標は表示名と切り口のまとまり（dimension）だけ。すべては ?metrics で（#107）
+    expect(screen.getByTestId('metric-revenue')).toHaveTextContent('売上金額期間・store')
+    expect(screen.getByRole('link', { name: /すべての指標/ })).toHaveAttribute('href', '?metrics')
     expect(within(order[1]).getByText('fct_order_lines')).toBeInTheDocument()
     expect(within(order[2]).getByText('dim_store')).toBeInTheDocument()
     expect(source).toHaveTextContent('1,620 行・3 列')
@@ -60,6 +62,19 @@ describe('DatasetsPanel', () => {
     expect(screen.queryByTestId('metric-revenue')).not.toBeInTheDocument()
     expect(screen.queryByText('dim_store')).not.toBeInTheDocument()
     expect(screen.getByText('返品')).toBeInTheDocument()
+  })
+
+  it('開始画面には代表の数件だけを出し、残りの件数と指標の一覧へのリンクを出す（#107）', () => {
+    const metrics = Array.from({ length: 6 }, (_, i) => ({ ...datasets.metrics[0], name: `m${i}`, label: `指標${i}` }))
+    render(<DatasetsPanel datasets={{ ...datasets, metrics }} />)
+    const section = screen.getByRole('region', { name: '指標（metrics）' })
+    expect(section).toHaveTextContent('6')
+    expect(within(section).getAllByRole('listitem')).toHaveLength(4)
+    expect(within(section).getByRole('link', { name: /ほか 2 件/ })).toHaveAttribute('href', '?metrics')
+    // 検索は指標にも効く
+    fireEvent.change(screen.getByLabelText('使えるデータを検索'), { target: { value: '指標5' } })
+    expect(within(section).getAllByRole('listitem')).toHaveLength(1)
+    expect(screen.getByTestId('metric-m5')).toBeInTheDocument()
   })
 
   it('源泉ごとに使っている fact / dim と、未活用・未整理の数を出す（#72）', () => {
