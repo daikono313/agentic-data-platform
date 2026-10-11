@@ -51,26 +51,19 @@ def test_message_feedback_is_saved_with_context(setup) -> None:  # type: ignore[
     assert row.message_text == "言い換えました。" and row.user_text == "店舗ごとの売上"
     assert row.prompt_version == prompt_version() and row.phase == "framing"
 
-    # 👍 / 👎 だけを送り直しても、分類とコメントは残す（同じ発言に 2 件残さない）
+    # 👎 を送り直しても、分類とコメントは残す（同じ発言に 2 件残さない）
+    client.post(
+        f"/sessions/{sid}/feedback", json={"kind": "message", "message_index": 1, "thumb": "down"}
+    )
+    [row] = store.feedback(sid)
+    assert row.thumb == "down" and row.comment == "『粒度』の意味がわからない"
+    assert json.loads(row.categories_json) == ["duplicate", "jargon"]
+    # 👍 に付け替えたら 👎 の理由は消す（苦情が良い評価として集計されない。#97 レビュー）
     client.post(
         f"/sessions/{sid}/feedback", json={"kind": "message", "message_index": 1, "thumb": "up"}
     )
     [row] = store.feedback(sid)
-    assert row.thumb == "up" and row.comment == "『粒度』の意味がわからない"
-    assert json.loads(row.categories_json) == ["duplicate", "jargon"]
-    # 明示して送れば消せる
-    client.post(
-        f"/sessions/{sid}/feedback",
-        json={
-            "kind": "message",
-            "message_index": 1,
-            "thumb": "up",
-            "categories": [],
-            "comment": "",
-        },
-    )
-    [row] = store.feedback(sid)
-    assert row.comment == "" and row.categories_json == "[]"
+    assert row.thumb == "up" and not row.comment and row.categories_json == "[]"
     assert client.get(f"/sessions/{sid}").json()["feedback"][0]["thumb"] == "up"
 
 

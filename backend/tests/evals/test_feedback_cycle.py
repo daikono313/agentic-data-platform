@@ -6,7 +6,7 @@ from typing import Any
 
 from adp.api.store import FeedbackRow, Store
 from adp.evals.compare import compare
-from adp.evals.feedback import drafts, report, summarize
+from adp.evals.feedback import drafts, no_drafts_hint, report, summarize
 from adp.evals.interview import (
     _scenario_transcript_check,
     _transcript_checks,
@@ -100,7 +100,16 @@ def _store_with_feedback(tmp_path: Path) -> Store:
             message_text="粒度を決めます。",
         )
     )
-    store.save_feedback(FeedbackRow(**common, message_index=3, thumb="up", phase="framing"))
+    store.save_feedback(
+        FeedbackRow(
+            **common,
+            message_index=3,
+            thumb="up",
+            phase="framing",
+            comment="例を出してくれて分かりやすい",
+            message_text="たとえば…",
+        )
+    )
     store.save_feedback(
         FeedbackRow(session_id="s1", kind="session", score=2, prompt_version="interview-v1+aaa")
     )
@@ -117,6 +126,26 @@ def test_report(tmp_path: Path) -> None:
     assert "コメント: 『粒度』の意味がわからない" in text
     assert "s1: 2 点" in text
     assert "まだフィードバックがありません" in report([])
+    assert (
+        "例を出してくれて分かりやすい" not in text
+    )  # 👍 の行のコメントは出さない（古い 👎 の理由）
+
+
+def test_report_without_downs_says_so(tmp_path: Path) -> None:
+    """👎 が無いときは見出しだけにせず「無い」と書く（#76 で実データを回して分かった問題）。"""
+    store = Store(tmp_path / "app.db")
+    store.save_feedback(FeedbackRow(session_id="s1", kind="message", message_index=1, thumb="up"))
+    store.save_feedback(
+        FeedbackRow(session_id="s1", kind="session", score=5, comment="例が<!--分かりやすい")
+    )
+    store.save_feedback(FeedbackRow(session_id="s2", kind="session", score=4))
+    text = report(store.feedback())
+    assert "まだ 👎 はありません" in text
+    assert "- s1: 5 点 例が&lt;!--分かりやすい" in text  # 高評価のコメント（HTML は無害化）
+    assert "s2: 4 点" not in text  # コメントの無い高評価は出さない
+    assert drafts(store, tmp_path / "drafts") == []
+    hint = no_drafts_hint(store.feedback())
+    assert "発言への評価 1 件・全体の評価 2 件" in hint and "docs/feedback-loop.md" in hint
 
 
 def test_drafts_map_categories_to_checks(tmp_path: Path) -> None:
@@ -203,3 +232,24 @@ async def test_summary_neutralizes_closing_tag_variants() -> None:
     import re
 
     assert not re.search(r"<\s*/\s*feedback\s*>", body, re.IGNORECASE)
+
+
+def test_cli_skips_llm_and_guides_when_empty(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+    """フィードバックが無いとき、要約で LLM を呼ばず、下書き 0 件なら案内を出す（#97 レビュー）。"""
+    import anyio
+
+    from adp.evals import __main__ as cli
+
+    Store(tmp_path / "app.db")  # 空の DB
+    monkeypatch.setattr(cli, "APP_DB", tmp_path / "app.db")
+    monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise AssertionError("LLM を呼んではいけない")
+
+    monkeypatch.setattr("adp.llm.ClaudeAgentRunner", boom)
+    args = type("A", (), {"summary": True})()
+    assert anyio.run(cli._feedback_report, args) == 0
+    assert "要約は省きます" in capsys.readouterr().out
+    assert cli._feedback_drafts(args) == 0
+    assert "低評価" in capsys.readouterr().out

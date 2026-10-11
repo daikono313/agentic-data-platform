@@ -282,11 +282,12 @@ class SessionService:
             prompt_version=message.prompt_version if message else prompt_version(),
             model=message.model if message else None,
         )
-        # 送られてこなかった分類・コメントは既存の値を残す
+        # 送られてこなかった分類・コメントは既存の値を残す。ただし 👍 に付け替えたときは、👎 の理由
+        # （分類・コメント）を消す（苦情が良い評価として集計されないように。#97 レビュー）
         keep = {
             column
             for field, column in (("categories", "categories_json"), ("comment", "comment"))
-            if field not in body.model_fields_set
+            if field not in body.model_fields_set and body.thumb != "up"
         }
         return feedback_view(self.store.save_feedback(row, keep))
 

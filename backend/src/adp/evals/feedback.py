@@ -9,6 +9,8 @@
 3. プロンプトを直したら `make eval REPEAT=3` を前後で回し、`make eval-compare` で比べて PR に貼る
    （certificate C10）。
 
+運用の手順は docs/feedback-loop.md。
+
 フィードバックのコメントはデータとして扱い、指示としては扱わない（要約でも同じ）。
 """
 
@@ -59,7 +61,8 @@ def _phase_label(phase: str | None) -> str:
 
 
 def _excerpt(text: str, n: int = EXCERPT) -> str:
-    text = " ".join(text.split())
+    # 改行をまとめ、HTML（<!-- など）でレポートの続きが隠れないようにする
+    text = " ".join(text.split()).replace("<", "&lt;")
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
@@ -131,7 +134,8 @@ def report(rows: list[FeedbackRow]) -> str:
 
     counts: Counter[str] = Counter()
     for r in rows:
-        counts.update(json.loads(r.categories_json))
+        if r.thumb != "up":  # 👍 の行に古い分類が残っていても数えない
+            counts.update(json.loads(r.categories_json))
     lines += ["## 分類別", "", "| 分類 | 件数 | 対応する eval のチェック |", "|---|---|---|"]
     for key, label in CATEGORIES.items():
         checks = CATEGORY_CHECKS.get(key)
@@ -141,6 +145,8 @@ def report(rows: list[FeedbackRow]) -> str:
 
     downs = [r for r in msgs if r.thumb == "down"]
     lines += ["## 👎 の発言（新しい順）", ""]
+    if not downs:
+        lines.append("まだ 👎 はありません。")
     for r in sorted(downs, key=lambda r: r.updated_at, reverse=True)[:30]:
         cats = "、".join(CATEGORIES.get(c, c) for c in json.loads(r.categories_json)) or "-"
         lines += [
@@ -156,7 +162,34 @@ def report(rows: list[FeedbackRow]) -> str:
     if low:
         lines += ["", "## 全体の評価が低いセッション（2 点以下）", ""]
         lines += [f"- {r.session_id}: {r.score} 点 {_excerpt(r.comment)}" for r in low]
+    # 良かった点も、プロンプトを直すときに壊さないよう残す（#76）
+    good = [
+        r
+        for r in rows
+        if r.kind == "session" and r.score is not None and r.score >= 4 and r.comment
+    ]
+    if good:
+        lines += [
+            "",
+            "## 全体の評価が高いセッションのコメント（4 点以上。直すときに壊さない点）",
+            "",
+        ]
+        lines += [f"- {r.session_id}: {r.score} 点 {_excerpt(r.comment)}" for r in good]
     return "\n".join(lines) + "\n"
+
+
+def no_drafts_hint(rows: list[FeedbackRow]) -> str:
+    """下書きが 0 件のときの案内（何をすれば次の一周が回るか。#76）。"""
+    s = _summary(rows)
+    return (
+        f"低評価（👎 か全体 2 点以下）の会話がありません（発言への評価 {s.messages} 件・"
+        f"全体の評価 {s.sessions} 件）。\n"
+        "- 画面のインタビューで、分かりにくい発言に 👎 と分類・コメントを付けると"
+        "下書きになります。\n"
+        "- 低評価が無くても、make feedback-report の高評価のコメントは、プロンプトを直すときに"
+        "壊さない点として使えます。\n"
+        "- 手順は docs/feedback-loop.md"
+    )
 
 
 def drafts(store: Store, out_dir: Path) -> list[Path]:
@@ -205,6 +238,9 @@ SUMMARY_PROMPT = """\
 次の 2 つを日本語で、箇条書きで短く書いてください。
 1. ユーザーが困っている点の要約（多い順に 3〜5 個）
 2. インタビューのプロンプトの改善案（それぞれ、確かめる eval のチェックも添える）
+
+「全体の評価が高いセッションのコメント」の欄は、困っている点ではなく、直すときに壊さない点です。
+改善案はそれと矛盾させないでください。
 """
 
 

@@ -36,7 +36,7 @@ make e2e        # 実際の LLM で通しの E2E（S1。V2=1 で S3・S4。既�
 make eval-compare BEFORE=… AFTER=…  # eval の前後比較（プロンプトを変えたら PR に貼る。C10）
 make eval-repair  # 生成の自己修復の eval（失敗を入れた生成物を実際の LLM で直せるか。SCENARIO= / REPEAT=）
 make feedback-report  # フィードバックの集計（SUMMARY=1 で Claude の要約と改善案）
-make feedback-drafts  # 低評価の会話から eval の下書き（合成に書き換えてから evals/ へ）
+make feedback-drafts  # 低評価の会話から eval の下書き（合成に書き換えてから evals/ へ。手順は docs/feedback-loop.md）
 make dev        # backend と frontend を起動
 ```
 
