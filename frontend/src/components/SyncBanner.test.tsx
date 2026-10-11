@@ -138,10 +138,17 @@ describe('SyncBanner の自動反映（#106）', () => {
   it('取り込みを押した直後の問い合わせが同じジョブを返しても、二重に追わない', async () => {
     let resolveStart: (j: { id: string; status: 'running'; steps: never[] }) => void = () => {}
     const running = { id: 'j', status: 'running' as const, steps: [] }
-    vi.spyOn(api, 'syncStatus')
-      .mockResolvedValueOnce({ status: status(), job: null, auto: auto() })
-      .mockResolvedValue({ status: status(), job: running, auto: auto() })
-    vi.spyOn(api, 'startSync').mockImplementation(() => new Promise((r) => (resolveStart = r)))
+    // 取り込みを押すまでは実行中のジョブは無い（押す前の問い合わせで追い始めないように）
+    let started = false
+    vi.spyOn(api, 'syncStatus').mockImplementation(async () => ({
+      status: status(),
+      job: started ? running : null,
+      auto: auto(),
+    }))
+    vi.spyOn(api, 'startSync').mockImplementation(() => {
+      started = true
+      return new Promise((r) => (resolveStart = r))
+    })
     const events = vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {
       yield { event: 'done' as const, data: { id: 'j', status: 'succeeded' as const, steps: [] } }
     })
