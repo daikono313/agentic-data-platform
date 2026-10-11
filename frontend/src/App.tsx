@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import { api } from '@/api/client'
@@ -241,9 +242,18 @@ function InterviewApp() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
-        <div>
-          <h1 className="text-base font-bold">{session.beam.title}</h1>
-          <p className="text-xs text-muted-foreground">{session.beam.request}</p>
+        <div className="flex items-center gap-3">
+          <a
+            href="/"
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+            title="このセッションは保存されています。この画面の URL から再開できます"
+          >
+            <ArrowLeft className="size-3.5" /> ホーム
+          </a>
+          <div>
+            <h1 className="text-base font-bold">{session.beam.title}</h1>
+            <p className="text-xs text-muted-foreground">{session.beam.request}</p>
+          </div>
         </div>
         <PhaseProgress phase={session.phase} />
       </header>

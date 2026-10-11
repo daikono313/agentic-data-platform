@@ -73,7 +73,7 @@ export function ChartScreen({ metric: initial, jobId }: { metric: string; jobId?
     <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">
       <div className="flex flex-wrap items-center gap-2">
         <a href="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline">
-          <ArrowLeft className="size-4" /> トップへ
+          <ArrowLeft className="size-4" /> ホーム
         </a>
         <h1 className="text-lg font-bold">{current?.label ?? metric}</h1>
         {options?.preview && <Badge variant="outline">生成 PR の内容でプレビュー（マージ前）</Badge>}

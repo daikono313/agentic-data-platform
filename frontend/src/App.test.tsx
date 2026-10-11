@@ -25,6 +25,12 @@ describe('App', () => {
     expect(screen.getByLabelText('顧客が商品を注文する × 店舗')).toHaveTextContent('✓')
     expect(screen.getByRole('button', { name: '確定して実装へ' })).toBeDisabled()
   })
+
+  it('インタビュー画面からホーム（開始画面）に戻れる', () => {
+    window.history.replaceState(null, '', '/?demo')
+    render(<App />)
+    expect(screen.getByRole('link', { name: 'ホーム' })).toHaveAttribute('href', '/')
+  })
 })
 
 describe('App の開始画面', () => {
