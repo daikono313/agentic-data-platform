@@ -1,0 +1,7 @@
+name: wrong_ref
+description: 存在しないモデルへの ref（dbt parse が失敗する）
+beam: backend/tests/fixtures/beam/sales_by_store.yml
+fault:
+  file: models/marts/fct_order_lines.sql
+  replace: ["ref('stg_orders')", "ref('stg_order')"]
+expect: fixed

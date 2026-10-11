@@ -1,6 +1,6 @@
 SAMPLE_ORDERS ?= 30000
 
-.PHONY: sample-data setup lint test dbt-build charts ontology cleansing eval e2e eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
+.PHONY: sample-data setup lint test dbt-build charts ontology cleansing eval-repair eval e2e eval-compare feedback-report feedback-drafts dev dev-backend dev-frontend check-secrets
 
 DBT := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/dbt
 MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
@@ -55,6 +55,10 @@ eval:
 # 実際の LLM で通しの E2E（S1。V2=1 で S3・S4 も）。既定は dry-run（push・PR 作成をしない）。PR=1 で本物の PR
 e2e:
 	cd backend && uv run python -m adp.evals.e2e --scenario $(or $(SCENARIO),sales_by_store) $(if $(V2),--v2) $(if $(V3),--v3) $(if $(PR),,--dry-run)
+
+# 生成の自己修復の eval（#78）: 失敗を入れた生成物を実際の LLM で直せるか。make eval-repair [SCENARIO=名前] [REPEAT=N]
+eval-repair:
+	cd backend && uv run python -m adp.evals repair $(if $(SCENARIO),--scenario $(SCENARIO)) $(if $(REPEAT),--repeat $(REPEAT))
 
 # eval の前後比較（プロンプトを直したら PR に貼る。certificate C10）: make eval-compare BEFORE=.adp/evals/<前> AFTER=.adp/evals/<後>
 eval-compare:

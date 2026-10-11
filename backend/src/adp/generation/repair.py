@@ -72,8 +72,14 @@ class RepairResult:
         return not self.ok
 
 
+# dbt のプロファイルの DB の場所を変える環境変数。検証は作業ツリーの DB で行うので渡さない
+# （設定されていると、手元の本物の DB に書いてしまう）
+_DROP_ENV = ("ADP_DUCKDB_PATH",)
+
+
 def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    env = os.environ | {"DBT_PROFILES_DIR": str(cwd), "NO_COLOR": "1"}
+    env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
+    env |= {"DBT_PROFILES_DIR": str(cwd), "NO_COLOR": "1"}
     try:
         return subprocess.run(
             args,
@@ -236,17 +242,37 @@ class Repairer:
         return "".join(text).strip(), guard.denied
 
     async def run(
-        self, warehouse: Path, queries: list[MetricQuery], tasks: list[AgentTask] | None = None
+        self,
+        warehouse: Path,
+        queries: list[MetricQuery],
+        tasks: list[AgentTask] | None = None,
+        baseline: dict[str, str] | None = None,
     ) -> RepairResult:
+        """baseline: 比べるテストの一覧（無ければ今のプロジェクトから取る）。"""
         attempts: list[Attempt] = []
         ensure_deps(warehouse, self.bin_dir)
-        baseline = test_inventory(warehouse, self.bin_dir)
+        if baseline is None:
+            baseline = test_inventory(warehouse, self.bin_dir)
+        if baseline is None:
+            # 生成物が dbt で読めない（ls が失敗）。直った後の最初の一覧を比べる元にする
+            # （それ以前の弱め方は検出できないので、そのことを記録する）
+            self.log("テストの一覧を取得できません（dbt ls が失敗）。直った後の一覧と比べます")
 
         def check() -> CheckResult:
-            if baseline is None:
-                return CheckResult(False, "テストの一覧を取得できませんでした（dbt ls が失敗）")
+            nonlocal baseline
             result = verify(warehouse, self.bin_dir, queries)
-            problems = weakened_tests(baseline, test_inventory(warehouse, self.bin_dir))
+            now = test_inventory(warehouse, self.bin_dir)
+            if baseline is None:
+                if now is None:
+                    return (
+                        result
+                        if not result.ok
+                        else CheckResult(
+                            False, "テストの一覧を取得できませんでした（dbt ls が失敗）"
+                        )
+                    )
+                baseline = now
+            problems = weakened_tests(baseline, now)
             if problems:
                 return CheckResult(False, "テストが弱められました", "\n".join(problems))
             return result

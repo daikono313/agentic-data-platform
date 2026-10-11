@@ -1,6 +1,7 @@
 """eval とフィードバックの改善サイクル（#45）。
 
 uv run python -m adp.evals interview [--scenario NAME ...] [--max-turns N] [--repeat N]
+uv run python -m adp.evals repair [--scenario NAME ...] [--repeat N]
 uv run python -m adp.evals compare <前の結果> <後の結果>
 uv run python -m adp.evals feedback-report [--summary]
 uv run python -m adp.evals feedback-drafts
@@ -131,6 +132,55 @@ def _feedback_drafts(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _repair(args: argparse.Namespace) -> int:
+    """生成の自己修復の eval（#78）。実際の LLM で、失敗を入れた生成物を直せるかを測る。"""
+    import tempfile
+
+    from adp.evals.repair import (
+        SCENARIO_DIR,
+        RepairScenario,
+        default_out_dir,
+        run_scenario,
+        save,
+        summary,
+    )
+    from adp.llm import ClaudeAgentRunner, load_settings
+
+    settings = load_settings()
+    runner = ClaudeAgentRunner(settings)
+    paths = sorted(SCENARIO_DIR.glob("*.yml"))
+    if args.scenario:
+        unknown = sorted(set(args.scenario) - {p.stem for p in paths})
+        if unknown:
+            print(f"シナリオがありません: {', '.join(unknown)}")
+            return 2
+        paths = [p for p in paths if p.stem in args.scenario]
+    if args.repeat < 1 or not paths:
+        print("実行するシナリオがありません")
+        return 2
+    out_dir = default_out_dir()
+    print(f"auth: {settings.auth_mode}, model: {settings.default_model}, out: {out_dir}")
+    results = []
+    for path in paths:
+        scenario = RepairScenario.load(path)
+        for i in range(args.repeat):
+            with tempfile.TemporaryDirectory(prefix="adp-repair-") as tmp:
+                result = await run_scenario(
+                    scenario, runner, settings, Path(sys.executable).parent, Path(tmp)
+                )
+            results.append(result)
+            save(result, out_dir, suffix="" if args.repeat == 1 else f".{i + 1}")
+            mark = "ok" if result.passed else "NG"
+            detail = result.final or result.error
+            print(f"  {mark} {scenario.name}: {detail}（{result.duration_s} 秒）")
+            # 途中で止めても、そこまでの表を残す
+            (out_dir / "summary.md").write_text(summary(results) + "\n", encoding="utf-8")
+    table = summary(results)
+    (out_dir / "summary.md").write_text(table + "\n", encoding="utf-8")
+    print(table)
+    return 0 if all(r.passed for r in results) else 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -138,6 +188,9 @@ def main() -> None:
     p.add_argument("--scenario", nargs="*")
     p.add_argument("--max-turns", type=int, default=25)
     p.add_argument("--repeat", type=int, default=1, help="LLM のぶれを見るため、各シナリオを N 回")
+    p = sub.add_parser("repair")
+    p.add_argument("--scenario", nargs="*")
+    p.add_argument("--repeat", type=int, default=1)
     p = sub.add_parser("compare")
     p.add_argument("before")
     p.add_argument("after")
@@ -147,6 +200,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "interview":
         sys.exit(anyio.run(_interview, args))
+    if args.command == "repair":
+        sys.exit(anyio.run(_repair, args))
     if args.command == "compare":
         sys.exit(_compare(args))
     if args.command == "feedback-report":

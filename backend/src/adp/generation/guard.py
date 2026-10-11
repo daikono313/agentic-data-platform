@@ -30,7 +30,8 @@ PROTECTED_FILES = {
 }
 # チャートは生成後に adp.charts が書き出す。エージェントには書かせない（手書きの SQL を入れない）
 # クレンジングの定義も同様（定義から adp.cleansing がクレンジング層を生成する。#68）
-PROTECTED_DIRS = {"charts", "chart_specs", "cleansing"}
+# macros は、汎用テスト（relationships など）を上書きしていつも通るようにできるので書かせない
+PROTECTED_DIRS = {"charts", "chart_specs", "cleansing", "macros"}
 _DBT = {"parse", "build", "compile", "test", "ls", "list"}
 _MF = {"validate-configs", "query", "list"}
 # 値を取るオプション（値にパスを渡せないものだけ）
@@ -124,8 +125,8 @@ class WorkspaceGuard:
                 )
             if PROTECTED_DIRS & {p.lower() for p in target.relative_to(self.root).parts[:1]}:
                 return (
-                    "チャート（charts/ と chart_specs/）と"
-                    "クレンジングの定義（cleansing/）は書き換えられません"
+                    "チャート（charts/ と chart_specs/）・クレンジングの定義（cleansing/）・"
+                    "マクロ（macros/）は書き換えられません"
                 )
             if _is_cleansing_output(target):
                 return "クレンジング層（stg）は定義から生成します。直接は書き換えられません"
