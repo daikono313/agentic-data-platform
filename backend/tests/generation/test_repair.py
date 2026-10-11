@@ -226,3 +226,32 @@ def test_guard_protects_cleansing(tmp_path: Path) -> None:
         guard("Edit", {"file_path": "models/staging/stg_hand.sql", "new_string": "select 2"})
         is None
     )
+
+
+async def test_repair_works_when_generated_project_does_not_parse(generated) -> None:  # type: ignore[no-untyped-def]
+    """生成物が dbt で読めない（テストの一覧が取れない）ときも、直れば通す（#95 レビュー）。"""
+    warehouse, queries = generated
+    sql = warehouse / "models/marts/fct_order_lines.sql"
+    original = sql.read_text()
+    sql.write_text(original.replace("ref('stg_orders')", "ref('stg_nope')", 1))
+
+    def fix(n: int, spec: AgentSpec) -> None:
+        sql.write_text(original)
+
+    result = await Repairer(FixingRunner(fix), LLMSettings(), DBT.parent).run(warehouse, queries)
+    assert result.ok, result.final
+
+
+def test_dbt_does_not_use_the_real_db_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """検証の dbt に ADP_DUCKDB_PATH を渡さない（手元の本物の DB に書かない。#95 レビュー）。"""
+    from adp.generation.repair import _run
+
+    monkeypatch.setenv("ADP_DUCKDB_PATH", "/tmp/real.duckdb")
+    out = _run(["sh", "-c", "echo ${ADP_DUCKDB_PATH:-unset}"], tmp_path)
+    assert out.stdout.strip() == "unset"
+
+
+def test_guard_protects_macros(tmp_path: Path) -> None:
+    """マクロ（汎用テストの上書きでいつも通るようにできる）は書かせない（#95 レビュー）。"""
+    guard = WorkspaceGuard(tmp_path)
+    assert guard("Write", {"file_path": "macros/test_relationships.sql", "content": "x"})

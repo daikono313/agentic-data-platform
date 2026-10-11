@@ -150,7 +150,14 @@ async def _repair(args: argparse.Namespace) -> int:
     runner = ClaudeAgentRunner(settings)
     paths = sorted(SCENARIO_DIR.glob("*.yml"))
     if args.scenario:
+        unknown = sorted(set(args.scenario) - {p.stem for p in paths})
+        if unknown:
+            print(f"シナリオがありません: {', '.join(unknown)}")
+            return 2
         paths = [p for p in paths if p.stem in args.scenario]
+    if args.repeat < 1 or not paths:
+        print("実行するシナリオがありません")
+        return 2
     out_dir = default_out_dir()
     print(f"auth: {settings.auth_mode}, model: {settings.default_model}, out: {out_dir}")
     results = []
@@ -166,6 +173,8 @@ async def _repair(args: argparse.Namespace) -> int:
             mark = "ok" if result.passed else "NG"
             detail = result.final or result.error
             print(f"  {mark} {scenario.name}: {detail}（{result.duration_s} 秒）")
+            # 途中で止めても、そこまでの表を残す
+            (out_dir / "summary.md").write_text(summary(results) + "\n", encoding="utf-8")
     table = summary(results)
     (out_dir / "summary.md").write_text(table + "\n", encoding="utf-8")
     print(table)

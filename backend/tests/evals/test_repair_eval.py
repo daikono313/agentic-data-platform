@@ -18,6 +18,7 @@ from adp.evals.repair import (
 )
 from adp.generation import generate_models
 from adp.generation.project import ProjectInfo
+from adp.generation.semantic import MetricQuery
 from adp.llm import AgentSpec, LLMSettings
 from adp.llm.settings import REPO_ROOT
 from tests.generation.test_dbt_codegen import DBT
@@ -60,9 +61,50 @@ def test_fault_rejects_paths_outside_and_stale_text(tmp_path: Path) -> None:
         Fault(file="a.sql", replace=("from", "frm")).apply(tmp_path)
 
 
-async def test_harness_measures_fixed_and_not_fixed(tmp_path: Path) -> None:
-    """失敗を入れ、直すエージェントなら「期待どおり」、直さなければ「期待と違う」になる。"""
-    scenario = next(s for s in SCENARIOS if s.name == "sql_typo")
+@pytest.fixture(scope="module")
+def built(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, list[MetricQuery]]]:
+    """生成した直後のプロジェクト（検証が通る状態）と、BEAM ごとの元の要求の mf query。"""
+    from adp.generation.repair import verify
+
+    warehouse = prepare_warehouse(tmp_path_factory.mktemp("built"))
+    info = ProjectInfo(warehouse, Catalog(warehouse / "data" / "dev.duckdb"))
+    queries: dict[str, list[MetricQuery]] = {}
+    for beam_path in {s.beam for s in SCENARIOS}:
+        beam = load(REPO_ROOT / beam_path)
+        gen = generate_models(DesignBuilder(CatalogSchema(info.catalog)).build(beam), info, beam)
+        info.write(gen.files)
+        queries[beam_path] = gen.queries
+    assert verify(warehouse, DBT.parent, [q for qs in queries.values() for q in qs]).ok
+    return warehouse, queries
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
+def test_each_fault_breaks_verification(
+    scenario: RepairScenario,
+    built: tuple[Path, dict[str, list[MetricQuery]]],
+    generated: dict[str, str],
+) -> None:
+    """失敗を入れると検証が失敗し、元に戻すと（テストの名前も含めて）通る。
+
+    直せないシナリオ（dbt で読めない・正しく直すとテストの名前が変わる）を見つける。
+    """
+    from adp.generation.repair import test_inventory, verify, weakened_tests
+
+    warehouse, queries = built
+    baseline = test_inventory(warehouse, DBT.parent)
+    assert baseline is not None
+    path = warehouse / scenario.fault.file
+    try:
+        scenario.fault.apply(warehouse)
+        assert not verify(warehouse, DBT.parent, queries[scenario.beam]).ok
+    finally:
+        path.write_text(generated[scenario.fault.file], encoding="utf-8")
+    assert weakened_tests(baseline, test_inventory(warehouse, DBT.parent)) == []
+
+
+async def test_harness_counts_an_honest_fix(tmp_path: Path) -> None:
+    """失敗を入れ、元に戻すエージェントなら「期待どおり」「元に戻した」になる。"""
+    scenario = next(s for s in SCENARIOS if s.name == "wrong_ref")  # dbt で読めなくなる失敗
 
     def undo(n: int, spec: AgentSpec) -> None:
         assert spec.cwd is not None
@@ -71,13 +113,24 @@ async def test_harness_measures_fixed_and_not_fixed(tmp_path: Path) -> None:
         path.write_text(path.read_text().replace(new, old, 1))
 
     settings = LLMSettings(default_model="sonnet", escalation_model="opus")
-    fixed = await run_scenario(scenario, FixingRunner(undo), settings, DBT.parent, tmp_path / "a")
-    assert fixed.passed and fixed.ok, fixed.error
-    assert [a["ok"] for a in fixed.attempts] == [True]
+    fixed = await run_scenario(scenario, FixingRunner(undo), settings, DBT.parent, tmp_path)
+    assert fixed.passed and fixed.ok and fixed.restored, (fixed.error, fixed.final)
+    assert fixed.changed == [] and [a["ok"] for a in fixed.attempts] == [True]
 
-    never = await run_scenario(
-        scenario, FixingRunner(lambda n, s: None), settings, DBT.parent, tmp_path / "b"
-    )
-    assert not never.passed and not never.ok and len(never.attempts) == 3
-    table = summary([fixed, never])
-    assert "| sql_typo | 1/2 |" in table and "**1/2**" in table
+
+def test_summary_table() -> None:
+    from adp.evals.repair import RepairEvalResult
+
+    rs = [
+        RepairEvalResult("a", passed=True, ok=True, expect="fixed", restored=True, attempts=[{}]),
+        RepairEvalResult("a", passed=False, ok=False, expect="fixed", attempts=[{}, {}, {}]),
+    ]
+    table = summary(rs)
+    assert "| a | 1/2 | 1/2 | 2.0 |" in table and "**1/2**" in table
+
+
+def test_scenario_name_must_match_file(tmp_path: Path) -> None:
+    path = tmp_path / "x.yml"
+    path.write_text("name: y\nbeam: b.yml\nfault: {file: a.sql, replace: [a, b]}\n")
+    with pytest.raises(ValueError, match="ファイル名"):
+        RepairScenario.load(path)

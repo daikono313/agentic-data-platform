@@ -13,13 +13,14 @@
       # または delete_lines_with: " as sales_amount"        # その文字列を含む行を消す
     expect: fixed                          # fixed（直る）か handed_to_human（人に渡す）
 
-結果は `.adp/evals/repair-<日時>/<name>[-<n>].json` と、成功率の表。
+結果は `.adp/evals/repair-<日時>-<pid>/<name>[.<n>].json` と、成功率の表（`summary.md`）。
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import sys
 import time
@@ -37,7 +38,7 @@ from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
 from adp.generation.project import ProjectInfo
-from adp.generation.repair import Repairer
+from adp.generation.repair import Repairer, ensure_deps, test_inventory
 from adp.llm import AgentRunner, LLMSettings
 from adp.llm.settings import REPO_ROOT
 
@@ -84,7 +85,10 @@ class RepairScenario(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> RepairScenario:
-        return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        scenario = cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        if scenario.name != path.stem:
+            raise ValueError(f"{path.name}: name（{scenario.name}）はファイル名と同じにする")
+        return scenario
 
 
 @dataclass
@@ -94,6 +98,10 @@ class RepairEvalResult:
     ok: bool
     """自己修復で検証が通ったか。"""
     expect: str
+    restored: bool = False
+    """失敗を入れたファイルが、生成した直後の内容に戻ったか（別の直し方・回避をしていないか）。"""
+    changed: list[str] = field(default_factory=list)
+    """生成した直後から変わったファイル（warehouse からの相対パス）。"""
     attempts: list[dict[str, Any]] = field(default_factory=list)
     final: str = ""
     duration_s: float = 0.0
@@ -145,19 +153,57 @@ async def run_scenario(
         beam = load(REPO_ROOT / scenario.beam)
         generation = generate_models(DesignBuilder(CatalogSchema(catalog)).build(beam), info, beam)
         info.write(generation.files)
+        # 比べるテストの一覧は、失敗を入れる前の（生成した直後の）もの
+        deps = ensure_deps(warehouse, bin_dir)
+        if deps is not None:
+            raise ValueError(f"dbt deps が失敗しました: {deps.log[-500:]}")
+        baseline = test_inventory(warehouse, bin_dir)
+        if baseline is None:
+            raise ValueError("生成した直後のプロジェクトでテストの一覧を取れません")
+        before = _snapshot(warehouse)
         scenario.fault.apply(warehouse)
-        repair = await Repairer(runner, settings, bin_dir).run(warehouse, generation.queries)
+        original = before[scenario.fault.file]
+        repair = await Repairer(runner, settings, bin_dir).run(
+            warehouse, generation.queries, baseline=baseline
+        )
         result.ok = repair.ok
         result.final = repair.final.summary
         result.attempts = [
-            {"model": a.model, "reason": a.reason, "ok": a.result.ok, "summary": a.result.summary}
+            {
+                "model": a.model,
+                "reason": a.reason,
+                "ok": a.result.ok,
+                "summary": a.result.summary,
+                "agent_summary": a.agent_summary[-2000:],
+                "denied": a.denied,
+            }
             for a in repair.attempts
         ]
-        result.passed = repair.ok == (scenario.expect == "fixed")
+        after = _snapshot(warehouse)
+        result.restored = after.get(scenario.fault.file) == original
+        result.changed = sorted(
+            p for p in before.keys() | after.keys() if before.get(p) != after.get(p)
+        )
+        if repair.ok and not repair.attempts:
+            raise ValueError("失敗を入れても検証が通りました（シナリオの失敗が効いていない）")
+        if scenario.expect == "fixed":
+            result.passed = repair.ok
+        else:  # 人に渡すべき失敗: 直ったことにせず、テストも弱めていない
+            result.passed = not repair.ok and "弱められ" not in repair.final.summary
     except Exception as e:  # 準備の失敗はシナリオの失敗として記録する
         result.error = f"{type(e).__name__}: {e}"
     result.duration_s = round(time.monotonic() - started, 1)
     return result
+
+
+def _snapshot(warehouse: Path) -> dict[str, str]:
+    """models / tests / macros のファイルの内容（直し方の確認用）。"""
+    out: dict[str, str] = {}
+    for d in ("models", "tests", "macros"):
+        for p in (warehouse / d).rglob("*"):
+            if p.is_file() and p.suffix in {".sql", ".yml", ".yaml"}:
+                out[str(p.relative_to(warehouse))] = p.read_text(encoding="utf-8")
+    return out
 
 
 def save(result: RepairEvalResult, out_dir: Path, suffix: str = "") -> Path:
@@ -172,16 +218,23 @@ def summary(results: list[RepairEvalResult]) -> str:
     by: dict[str, list[RepairEvalResult]] = {}
     for r in results:
         by.setdefault(r.scenario, []).append(r)
-    lines = ["| シナリオ | 期待どおり | 修復の試行（平均） | 時間（平均） |", "|---|---|---|---|"]
+    lines = [
+        "| シナリオ | 期待どおり | 元に戻した | 修復の試行（平均） | 時間（平均） |",
+        "|---|---|---|---|---|",
+    ]
     for name, rs in sorted(by.items()):
         passed = sum(r.passed for r in rs)
         tries = sum(len(r.attempts) for r in rs) / len(rs)
         secs = sum(r.duration_s for r in rs) / len(rs)
-        lines.append(f"| {name} | {passed}/{len(rs)} | {tries:.1f} | {secs:.0f} 秒 |")
+        restored = sum(r.restored for r in rs)
+        lines.append(
+            f"| {name} | {passed}/{len(rs)} | {restored}/{len(rs)} | {tries:.1f} | {secs:.0f} 秒 |"
+        )
     total = sum(r.passed for r in results)
-    lines.append(f"| **合計** | **{total}/{len(results)}** | | |")
+    lines.append(f"| **合計** | **{total}/{len(results)}** | | | |")
     return "\n".join(lines)
 
 
 def default_out_dir() -> Path:
-    return REPO_ROOT / ".adp" / "evals" / f"repair-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return REPO_ROOT / ".adp" / "evals" / f"repair-{stamp}-{os.getpid()}"
