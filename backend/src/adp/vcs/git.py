@@ -161,6 +161,20 @@ class GitHub:
         ).stdout.strip()
         return out if re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", out) else None
 
+    def pr_state(self, url: str) -> str | None:
+        """PR の状態（OPEN / MERGED / CLOSED）。GitHub の PR の URL でない・取れなければ None。"""
+        if not re.fullmatch(r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/\d+", url):
+            return None
+        try:
+            out = self.run(
+                ["gh", "pr", "view", url, "--json", "state", "-q", ".state"],
+                self.repo_root,
+                self._env(),
+            ).stdout.strip()
+        except Exception:
+            return None
+        return out if out in ("OPEN", "MERGED", "CLOSED") else None
+
     def create_pr(
         self, wt: Worktree, title: str, body: str, base: str = "main", draft: bool = False
     ) -> str:

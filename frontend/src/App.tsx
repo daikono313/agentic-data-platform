@@ -13,6 +13,7 @@ import { EventMatrixView } from '@/components/EventMatrixView'
 import { SessionRating } from '@/components/Feedback'
 import { JobProgress } from '@/components/JobProgress'
 import { OnboardingScreen } from '@/components/Onboarding'
+import { HistoryScreen } from '@/components/History'
 import { OntologyScreen } from '@/components/Ontology'
 import { PhaseProgress } from '@/components/PhaseProgress'
 import { SourceProfileScreen } from '@/components/SourceProfile'
@@ -118,6 +119,7 @@ export default function App() {
   if (params.has('ontology')) return <OntologyScreen />
   const onboard = params.get('onboard')
   if (onboard) return <OnboardingScreen table={onboard} />
+  if (params.has('history')) return <HistoryScreen />
   return <InterviewApp />
 }
 
@@ -386,7 +388,12 @@ function StartScreen({
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
       <section className="space-y-3" aria-label="要求の入力">
-        <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h1 className="text-2xl font-bold">どんな指標を見たいですか？</h1>
+          <a href="?history" className="text-sm text-primary underline">
+            これまでの要求と PR
+          </a>
+        </div>
         <form
           className="flex gap-2"
           onSubmit={(e) => {

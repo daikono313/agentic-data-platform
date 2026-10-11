@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -38,6 +39,11 @@ OnboardingRunner = Callable[
 """(源泉, 追加案, クレンジングの定義の YAML, on_step) → 結果（#69）。"""
 ONBOARD_PREFIX = "onboard:"
 """取り込みジョブの session_id（セッションの代わりに源泉で引く）。"""
+PrState = Callable[[str], str | None]
+"""PR の URL → OPEN / MERGED / CLOSED（取れなければ None）。"""
+PR_STATE_TTL_S = 300.0
+PR_STATE_LOOKUPS = 20
+"""一覧 1 回あたりに GitHub へ問い合わせる PR の数の上限（残りは前回の結果か不明）。"""
 
 
 def _sse(event: str, data: Any) -> SSEEvent:
@@ -102,11 +108,14 @@ class SessionService:
         interviewer: Interviewer,
         pipeline: PipelineRunner,
         onboarding: OnboardingRunner | None = None,
+        pr_state: PrState | None = None,
     ) -> None:
         self.store = store
         self.interviewer = interviewer
         self.pipeline = pipeline
         self.onboarding = onboarding
+        self.pr_state = pr_state
+        self._pr_cache: dict[str, tuple[float, str | None]] = {}
         self._states: dict[str, InterviewState] = {}
         self._jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -145,6 +154,46 @@ class SessionService:
             "versions": [v.version for v in self.store.versions(session_id)],
             "feedback": [feedback_view(f) for f in self.store.feedback(session_id)],
         }
+
+    # --- 一覧（#73） ----------------------------------------------------------------------
+
+    def history(self) -> dict[str, Any]:
+        """これまでのセッション（要求・段階・生成ジョブ・PR の状態）の新しい順。
+
+        PR の状態は GitHub に問い合わせる（同期処理。呼び出し側でスレッドに出す）。
+        """
+        budget = [PR_STATE_LOOKUPS]
+        sessions = []
+        for row in self.store.list_sessions():
+            state = InterviewState.model_validate_json(row.state_json)
+            job = self._job_view(row.id)
+            pr_url = job["pr_url"] if job else None
+            sessions.append(
+                {
+                    "id": row.id,
+                    "title": state.beam.title,
+                    "request": state.beam.request,
+                    "phase": state.phase.value,
+                    "updated_at": row.updated_at.isoformat(),
+                    "metrics": [m.label for m in state.beam.metrics],
+                    "job": job,
+                    "pr_state": self._cached_pr_state(pr_url, budget) if pr_url else None,
+                }
+            )
+        return {"sessions": sessions}
+
+    def _cached_pr_state(self, url: str, budget: list[int]) -> str | None:
+        now = time.monotonic()
+        cached = self._pr_cache.get(url)
+        # マージ・クローズ済みは変わらないので問い合わせ直さない
+        if cached and (cached[1] in ("MERGED", "CLOSED") or now - cached[0] < PR_STATE_TTL_S):
+            return cached[1]
+        if self.pr_state is None or budget[0] <= 0:
+            return cached[1] if cached else None
+        budget[0] -= 1
+        state = self.pr_state(url)
+        self._pr_cache[url] = (now, state)
+        return state
 
     def feedback(self, session_id: str, body: FeedbackIn) -> dict[str, Any]:
         """発言ごと・セッション全体のフィードバックを保存する（#44）。

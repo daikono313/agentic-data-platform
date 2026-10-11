@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, col, create_engine, select
 
 from adp.beam import BeamModel, to_yaml
 from adp.feedback import RETENTION_DAYS
@@ -107,6 +107,23 @@ class Store:
                 row.updated_at = _now()
                 db.add(row)
             db.commit()
+
+    def list_sessions(self, limit: int = 200) -> list[SessionRow]:
+        """新しく更新された順（一覧画面。#73）。"""
+        with Session(self.engine) as db:
+            stmt = select(SessionRow).order_by(col(SessionRow.updated_at).desc()).limit(limit)
+            return list(db.exec(stmt))
+
+    def list_jobs(self, prefix: str, limit: int = 200) -> list[JobRow]:
+        """session_id が prefix で始まるジョブ（源泉の取り込みなど）の新しい順。"""
+        with Session(self.engine) as db:
+            stmt = (
+                select(JobRow)
+                .where(col(JobRow.session_id).startswith(prefix))
+                .order_by(col(JobRow.created_at).desc())
+                .limit(limit)
+            )
+            return list(db.exec(stmt))
 
     def load_session(self, session_id: str) -> InterviewState | None:
         with Session(self.engine) as db:
