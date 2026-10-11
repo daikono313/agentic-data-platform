@@ -1,0 +1,22 @@
+# adp が BEAM の指標要求から生成（SQL は書かない。ADR 0002）
+title: 在庫状況の把握
+metric_queries:
+  monthly_stock_change_qty:
+    metrics:
+    - monthly_stock_change_qty
+    group_by:
+    - metric_time__month
+    - product__category
+    order:
+    - metric_time__month
+charts:
+  monthly_stock_change_qty:
+    query: monthly_stock_change_qty
+    title: 月別の在庫増減数
+    y_label: 月別の在庫増減数
+    type: line
+    x: metric_time__month
+    y: monthly_stock_change_qty
+    color: product__category
+rows:
+- monthly_stock_change_qty

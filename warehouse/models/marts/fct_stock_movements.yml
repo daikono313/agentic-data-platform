@@ -1,0 +1,114 @@
+# adp により生成
+version: 2
+models:
+- name: fct_stock_movements
+  description: '店舗が商品の在庫を動かす（入庫・棚卸・移動出庫・廃棄）（transaction）。粒度: 在庫の動き 1 件（入庫・棚卸・移動出庫・廃棄の記録 1 行）'
+  semantic_model:
+    enabled: true
+  agg_time_dimension: moved_on
+  derived_semantics:
+    entities:
+    - type: foreign
+      name: date
+      expr: moved_on
+  metrics:
+  - name: monthly_stock_change_qty
+    label: 月別の在庫増減数
+    description: 月ごとの在庫の増減数（棚卸を除く）はいくつか（商品カテゴリ・店舗・地方別）。月末在庫数はここから後で計算する
+    type: simple
+    agg: sum
+    expr: movement_qty
+    filter: '{{ Dimension(''stock_movement__movement_type'') }} <> ''count'''
+  columns:
+  - name: inventory_id
+    description: 在庫記録ID（縮退ディメンション）
+    entity:
+      type: primary
+      name: stock_movement
+    data_tests:
+    - unique
+    - not_null
+  - name: moved_on
+    description: 動いた日時
+    granularity: day
+    dimension:
+      type: time
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_date')
+          field: date_day
+  - name: moved_at
+    description: 動いた日時（日時）
+  - name: store_key
+    description: 店舗
+    entity:
+      type: foreign
+      name: store
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_store')
+          field: store_key
+  - name: product_key
+    description: 商品
+    entity:
+      type: foreign
+      name: product
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('dim_product')
+          field: product_key
+  - name: movement_type
+    description: 動きの種類（マスタなし）
+    dimension:
+      type: categorical
+    data_tests:
+    - accepted_values:
+        arguments:
+          values:
+          - count
+          - disposal
+          - receipt
+          - transfer_out
+        config:
+          severity: warn
+  - name: movement_qty
+    description: 数量（個）
+unit_tests:
+- name: test_fct_stock_movements_example_1
+  description: BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する
+  model: fct_stock_movements
+  given:
+  - input: ref('stg_inventory')
+    rows:
+    - inventory_id: 1
+      moved_at: '2025-03-15 00:00:00'
+      movement_type: receipt
+      product_id: 1
+      quantity: 10
+      store_id: 1
+    - inventory_id: 2
+      moved_at: '2024-01-01 00:00:00'
+      movement_type: x
+      product_id: null
+      quantity: 1
+      store_id: null
+  expect:
+    rows:
+    - inventory_id: 1
+      moved_on: '2025-03-15'
+      store_key: c4ca4238a0b923820dcc509a6f75849b
+      product_key: c4ca4238a0b923820dcc509a6f75849b
+      movement_type: receipt
+      movement_qty: 10
+    - inventory_id: 2
+      moved_on: '2024-01-01'
+      store_key: 4fb8d4763fa5f060e796b4710c921eb8
+      product_key: 4fb8d4763fa5f060e796b4710c921eb8
+      movement_type: x
+      movement_qty: 1

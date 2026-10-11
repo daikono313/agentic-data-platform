@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.inventory.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_inventory
+  description: raw.inventory をクレンジング
+  columns:
+  - name: inventory_id
+    data_tests:
+    - unique
+    - not_null

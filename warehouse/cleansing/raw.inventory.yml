@@ -1,0 +1,4 @@
+source: raw.inventory
+dbt_source: adp_inventory
+description: raw.inventory をクレンジング
+key: inventory_id

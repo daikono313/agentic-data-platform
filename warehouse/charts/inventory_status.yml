@@ -1,0 +1,24 @@
+# adp により生成（chart_specs/inventory_status.yml から `python -m adp.charts compile`）。編集しない
+title: 在庫状況の把握
+source: warehouse
+queries:
+  monthly_stock_change_qty:
+    sql: "SELECT\n  metric_time__month,\n  product__category,\n  SUM(monthly_stock_change_qty) AS monthly_stock_change_qty\n\
+      FROM (\n  SELECT\n    DATE_TRUNC('MONTH', fct_stock_movements_src_10000.moved_on) AS metric_time__month,\n\
+      \    fct_stock_movements_src_10000.movement_type AS stock_movement__movement_type,\n    dim_product_src_10000.category\
+      \ AS product__category,\n    fct_stock_movements_src_10000.movement_qty AS monthly_stock_change_qty\n\
+      \  FROM \"main\".\"fct_stock_movements\" AS fct_stock_movements_src_10000\n  LEFT OUTER JOIN \"\
+      main\".\"dim_product\" AS dim_product_src_10000\n    ON fct_stock_movements_src_10000.product_key\
+      \ = dim_product_src_10000.product_key\n) AS subq_5\nWHERE\n  stock_movement__movement_type <> 'count'\n\
+      GROUP BY\n  metric_time__month,\n  product__category\nORDER BY\n  metric_time__month"
+charts:
+  monthly_stock_change_qty:
+    query: monthly_stock_change_qty
+    title: 月別の在庫増減数
+    y_label: 月別の在庫増減数
+    type: line
+    x: metric_time__month
+    y: monthly_stock_change_qty
+    color: product__category
+rows:
+- monthly_stock_change_qty

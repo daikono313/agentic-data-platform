@@ -1,0 +1,7 @@
+# adp により生成
+version: 2
+sources:
+- name: adp_inventory
+  schema: raw
+  tables:
+  - name: inventory
