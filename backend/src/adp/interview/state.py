@@ -24,7 +24,7 @@ class Phase(StrEnum):
     CONFORMANCE = "conformance"
     """既存ディメンションとの共通化を確認する。"""
     PRIORITIZATION = "prioritization"
-    """優先度・インパクト・工数を聞く。"""
+    """優先度とインパクトを聞く（工数はモデラーが見積もる）。"""
     REVIEW = "review"
     """要約を示して確認する。"""
     FINALIZED = "finalized"
