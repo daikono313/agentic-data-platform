@@ -1,0 +1,275 @@
+schema_version: 1
+name: product_sales
+title: 商品別売上
+request: 商品ごとの売り上げをみたい
+events:
+- name: customer_orders_product
+  table_name: order_lines
+  label: 顧客が商品を注文する
+  subject: 顧客
+  verb: 注文する
+  object: 商品
+  story_type: discrete
+  grain: 注文の中の商品1つずつ（注文明細1件）
+  grain_keys:
+  - order_item_id
+  measures:
+  - name: sales_amount
+    label: 売上金額（税抜・値引後）
+    description: 数量 × 販売単価 − 値引額
+    aggregation: sum
+    additivity: additive
+    unit: 円
+    source:
+      table: raw.order_items
+      expr: quantity * unit_price - discount_amount
+    availability: available
+  - name: sales_amount_tax_incl
+    label: 売上金額（税込・値引後）
+    description: 税込金額・税率の列がソースにないため作成できない
+    aggregation: sum
+    additivity: additive
+    unit: 円
+    availability: unavailable
+  - name: quantity
+    label: 販売数量
+    description: ''
+    aggregation: sum
+    additivity: additive
+    unit: 個
+    source:
+      table: raw.order_items
+      column: quantity
+    availability: available
+  dimensions:
+  - w: who
+    name: customer
+    label: 顧客
+    description: ''
+    attributes:
+    - name: gender
+      label: 性別
+      description: ''
+      examples:
+      - female
+      - male
+      - other
+      source:
+        table: raw.customers
+        column: gender
+      availability: available
+      history_required: true
+    hierarchy: []
+    business_key:
+      table: raw.customers
+      column: customer_id
+    fact_key:
+      table: raw.orders
+      column: customer_id
+  - w: what
+    name: product
+    label: 商品
+    description: ''
+    attributes:
+    - name: product_name
+      label: 商品名
+      description: ''
+      examples: []
+      source:
+        table: raw.products
+        column: product_name
+      availability: available
+      history_required: false
+    - name: category
+      label: カテゴリ
+      description: ''
+      examples:
+      - 衣料
+      - 家電
+      - 日用品
+      - 書籍
+      - 食品
+      source:
+        table: raw.products
+        column: category
+      availability: available
+      history_required: true
+    hierarchy:
+    - category
+    business_key:
+      table: raw.products
+      column: product_id
+    fact_key:
+      table: raw.order_items
+      column: product_id
+  - w: when
+    name: order_date
+    label: 注文日
+    description: ''
+    attributes: []
+    hierarchy: []
+    time_grain: quarter
+    fact_key:
+      table: raw.orders
+      column: ordered_at
+  - w: where
+    name: store
+    label: 店舗
+    description: ''
+    attributes:
+    - name: store_name
+      label: 店舗名
+      description: ''
+      examples:
+      - 北海道05号店
+      - 千葉県09号店
+      - APPストア19
+      source:
+        table: raw.stores
+        column: store_name
+      availability: available
+      history_required: true
+    hierarchy: []
+    business_key:
+      table: raw.stores
+      column: store_id
+    fact_key:
+      table: raw.orders
+      column: store_id
+  - w: how
+    name: payment_method
+    label: 支払方法
+    description: ''
+    attributes:
+    - name: payment_method
+      label: 支払方法
+      description: ''
+      examples:
+      - credit_card
+      - e_money
+      - cash
+      - bank_transfer
+      source:
+        table: raw.orders
+        column: payment_method
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: payment_method
+    fact_key:
+      table: raw.orders
+      column: payment_method
+  - w: how
+    name: order_status
+    label: 注文ステータス
+    description: 売上からキャンセル・返品を除外する条件に使う
+    attributes:
+    - name: order_status
+      label: 注文ステータス
+      description: ''
+      examples:
+      - completed
+      - returned
+      - cancelled
+      source:
+        table: raw.orders
+        column: order_status
+      availability: available
+      history_required: false
+    hierarchy: []
+    business_key:
+      table: raw.orders
+      column: order_status
+    fact_key:
+      table: raw.orders
+      column: order_status
+  degenerate_dimensions:
+  - name: order_item_id
+    label: 注文明細ID
+    source:
+      table: raw.order_items
+      column: order_item_id
+  - name: order_id
+    label: 注文ID
+    source:
+      table: raw.order_items
+      column: order_id
+  agg_time_dimension: order_date
+  examples:
+  - values:
+      customer.gender: female
+      product.product_name: あおば トップス 0084
+      product.category: 衣料
+      order_date: '2025-03-10'
+      store.store_name: 千葉県09号店
+      payment_method.payment_method: credit_card
+      quantity: 2
+      sales_amount: 6000
+  priority: high
+  impact: high
+  effort: medium
+  source_tables:
+  - raw.order_items
+  - raw.orders
+  - raw.customers
+  - raw.products
+  - raw.stores
+metrics:
+- name: sales_amount_by_product
+  label: 商品別売上金額
+  question: 商品ごとの売り上げをみたい
+  framed_question: 商品別の売上金額（税抜・値引後、キャンセルと返品を除く）はいくらか？
+  type: simple
+  event: customer_orders_product
+  measure: sales_amount
+  filter: キャンセルと返品の注文を除外する
+  filters:
+  - ref: order_status.order_status
+    operator: not_in
+    values:
+    - cancelled
+    - returned
+  group_by:
+  - product.product_name
+  - product.category
+  - customer.gender
+  - store.store_name
+  - payment_method.payment_method
+  - order_date.quarter
+  - order_date.year
+  status: draft
+- name: quantity_by_product
+  label: 商品別販売数量
+  question: 商品ごとの売り上げをみたい
+  framed_question: 商品別の販売数量（キャンセルと返品を除く）は何個か？
+  type: simple
+  event: customer_orders_product
+  measure: quantity
+  filter: キャンセルと返品の注文を除外する
+  filters:
+  - ref: order_status.order_status
+    operator: not_in
+    values:
+    - cancelled
+    - returned
+  group_by:
+  - product.product_name
+  - product.category
+  - customer.gender
+  - store.store_name
+  - payment_method.payment_method
+  - order_date.quarter
+  - order_date.year
+  status: draft
+gaps:
+- kind: data_unavailable
+  description: 税込の売上金額を見たいが、ソースには税抜の販売単価・値引額のみで、税込金額や税率の列がない
+  event: customer_orders_product
+  w: what
+  related: sales_amount_tax_incl
+- kind: deferred
+  description: 工数（medium）はモデラーの見積もり
+  event: customer_orders_product
+finalized_at: '2026-10-11T04:43:51.475451Z'

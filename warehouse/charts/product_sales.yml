@@ -1,0 +1,42 @@
+# adp により生成（chart_specs/product_sales.yml から `python -m adp.charts compile`）。編集しない
+title: 商品別売上
+source: warehouse
+queries:
+  sales_amount_by_product:
+    sql: "SELECT\n  metric_time__quarter,\n  product__product_name,\n  SUM(sales_amount_by_product) AS\
+      \ sales_amount_by_product\nFROM (\n  SELECT\n    DATE_TRUNC('QUARTER', fct_order_lines_src_10000.ordered_on)\
+      \ AS metric_time__quarter,\n    fct_order_lines_src_10000.order_status AS order_line__order_status,\n\
+      \    dim_product_src_10000.product_name AS product__product_name,\n    fct_order_lines_src_10000.sales_amount\
+      \ AS sales_amount_by_product\n  FROM \"main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n\
+      \  LEFT OUTER JOIN \"main\".\"dim_product\" AS dim_product_src_10000\n    ON fct_order_lines_src_10000.product_key\
+      \ = dim_product_src_10000.product_key\n) AS subq_5\nWHERE\n  NOT order_line__order_status IN ('cancelled',\
+      \ 'returned')\nGROUP BY\n  metric_time__quarter,\n  product__product_name\nORDER BY\n  metric_time__quarter"
+  quantity_by_product:
+    sql: "SELECT\n  metric_time__quarter,\n  product__product_name,\n  SUM(quantity_by_product) AS quantity_by_product\n\
+      FROM (\n  SELECT\n    DATE_TRUNC('QUARTER', fct_order_lines_src_10000.ordered_on) AS metric_time__quarter,\n\
+      \    fct_order_lines_src_10000.order_status AS order_line__order_status,\n    dim_product_src_10000.product_name\
+      \ AS product__product_name,\n    fct_order_lines_src_10000.quantity AS quantity_by_product\n  FROM\
+      \ \"main\".\"fct_order_lines\" AS fct_order_lines_src_10000\n  LEFT OUTER JOIN \"main\".\"dim_product\"\
+      \ AS dim_product_src_10000\n    ON fct_order_lines_src_10000.product_key = dim_product_src_10000.product_key\n\
+      ) AS subq_5\nWHERE\n  NOT order_line__order_status IN ('cancelled', 'returned')\nGROUP BY\n  metric_time__quarter,\n\
+      \  product__product_name\nORDER BY\n  metric_time__quarter"
+charts:
+  sales_amount_by_product:
+    query: sales_amount_by_product
+    title: 商品別売上金額
+    y_label: 商品別売上金額
+    type: line
+    x: metric_time__quarter
+    y: sales_amount_by_product
+    color: product__product_name
+  quantity_by_product:
+    query: quantity_by_product
+    title: 商品別販売数量
+    y_label: 商品別販売数量
+    type: line
+    x: metric_time__quarter
+    y: quantity_by_product
+    color: product__product_name
+rows:
+- sales_amount_by_product
+- quantity_by_product

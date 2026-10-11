@@ -10,6 +10,8 @@ select
     {{ dim_key('t1.customer_id') }} as customer_key,
     {{ dim_key('t1.promotion_id') }} as promotion_key,
     t1.order_status as order_status,
-    t0.quantity * t0.unit_price - t0.discount_amount as sales_amount
+    t1.payment_method as payment_method,
+    t0.quantity * t0.unit_price - t0.discount_amount as sales_amount,
+    t0.quantity as quantity
 from {{ ref('stg_order_items') }} as t0
 left join {{ ref('stg_orders') }} as t1 on t0.order_id = t1.order_id
