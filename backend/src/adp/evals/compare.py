@@ -26,6 +26,7 @@ METRICS: list[tuple[str, str, int]] = [
     ("unexplained_jargon", "説明なしの専門用語", -1),
     ("repeated_questions", "重複した質問", -1),
     ("position_words", "選択肢の位置を指す言葉", -1),
+    ("effort_questions", "工数を聞いた質問", -1),
 ]
 
 

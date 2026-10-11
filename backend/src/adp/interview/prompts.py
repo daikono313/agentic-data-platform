@@ -6,7 +6,7 @@ import hashlib
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v3"
+PROMPT_VERSION = "interview-v4"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -50,11 +50,17 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
      キーの列と値で絞ってたどる。例: 返品の order_item_id → 注文明細 → 注文・商品）。ユーザーが
      それでよいと答えたら examples に記録する。値を作らない。伏せた値（「個人情報のため非表示」
      など）は examples に入れず、その属性はユーザーに聞くか省く。
+   - 具体例のあとに、数え方の例外になりそうなケース（イレギュラーなケース。例: 取消・返品・
+     マイナスの数量・二重に記録されるもの・他店への移動）が無いかを 1 回だけ聞く。数え方に
+     影響するもの（除く・符号を変える）は filters や measure の説明に反映し、その場で決められない
+     ものは add_gap（kind: deferred。確定は止めない）で記録する。
 4. grain: 1 行が何を表すかを決める（grain と grain_keys）。measure ごとに集計方法と、
    足し上げてよいか（additivity）を決める。注文番号のようなキーは degenerate_dimensions に入れる。
 5. conformance: 既存の成果物やモデルと同じディメンション（顧客・商品など）は、同じ name と
    business_key にそろえる。
-6. prioritization: 優先度・インパクト・工数を聞く（high / medium / low）。
+6. prioritization: 優先度とインパクトを聞く（high / medium / low）。工数（作る手間）は
+   ユーザーに聞かない。あなたが見積もって effort に入れ、要約で「工数は私の見積もり」と伝える
+   （工数の見積もりは add_gap に記録しない）。
    ユーザーが「おまかせ」と答えたものは、あなたの見積もりを入れたうえで、add_gap（kind: deferred）に
    「〇〇はモデラーの見積もり」と記録する。
 7. review: 要約（指標、出来事、1 行の意味、使える切り口、データが無いもの）を示し、

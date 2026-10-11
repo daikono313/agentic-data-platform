@@ -283,3 +283,39 @@ def test_position_words() -> None:
         assert not _checks([_msg(text)])["no_choice_position_words"], text
     for text in ok:
         assert _checks([_msg(text)])["no_choice_position_words"], text
+
+
+def test_effort_and_irregular_case_questions() -> None:
+    """工数を聞く質問は数え、イレギュラーなケースを聞いたかを確かめる（#76 のフィードバック）。"""
+    from adp.evals.interview import _transcript_check_map, transcript_metrics
+
+    effort = [
+        _msg("最後に確認します。", question="データを作る手間（工数）はどのくらいを想定しますか？")
+    ]
+    assert not _checks(effort)["no_effort_question"]
+    assert transcript_metrics(effort)["effort_questions"] == 1
+    irregular = [_msg("具体例を伺いました。数え方の例外になりそうなケースはありますか？")]
+    assert _transcript_check_map(irregular)["asks_irregular_cases"].passed
+    assert not _transcript_check_map(effort)["asks_irregular_cases"].passed
+    assert "asks_irregular_cases" not in _checks(effort)  # シナリオに書いたときだけ
+
+
+def test_effort_and_irregular_detection_avoids_false_matches() -> None:
+    """工数は見積もりを聞く質問だけ、引用は除く。イレギュラーは取消・マイナスの言い方も拾う。"""
+    from adp.evals.interview import _transcript_check_map
+
+    for text in [
+        "入力の手間を減らしたいですか？",
+        "「工数を減らしたい」とのことですが、どの作業を見たいですか？",
+        "倉庫の作業量は、ピッキング件数で数えますか？",
+    ]:
+        assert _checks([_msg(text)])["no_effort_question"], text
+    assert not _checks([_msg("データを作る工数はどのくらいを見込みますか？")])["no_effort_question"]
+    for text in [
+        "取消やマイナスの数量の記録はどう数えますか？",
+        "数え方が変わる特別なケースはありますか？",
+    ]:
+        assert _transcript_check_map([_msg(text)])["asks_irregular_cases"].passed, text
+    assert not _transcript_check_map([_msg("例外なく全店舗を含めてよいですか？")])[
+        "asks_irregular_cases"
+    ].passed
