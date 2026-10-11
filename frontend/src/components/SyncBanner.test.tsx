@@ -54,3 +54,30 @@ describe('SyncBanner', () => {
     expect(await screen.findByRole('button', { name: 'もう一度実行する' })).toBeInTheDocument()
   })
 })
+
+describe('SyncBanner の自動反映（#106）', () => {
+  it('backend が自動で始めた反映に気づいて進捗を追い、終われば一覧を読み直す', async () => {
+    const running = { id: 'auto', status: 'running' as const, steps: [] }
+    const statusCall = vi
+      .spyOn(api, 'syncStatus')
+      .mockResolvedValueOnce({ status: status(), job: null, auto: { enabled: true, interval_s: 60, last_checked_at: null, last_note: null } })
+      .mockResolvedValue({ status: status(), job: running, auto: { enabled: true, interval_s: 60, last_checked_at: null, last_note: null } })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {
+      yield { event: 'done' as const, data: { id: 'auto', status: 'succeeded' as const, steps: [] } }
+    })
+    const onDone = vi.fn()
+    render(<SyncBanner onDone={onDone} pollMs={20} />)
+    expect(await screen.findByText('まもなく自動で取り込みます')).toBeInTheDocument()
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1))
+    expect(statusCall.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('進捗のストリームが途中で切れたら、実行中のまま固めずにやり直せる', async () => {
+    vi.spyOn(api, 'syncStatus').mockResolvedValue({ status: status(), job: null })
+    vi.spyOn(api, 'startSync').mockResolvedValue({ id: 'j', status: 'running', steps: [] })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {})
+    render(<SyncBanner />)
+    fireEvent.click(await screen.findByRole('button', { name: /取り込んで更新する/ }))
+    expect(await screen.findByRole('button', { name: 'もう一度実行する' })).toBeInTheDocument()
+  })
+})

@@ -175,3 +175,118 @@ async def test_sync_is_exclusive_with_other_jobs(tmp_path: Path) -> None:
     client = TestClient(create_app(no_sync))
     assert client.get("/sync").status_code == 503
     assert client.post("/sync").status_code == 409
+
+
+def test_auto_sync_starts_only_when_it_can_pull(tmp_path: Path) -> None:
+    """マージがあって取り込めるときだけ反映を始め、できないときは理由を残す（#106）。"""
+    from adp.sync import AutoSync, auto_interval
+
+    work, _ = _repos(tmp_path)
+    sync = Sync(work, _bin(tmp_path), GitWorkspace(work))
+    started: list[int] = []
+    auto = AutoSync(sync, lambda: started.append(1), interval_s=1)
+    assert auto.tick() and started == [1] and auto.state.last_note is None
+
+    def busy() -> None:
+        raise RuntimeError("生成・取り込みのジョブを実行中です")
+
+    assert not AutoSync(sync, busy, interval_s=1).tick()
+    git(work, "checkout", "-q", "-b", "topic")
+    blocked = AutoSync(sync, lambda: started.append(2), interval_s=1)
+    assert not blocked.tick() and "main ではありません" in (blocked.state.last_note or "")
+    assert started == [1]
+    assert auto_interval({"ADP_AUTO_SYNC_INTERVAL_S": "0"}) == 0
+    assert auto_interval({"ADP_AUTO_SYNC_INTERVAL_S": "x"}) == 60
+    assert not AutoSync(sync, busy, interval_s=0).state.enabled
+
+
+def test_merged_fact_appears_in_the_bus_matrix_automatically(tmp_path: Path) -> None:
+    """生成 PR を main にマージすると、開いている画面の一覧（バスマトリクス）に fact が出る（#106）。
+
+    origin で生成した fct を main に足し、アプリの自動反映が取り込んで dbt build するまで待つ。
+    """
+    import shutil
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from adp.api.app import create_app
+    from adp.api.service import SessionService
+    from adp.api.store import Store
+    from adp.beam import load
+    from adp.catalog.catalog import Catalog
+    from adp.datasets import DatasetIndex
+    from adp.design import DesignBuilder
+    from adp.design.catalog_schema import CatalogSchema
+    from adp.evals.repair import prepare_warehouse
+    from adp.generation import generate_models
+    from adp.generation.project import ProjectInfo
+    from adp.interview import Interviewer
+    from adp.llm import LLMSettings
+    from adp.llm.settings import REPO_ROOT
+    from adp.sync import AutoSync
+    from tests.generation.test_dbt_codegen import DBT
+
+    remote = tmp_path / "remote.git"
+    remote.mkdir()
+    git(remote, "init", "--bare", "-b", "main")
+    work = tmp_path / "work"
+    warehouse = prepare_warehouse(work)  # 生成した fct の無い warehouse と小さなサンプルデータ
+    (work / "backend").mkdir()
+    (work / ".gitignore").write_text(
+        "warehouse/data/\nwarehouse/target/\nwarehouse/dbt_packages/\nwarehouse/logs/\n"
+    )
+    git(work, "init", "-b", "main")
+    for k, v in (("user.email", "t@example.com"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        git(work, "config", k, v)
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "init")
+    git(work, "remote", "add", "origin", str(remote))
+    git(work, "push", "-q", "-u", "origin", "main")
+
+    # dbt は本物、検査（mf・python -m adp.*）は成功だけ返す偽物
+    bin_dir = _bin(tmp_path)
+    (bin_dir / "dbt").unlink()
+    (bin_dir / "dbt").symlink_to(DBT)
+    sync = Sync(work, bin_dir, GitWorkspace(work))
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    index = DatasetIndex(work, catalog)
+
+    # GitHub で生成 PR がマージされた状態: 別の場所で fct を作って main に push する
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "-q", str(remote), str(other))
+    for k, v in (("user.email", "t@example.com"), ("user.name", "t"), ("commit.gpgsign", "false")):
+        git(other, "config", k, v)
+    beam = load(REPO_ROOT / "backend" / "tests" / "fixtures" / "beam" / "sales_by_store.yml")
+    info = ProjectInfo(warehouse, catalog)
+    for f in generate_models(DesignBuilder(CatalogSchema(catalog)).build(beam), info, beam).files:
+        (other / "warehouse" / f.path).parent.mkdir(parents=True, exist_ok=True)
+        (other / "warehouse" / f.path).write_text(f.content, encoding="utf-8")
+    git(other, "add", ".")
+    git(other, "commit", "-qm", "merged generated pr")
+    git(other, "push", "-q", "origin", "main")
+
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    service = SessionService(
+        Store(tmp_path / "app.db"),
+        Interviewer(None, LLMSettings()),  # type: ignore[arg-type]
+        pipeline,
+        sync=sync.run,
+    )
+    auto = AutoSync(sync, service.start_sync, interval_s=0.2)
+    app = create_app(service, index, sync=sync, auto_sync=auto)
+    with TestClient(app) as client:
+        before = {r["name"] for r in client.get("/datasets").json()["bus"]["rows"]}
+        assert "fct_order_lines" not in before
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            job = client.get("/sync").json()["job"]
+            if job and job["status"] != "running":
+                break
+            time.sleep(1)
+        assert job and job["status"] == "succeeded", job
+        after = {r["name"] for r in client.get("/datasets").json()["bus"]["rows"]}
+        assert "fct_order_lines" in after
+    shutil.rmtree(other)

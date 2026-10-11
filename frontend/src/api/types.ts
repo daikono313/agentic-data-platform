@@ -107,4 +107,6 @@ export interface SyncView {
     fetch_error?: string | null
   }
   job: JobView | null
+  /** マージを確かめて自動で反映する（#106）。無効なら null */
+  auto?: { enabled: boolean; interval_s: number; last_checked_at: string | null; last_note: string | null } | null
 }

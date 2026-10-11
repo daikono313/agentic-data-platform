@@ -210,6 +210,76 @@ class SyncError(Exception):
     pass
 
 
+AUTO_INTERVAL_S = 60.0
+"""マージを確かめる間隔（#106）。.env の ADP_AUTO_SYNC_INTERVAL_S で変える。0 で自動にしない。"""
+
+
+class AutoSyncState(BaseModel):
+    enabled: bool
+    interval_s: float
+    last_checked_at: str | None = None
+    last_note: str | None = None
+    """直近の確認で取り込まなかった理由（取り込めない・ほかのジョブを実行中など）。"""
+
+
+@dataclass
+class AutoSync:
+    """マージされた PR を一定の間隔で確かめ、取り込めるなら反映ジョブを始める（#106）。
+
+    取り込めない（手元が main 以外・変更あり・アプリのコードを含む）ときは何もせず、理由を残す
+    （画面に出す）。ジョブを始めるのは start（SessionService.start_sync。ほかのジョブと重ねない）。
+    """
+
+    sync: Sync
+    start: Callable[[], object]
+    interval_s: float = AUTO_INTERVAL_S
+    state: AutoSyncState = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.state = AutoSyncState(enabled=self.interval_s > 0, interval_s=self.interval_s)
+
+    def tick(self, status: SyncStatus | None = None) -> bool:
+        """1 回確かめる。反映ジョブを始めたら True。
+
+        start はイベントループの上で呼ぶ（ジョブを asyncio のタスクとして始めるため）。状態の確認
+        （git fetch）だけを別スレッドで行い、その結果を渡す。
+        """
+        from datetime import UTC, datetime
+
+        self.state.last_checked_at = datetime.now(UTC).isoformat(timespec="seconds")
+        status = status if status is not None else self.sync.status()
+        if status.behind == 0:
+            self.state.last_note = None
+            return False
+        if not status.can_pull:
+            self.state.last_note = status.reason
+            return False
+        try:
+            self.start()
+        except Exception as e:  # ほかのジョブを実行中など。次の確認でもう一度
+            self.state.last_note = str(e)
+            return False
+        self.state.last_note = None
+        return True
+
+    async def loop(self) -> None:
+        while self.state.enabled:
+            await asyncio.sleep(self.interval_s)
+            try:
+                self.tick(await asyncio.to_thread(self.sync.status))
+            except Exception as e:  # git が使えないなど。止めずに次へ
+                self.state.last_note = f"確かめられませんでした: {type(e).__name__}"
+
+
+def auto_interval(values: dict[str, str]) -> float:
+    """`ADP_AUTO_SYNC_INTERVAL_S`（.env か環境変数）。数でなければ既定値。"""
+    raw = values.get("ADP_AUTO_SYNC_INTERVAL_S") or os.environ.get("ADP_AUTO_SYNC_INTERVAL_S")
+    try:
+        return max(0.0, float(raw)) if raw else AUTO_INTERVAL_S
+    except ValueError:
+        return AUTO_INTERVAL_S
+
+
 def _check(args: list[str], backend: Path, warehouse: Path) -> subprocess.CompletedProcess[str]:
     """検査のコマンド。mf は warehouse で、python -m adp.* は backend で動かす。"""
     if args[0].endswith("mf"):

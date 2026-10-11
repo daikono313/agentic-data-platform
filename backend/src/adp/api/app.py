@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
 from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
 from adp.onboarding.proposal import OntologyPatch
-from adp.sync import Sync
+from adp.sync import AutoSync, Sync
 from adp.warehouse import warehouse_db, warehouse_kind
 
 
@@ -55,8 +56,19 @@ def create_app(
     charts: ChartViews | None = None,
     onboarding: OnboardingPipeline | None = None,
     sync: Sync | None = None,
+    auto_sync: AutoSync | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="ADP")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # マージされた PR を確かめて、取り込めるなら自動で反映する（#106）
+        task = asyncio.create_task(auto_sync.loop()) if auto_sync else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+
+    app = FastAPI(title="ADP", lifespan=lifespan)
     # DNS リバインディング対策: ローカル以外の Host からの要求を拒否する（認証の無い API のため）
     app.add_middleware(
         TrustedHostMiddleware,
@@ -206,7 +218,11 @@ def create_app(
             status = await asyncio.to_thread(sync.status)
         except Exception as e:  # git が使えないなど
             raise HTTPException(503, f"状態を確かめられませんでした: {type(e).__name__}") from e
-        return {"status": status.model_dump(mode="json"), "job": service.sync_job()}
+        return {
+            "status": status.model_dump(mode="json"),
+            "job": service.sync_job(),
+            "auto": auto_sync.state.model_dump(mode="json") if auto_sync else None,
+        }
 
     @app.post("/sync")
     async def sync_start() -> dict[str, Any]:
@@ -352,6 +368,9 @@ def build_default_app() -> FastAPI:
         pr_state=pipeline.github.pr_state,
         sync=sync.run,
     )
+    from adp.sync import auto_interval
+
+    auto = AutoSync(sync, service.start_sync, auto_interval(env))
     return create_app(
-        service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding, sync
+        service, DatasetIndex(REPO_ROOT, catalog), ChartViews(REPO_ROOT), onboarding, sync, auto
     )
