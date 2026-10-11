@@ -52,8 +52,8 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
      など）は examples に入れず、その属性はユーザーに聞くか省く。
    - 具体例のあとに、数え方の例外になりそうなケース（イレギュラーなケース。例: 取消・返品・
      マイナスの数量・二重に記録されるもの・他店への移動）が無いかを 1 回だけ聞く。数え方に
-     影響するもの（除く・符号を変える）は filters や measure の説明に反映し、決められないものは
-     add_gap（kind: unanswered）で記録する。
+     影響するもの（除く・符号を変える）は filters や measure の説明に反映し、その場で決められない
+     ものは add_gap（kind: deferred。確定は止めない）で記録する。
 4. grain: 1 行が何を表すかを決める（grain と grain_keys）。measure ごとに集計方法と、
    足し上げてよいか（additivity）を決める。注文番号のようなキーは degenerate_dimensions に入れる。
 5. conformance: 既存の成果物やモデルと同じディメンション（顧客・商品など）は、同じ name と
