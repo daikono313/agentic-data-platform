@@ -366,6 +366,18 @@ def _extend_existing_fact(
     ]
     # 足すのは新しい指標の元になる列だけ（粒度や entity は既存のものを使う）
     have = {c["name"] for c in model.get("columns", []) if isinstance(c, dict)}
+    # 同じ式の列が既にあれば、別名の列を足さずにそれを使う（t0.quantity を 2 列にしない。#113）
+    same_expr = _existing_select_exprs(sql_text)
+    for m in new_in_model:
+        expr = m.get("expr")
+        col = fact.column(expr) if isinstance(expr, str) and expr not in have else None
+        if col is None or col.role != ColumnRole.MEASURE or not _only_base(col.expr):
+            continue  # 結合先の別名（t1 など）は、既存の fct と新しい設計で別のテーブルでありうる
+        existing_name = same_expr.get(_norm_expr(col.expr))
+        if existing_name in have and not any(
+            col.name in str(x.get("filter") or "") for x in new_in_model
+        ):
+            m["expr"] = existing_name
     needed = {m["expr"] for m in new_in_model if isinstance(m.get("expr"), str)}
     missing = [c for c in fact.columns if c.name in needed and c.name not in have]
     if needed - have - {c.name for c in missing}:
@@ -373,7 +385,7 @@ def _extend_existing_fact(
     for c in missing:
         if c.role not in (ColumnRole.MEASURE, ColumnRole.ATTRIBUTE):
             return None
-        if any(alias != "t0" for alias in re.findall(r"\b(t\d+)\.", c.expr)):
+        if not _only_base(c.expr):
             return None
     new_top = [m for m in planned.get("metrics", []) or [] if m["name"] not in existing_metrics]
     if not missing and not new_in_model and not new_top:
@@ -397,6 +409,29 @@ def _extend_existing_fact(
     body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100)
     files.append(GeneratedFile(yml_path, head + body, replaces=yml_text))
     return files, queries
+
+
+_SELECT_LINE = re.compile(r"^\s+(.+?)\s+as\s+(\w+),?\s*$", re.IGNORECASE)
+
+
+def _only_base(expr: str) -> bool:
+    """式が基のテーブル（t0）の列だけを参照するか。"""
+    return all(alias == "t0" for alias in re.findall(r"\b(t\d+)\.", expr))
+
+
+def _norm_expr(expr: str) -> str:
+    return re.sub(r"\s+", " ", expr.strip()).lower()
+
+
+def _existing_select_exprs(sql: str) -> dict[str, str]:
+    """adp が生成した fct の SELECT 句（1 行 1 列）の、式 → 列名。"""
+    out: dict[str, str] = {}
+    for line in sql.split("\n"):
+        if line.startswith("from "):
+            break
+        if (m := _SELECT_LINE.match(line)) is not None:
+            out.setdefault(_norm_expr(m.group(1)), m.group(2))
+    return out
 
 
 # --- 全体 ----------------------------------------------------------------------------------

@@ -309,12 +309,14 @@ def test_ontology_api(repo: Path, tmp_path: Path) -> None:
         shutil.rmtree(repo / "ontology")
     assert client.get("/ontology").status_code == 404
     (repo / "ontology").mkdir()
-    src = Path(__file__).resolve().parents[2] / "ontology" / "ontology.yml"
-    (repo / "ontology" / "ontology.yml").write_text(src.read_text(encoding="utf-8"))
+    from tests.ontology_before_inventory import ontology_yaml
+
+    # この repo には fct_stock_movements が無いので、在庫（raw.inventory）を取り込む前の状態にする
+    (repo / "ontology" / "ontology.yml").write_text(ontology_yaml())
     body = client.get("/ontology").json()
     assert body["mermaid"].startswith("flowchart")
-    # raw.inventory は後から追加された源泉の例（オントロジーに未整理。#69）
-    assert body["errors"] == [] and body["unmapped_sources"] == ["raw.inventory"]
+    # 後から追加された源泉の例（オントロジーに未整理）: 在庫（#69）と商品レビュー（S5）
+    assert body["errors"] == [] and body["unmapped_sources"] == ["raw.inventory", "raw.reviews"]
     (repo / "ontology" / "ontology.yml").write_text("version: 1\ndomains: []\nconcepts: [1]\n")
     assert client.get("/ontology").status_code == 422
     shutil.rmtree(repo / "ontology")

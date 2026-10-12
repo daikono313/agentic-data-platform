@@ -52,6 +52,24 @@ class ChartPreview:
 _TYPE_LABEL = {"line": "折れ線", "bar": "棒", "kpi": "KPI"}
 
 
+def _fact_search(design: PhysicalDesign, existing_facts: list[str]) -> list[str]:
+    """既存の fact → データ全体 → 新規作成の順に探した結果（#113）。"""
+    lines = ["## 既存の fact の確認", ""]
+    others = ", ".join(f"`{f}`" for f in existing_facts) or "なし"
+    for fact in design.facts:
+        if fact.name in existing_facts:
+            lines.append(
+                f"- `{fact.name}`: 既存の fact を再利用し、指標（と元になる列）を足しました"
+                "（新しい fact は作っていません）"
+            )
+        else:
+            lines.append(
+                f"- `{fact.name}`: 既存の fact（{others}）に無い出来事として、新しく作りました"
+                f"（源泉 `{fact.base.table}`、粒度: {cell(fact.grain)}）"
+            )
+    return [*lines, ""]
+
+
 def pr_title(beam: BeamModel) -> str:
     """PR のタイトル。BEAM のタイトルはユーザー・LLM の文章なので無害化し、1 行にする。"""
     return f"feat(beam): {' '.join(safe(beam.title).split())}"
@@ -64,7 +82,9 @@ def pr_body(
     verification: Verification,
     tasks: list[AgentTask] | None = None,
     chart: ChartPreview | None = None,
+    existing_facts: list[str] | None = None,
 ) -> str:
+    """existing_facts（生成の前からあった fct）を渡すと、fact を探した結果を書く（#113）。"""
     lines: list[str] = []
     lines += ["## 要求", "", f"> {cell(beam.request)}", ""]
     for m in beam.metrics:
@@ -108,6 +128,9 @@ def pr_body(
                 + " |"
             )
         lines.append("")
+
+    if existing_facts is not None and design.facts:
+        lines += _fact_search(design, existing_facts)
 
     lines += ["## スター設計", "", "```mermaid", er_diagram(design).rstrip(), "```", ""]
 

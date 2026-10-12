@@ -220,6 +220,35 @@ class ColumnMatch(BaseModel):
     description: str
 
 
+class FactColumn(BaseModel):
+    name: str
+    description: str = ""
+
+
+class FactMetric(BaseModel):
+    name: str
+    label: str
+    expr: str | None = None
+    agg: str | None = None
+
+
+class FactSummary(BaseModel):
+    """整備済みの fact（#113: 新しい指標は、まず既存の fact で作れないかを確かめる）。"""
+
+    name: str
+    description: str
+    source: str | None = None
+    """1 行の元になる源泉（ベースのテーブル。例: raw.inventory）。同じ源泉の fact は作らない。"""
+    grain: str | None = None
+    """1 行が何を表すか（model の説明の「粒度: …」から）。"""
+    columns: list[FactColumn]
+    """measure や切り口に使える列（dbt の model YAML の列と説明）。"""
+    joins: list[str]
+    """結合できる dim の entity（店舗・商品など）。"""
+    metrics: list[FactMetric]
+    """この fact の既存の指標。"""
+
+
 class Catalog:
     def __init__(
         self,
@@ -229,9 +258,75 @@ class Catalog:
     ) -> None:
         self.db_path = db_path
         self.schemas = schemas
+        self.manifest_path = manifest_path
         self._descriptions = _load_descriptions(manifest_path)
         # manifest が無い（生成の worktree など）ときも、DB の隣の dbt プロジェクトの sources を読む
         self._pii = _load_pii(manifest_path) | _load_pii_yaml(db_path.parent.parent)
+
+    def existing_facts(self) -> list[FactSummary]:
+        """整備済みの fact と、その列・結合できる dim・既存の指標（dbt の manifest から）。
+
+        manifest が無ければ空。semantic_manifest.json が無ければ、指標なしで manifest の fct だけ。
+        値は読まない（列名・説明・指標の定義だけ）。
+        """
+        if self.manifest_path is None:
+            return []
+        manifest = _read_json(self.manifest_path)
+        if manifest is None:
+            return []
+        semantic = _read_json(self.manifest_path.parent / "semantic_manifest.json") or {}
+        nodes = {
+            n.get("name"): n
+            for n in _values(manifest.get("nodes"))
+            if n.get("resource_type") == "model" and n.get("name")
+        }
+        sources = {
+            k: f"{n.get('schema') or ''}.{n.get('identifier') or n.get('name') or ''}"
+            for k, n in (manifest.get("sources") or {}).items()
+            if isinstance(n, dict)
+        }
+        unique_ids = {n.get("unique_id"): name for name, n in nodes.items() if n.get("unique_id")}
+        metrics = _metrics_by_model(_list(semantic.get("metrics")))
+        semantic_models = {
+            str(sm["name"]): sm
+            for sm in _list(semantic.get("semantic_models"))
+            if isinstance(sm.get("name"), str)
+        }
+        names = sorted(
+            {n for n in semantic_models if n.startswith("fct_")}
+            | {n for n in nodes if isinstance(n, str) and n.startswith("fct_")}
+        )
+        out = []
+        for name in names:
+            sm = semantic_models.get(name, {})
+            node = nodes.get(name, {})
+            description = str(sm.get("description") or node.get("description") or "")
+            columns = [
+                FactColumn(name=str(c["name"]), description=str(c.get("description") or ""))
+                for c in _values(node.get("columns"))
+                if c.get("name")
+            ]
+            if sm:
+                joins = [
+                    str(e["name"])
+                    for e in _list(sm.get("entities"))
+                    if e.get("type") == "foreign" and e.get("name") and e.get("name") != "date"
+                ]
+            else:
+                joins = [c.name.removesuffix("_key") for c in columns if c.name.endswith("_key")]
+            grain = re.search(r"粒度[:：]\s*(.+)", description)
+            out.append(
+                FactSummary(
+                    name=name,
+                    description=description,
+                    source=_base_source(node, nodes, unique_ids, sources),
+                    grain=grain.group(1).strip() if grain else None,
+                    columns=columns,
+                    joins=joins,
+                    metrics=metrics.get(name, []),
+                )
+            )
+        return out
 
     def is_pii(self, schema: str, name: str, column: str) -> bool:
         """個人情報の列か（sources の meta.pii、または列名からの推定。ID・キーは除く）。"""
@@ -660,20 +755,17 @@ def _scalar(con: duckdb.DuckDBPyConnection, sql: str) -> Any:
 
 def _load_pii(manifest_path: Path | None) -> dict[tuple[str, str, str], bool]:
     """dbt の sources の列の meta.pii（true / false）。キーは (schema, table, column)。"""
-    if manifest_path is None or not manifest_path.exists():
-        return {}
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except ValueError:
+    manifest = _read_json(manifest_path) if manifest_path is not None else None
+    if manifest is None:
         return {}
     result: dict[tuple[str, str, str], bool] = {}
-    for node in manifest.get("sources", {}).values():
-        if "schema" not in node:
+    for node in _values(manifest.get("sources")):
+        if "schema" not in node or not (node.get("identifier") or node.get("name")):
             continue
         schema, table = node["schema"], node.get("identifier") or node["name"]
-        for col in node.get("columns", {}).values():
-            meta = col.get("meta") or col.get("config", {}).get("meta") or {}
-            if "pii" in meta:
+        for col in _values(node.get("columns")):
+            meta = col.get("meta") or (col.get("config") or {}).get("meta") or {}
+            if "pii" in meta and col.get("name"):
                 result[(schema, table, col["name"])] = bool(meta["pii"])
     return result
 
@@ -707,23 +799,109 @@ def _load_pii_yaml(warehouse: Path) -> dict[tuple[str, str, str], bool]:
     return result
 
 
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _list(value: Any) -> list[dict[str, Any]]:
+    """dict の要素だけのリスト（manifest の欠けた値・None に耐える）。"""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def _values(value: Any) -> list[dict[str, Any]]:
+    return _list(list(value.values())) if isinstance(value, dict) else []
+
+
+_BASE_REF = re.compile(r"from\s+\{\{\s*ref\(\s*['\"](\w+)['\"]\s*\)\s*\}\}\s+(?:as\s+)?t0\b", re.I)
+
+
+def _base_source(
+    node: dict[str, Any],
+    nodes: dict[Any, dict[str, Any]],
+    unique_ids: dict[Any, Any],
+    sources: dict[str, str],
+) -> str | None:
+    """fct の 1 行の元になる源泉（t0 のクレンジング層 → その source）。決まらなければ None。"""
+    deps = [d for d in ((node.get("depends_on") or {}).get("nodes") or []) if isinstance(d, str)]
+    base = _BASE_REF.search(str(node.get("raw_code") or ""))
+    models = [unique_ids[d] for d in deps if d in unique_ids]
+    if base is not None:
+        stg = base.group(1)
+    elif len(models) == 1:
+        stg = models[0]
+    else:
+        return None
+    stg_deps = ((nodes.get(stg) or {}).get("depends_on") or {}).get("nodes") or []
+    found = [sources[d] for d in stg_deps if d in sources]
+    return found[0] if len(found) == 1 else None
+
+
+def _metric_inputs(m: dict[str, Any]) -> list[str]:
+    """比率・派生・累積の指標が使う指標の名前。"""
+    params = m.get("type_params") or {}
+    refs: list[Any] = [params.get("numerator"), params.get("denominator")]
+    refs += params.get("metrics") or []
+    refs.append((params.get("cumulative_type_params") or {}).get("metric"))
+    out = []
+    for r in refs:
+        name = r.get("name") if isinstance(r, dict) else r
+        if isinstance(name, str) and name:
+            out.append(name)
+    return out
+
+
+def _metrics_by_model(metrics: list[dict[str, Any]]) -> dict[str, list[FactMetric]]:
+    """指標を、元になる fct ごとに。比率・派生の指標は、入力の指標の fct すべてに載せる。"""
+    owner: dict[str, set[str]] = {}
+    by_name = {str(m["name"]): m for m in metrics if isinstance(m.get("name"), str)}
+    for name, m in by_name.items():
+        params = (m.get("type_params") or {}).get("metric_aggregation_params") or {}
+        if isinstance(params.get("semantic_model"), str):
+            owner[name] = {params["semantic_model"]}
+
+    def models(name: str, seen: frozenset[str] = frozenset()) -> set[str]:
+        if name in owner:
+            return owner[name]
+        m = by_name.get(name)
+        if m is None or name in seen:
+            return set()
+        return set().union(*(models(i, seen | {name}) for i in _metric_inputs(m)))
+
+    out: dict[str, list[FactMetric]] = {}
+    for name, m in by_name.items():
+        params = m.get("type_params") or {}
+        agg = (params.get("metric_aggregation_params") or {}).get("agg")
+        metric = FactMetric(
+            name=name,
+            label=str(m.get("label") or name),
+            expr=params.get("expr") if isinstance(params.get("expr"), str) else None,
+            agg=agg if isinstance(agg, str) else (str(m.get("type")) if m.get("type") else None),
+        )
+        for model in sorted(models(name)):
+            out.setdefault(model, []).append(metric)
+    return out
+
+
 def _load_descriptions(manifest_path: Path | None) -> dict[tuple[str, str, str | None], str]:
     """dbt の manifest.json から sources の説明を読む。キーは (schema, table, column or None)。"""
-    if manifest_path is None or not manifest_path.exists():
-        return {}
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except ValueError:
+    manifest = _read_json(manifest_path) if manifest_path is not None else None
+    if manifest is None:
         return {}
     result: dict[tuple[str, str, str | None], str] = {}
-    nodes = list(manifest.get("sources", {}).values()) + [
-        n for n in manifest.get("nodes", {}).values() if n.get("resource_type") == "model"
+    nodes = _values(manifest.get("sources")) + [
+        n for n in _values(manifest.get("nodes")) if n.get("resource_type") == "model"
     ]
     for node in nodes:
-        if "schema" not in node:
+        table = node.get("identifier") or node.get("alias") or node.get("name")
+        if "schema" not in node or not table:
             continue
-        schema, table = node["schema"], node.get("identifier") or node.get("alias") or node["name"]
-        result[(schema, table, None)] = node.get("description", "")
-        for col in node.get("columns", {}).values():
-            result[(schema, table, col["name"])] = col.get("description", "")
+        schema = node["schema"]
+        result[(schema, table, None)] = node.get("description") or ""
+        for col in _values(node.get("columns")):
+            if col.get("name"):
+                result[(schema, table, col["name"])] = col.get("description") or ""
     return result

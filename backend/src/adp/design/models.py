@@ -97,6 +97,17 @@ class DimTable(BaseModel):
     """既存の dim に追加が必要な列。"""
 
 
+class ExistingFact(BaseModel):
+    """既存の fct の種類と粒度（確定した BEAM 成果物から。#113）。"""
+
+    fact_type: FactType | None
+    """BEAM 成果物どうしで食い違うときは None（conflict に理由）。"""
+    grain_sources: frozenset[str] = frozenset()
+    """粒度のキーの源泉（raw.order_items.order_item_id など）。"""
+    beams: list[str] = Field(default_factory=list)
+    conflict: str | None = None
+
+
 class IssueSeverity(StrEnum):
     BLOCKER = "blocker"
     """生成できない。ユーザーかエンジニアの確認が必要。"""

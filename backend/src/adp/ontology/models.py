@@ -134,13 +134,20 @@ def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Onto
     """
     linked: list[str] = []
     concepts = []
+    # 概念とモデルは 1 対 1（#114）。既にどこかの概念にあるモデル（再利用した既存の fct など）は、
+    # 同じ源泉のほかの概念に書き込まない
+    taken = {c.model for c in ontology.concepts if c.model}
     for c in ontology.concepts:
         prefix = "dim_" if c.kind == "entity" else "fct_"
         # 同じ源泉に fct と dim があっても、概念の種類に合うものを選ぶ
-        model = next((m for s, m in models if s == c.source and m.startswith(prefix)), None)
+        model = next(
+            (m for s, m in models if s == c.source and m.startswith(prefix) and m not in taken),
+            None,
+        )
         if c.model is None and model is not None:
             concepts.append(c.model_copy(update={"model": model}))
             linked.append(c.name)
+            taken.add(model)
         else:
             concepts.append(c)
     if not linked:

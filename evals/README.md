@@ -2,7 +2,7 @@
 
 インタビューと生成の品質を測るシナリオ。
 
-- `interview/<scenario>.yml`: ユーザー役（ペルソナ）と最初の要求、合格条件（`checks`。確定できるか・指標の集計方法・切り口・会話の質など）。
+- `interview/<scenario>.yml`: ユーザー役（ペルソナ）と最初の要求、合格条件（`checks`。確定できるか・指標の集計方法・切り口・会話の質など）。`onboard: <源泉>` を書いたシナリオ（reviews）は、まだオントロジーに無い源泉を使う。`make eval` ではプロファイルからの決定的な追加案で取り込んだものとして設計を確かめ、`make e2e V3=1`（既定のシナリオが reviews）では本物の取り込み（エージェント → PR）をしてから生成する。
 - `repair/<name>.yml`: 生成物にわざと入れる失敗と、期待する結果（下の「生成の自己修復の eval」）。
 - 生成の合格条件（`dbt build` が green、`mf query` の結果など）は、シナリオではなく生成の統合テスト（`backend/tests/generation/`）で確かめる。
 - CI では録画した LLM の応答（`backend/tests/fixtures/evals/`）で再生する。ローカルでは `make eval` で実際の LLM を呼ぶ（Claude Code の認証）。
@@ -13,6 +13,19 @@
 1. **集計**: `make feedback-report`（`SUMMARY=1` で Claude による要約と改善案）。プロンプトのバージョン別・段階別・分類別の 👎 の割合と、👎 の発言の抜粋が出る（`.adp/reports/` に保存。会話の抜粋を含むので公開しない）。
 2. **eval 化**: `make feedback-drafts` で、低評価のセッションから eval シナリオの下書きが `.adp/eval-drafts/` にできる。フィードバックの分類に対応するチェックが入っている。**request と persona を合成した内容に書き換えてから** `evals/interview/` に置く（実データの会話をリポジトリに入れない）。
 3. **前後比較**: 変更前に `make eval REPEAT=3`、プロンプトを直して `PROMPT_VERSION` を上げ、もう一度 `make eval REPEAT=3`。`make eval-compare BEFORE=.adp/evals/<前> AFTER=.adp/evals/<後>` の表を PR に貼る（certificate C10）。前と後は**同じ eval のコード**で回す（チェックや数値の定義が変わると比べられない）。全体の行は前後の両方にあるシナリオだけで集計する。
+
+### BEAM 成果物のチェック（シナリオの `checks` に書く）
+
+| チェック | 内容 |
+|---|---|
+| `finalizable` | 確定できた（確定までの課題が無い。設計の課題を含む） |
+| `has_w: [what, when, …]` | 出来事に、その W のディメンションがある |
+| `metric_group_by_w: <w>` | 指標の切り口に、その W のディメンションがある |
+| `metric_aggregation: <sum など>` | 指標の measure が、その集計方法でデータがある |
+| `metric_type: <simple など>` / `metric_has_filter` | 指標の種類・条件 |
+| `has_gap: <種類>` / `has_examples` / `min_events: N` | 足りないもの・具体例・出来事の数 |
+| `fact: <fct の名前>` | 出来事の fact がその名前になる（既存の fact を再利用したか。#113） |
+| `fact_source: <源泉>` | その源泉を 1 行の元（設計と同じく、粒度のキーから決まるベースのテーブル。`adp.design.builder.base_table`）にした出来事があり、その fact がほかの源泉の既存の fact（オントロジーの概念のモデル）ではない。fact の名前は問わない（データ全体にしかない要求で新しい fact を作るか。#113） |
 
 ### 会話の質のチェック（どのシナリオでも行う）
 

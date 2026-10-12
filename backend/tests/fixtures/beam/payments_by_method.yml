@@ -1,0 +1,58 @@
+schema_version: 1
+name: payments_by_method
+title: 支払方法別の支払金額
+request: 支払方法ごとの支払金額を月別に見たい
+events:
+  - name: customer_pays_order
+    table_name: payments
+    label: 顧客が注文の代金を支払う
+    subject: 顧客
+    verb: 支払う
+    object: 注文
+    story_type: discrete
+    grain: 支払 1 件
+    grain_keys: [payment_id]
+    degenerate_dimensions:
+      - name: payment_id
+        label: 支払番号
+        source: {table: raw.payments, column: payment_id}
+    source_tables: [raw.payments]
+    priority: medium
+    impact: medium
+    effort: low
+    measures:
+      - name: paid_amount
+        label: 支払金額
+        aggregation: sum
+        unit: 円
+        source: {table: raw.payments, column: amount}
+        availability: available
+    dimensions:
+      - w: when
+        name: date
+        label: 支払日
+        time_grain: day
+        fact_key: {table: raw.payments, column: paid_at}
+      - w: how
+        name: payment_method
+        label: 支払方法
+        business_key: {table: raw.payments, column: payment_method}
+        fact_key: {table: raw.payments, column: payment_method}
+        attributes:
+          - name: payment_method
+            label: 支払方法
+            examples: [credit_card]
+            source: {table: raw.payments, column: payment_method}
+            availability: available
+    examples: []
+metrics:
+  - name: paid_amount_total
+    label: 支払金額
+    question: 支払方法ごとの支払金額を月別に見たい
+    framed_question: 月別・支払方法別の支払金額はいくらか
+    type: simple
+    event: customer_pays_order
+    measure: paid_amount
+    group_by: [date.month, payment_method.payment_method]
+    status: confirmed
+gaps: []

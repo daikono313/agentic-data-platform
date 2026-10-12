@@ -65,7 +65,10 @@ class Tables:
     shipments: list[tuple[object, ...]]
     returns: list[tuple[object, ...]]
     inventory: list[tuple[object, ...]]
-    """在庫の入出庫（実店舗）。dbt の sources に未宣言の「後から追加された源泉」の例（#69）。"""
+    """在庫の入出庫（実店舗）。後から追加された源泉の例（#69。いまはオントロジーに取り込み済み）。"""
+    reviews: list[tuple[object, ...]]
+    """商品レビュー（明細の一部にだけある）。オントロジーにも dbt の sources にも無い、
+    新しく届いた源泉の例（design-doc の S5。#118）。自由記述の列は持たない。"""
 
 
 # カテゴリごとの返品しやすさ（明細単位の確率）と返品理由の重み
@@ -264,6 +267,7 @@ def generate(n_orders: int, seed: int) -> Tables:
             )
 
     inventory = _inventory(seed, max(100, n_orders // 3), products, stores)
+    reviews = _reviews(seed, orders, items, products)
     return Tables(
         customers,
         products,
@@ -275,33 +279,99 @@ def generate(n_orders: int, seed: int) -> Tables:
         shipments,
         returns,
         inventory,
+        reviews,
     )
 
 
+# カテゴリごとの評価（1〜5）の重み
+RATING_WEIGHTS: dict[str, list[float]] = {
+    "食品": [0.03, 0.05, 0.17, 0.40, 0.35],
+    "日用品": [0.04, 0.08, 0.28, 0.38, 0.22],
+    "家電": [0.08, 0.10, 0.20, 0.32, 0.30],
+    "衣料": [0.10, 0.14, 0.26, 0.30, 0.20],
+    "書籍": [0.02, 0.05, 0.18, 0.35, 0.40],
+}
+REVIEW_RATE = 0.12
+"""レビューが書かれる明細の割合（キャンセルされた注文の明細には書かれない）。"""
+
+
+def _reviews(
+    seed: int,
+    orders: list[tuple[object, ...]],
+    items: list[tuple[object, ...]],
+    products: list[tuple[object, ...]],
+) -> list[tuple[object, ...]]:
+    """商品レビュー（review_id, order_item_id, product_id, customer_id, rating, reviewed_at）。"""
+    rng = _rng(seed, "reviews")
+    order_by_id = {o[0]: o for o in orders}
+    category = {p[0]: str(p[2]) for p in products}
+    rows: list[tuple[object, ...]] = []
+    for item in items:
+        order = order_by_id[item[1]]
+        if order[5] == "cancelled" or rng.random() >= REVIEW_RATE:
+            continue
+        ordered_at = order[3]
+        assert isinstance(ordered_at, datetime)
+        rating = rng.choices([1, 2, 3, 4, 5], weights=RATING_WEIGHTS[category[item[2]]])[0]
+        reviewed_at = ordered_at + timedelta(days=rng.randint(2, 30), hours=rng.randint(0, 12))
+        rows.append((len(rows) + 1, item[0], item[2], order[1], rating, reviewed_at))
+    return rows
+
+
 MOVEMENT_TYPES = [("receipt", 0.55), ("transfer_out", 0.15), ("disposal", 0.05), ("count", 0.25)]
+COUNT_DISCREPANCY = (-3, 3)
+"""棚卸で数えた数と帳簿の在庫数のずれ（紛失・数え間違いなど）。"""
 
 
 def _inventory(
     seed: int, n: int, products: list[tuple[object, ...]], stores: list[tuple[object, ...]]
 ) -> list[tuple[object, ...]]:
-    """実店舗の在庫の入出庫（入荷・他店への移動・廃棄・棚卸の差異）。"""
+    """実店舗の在庫の入出庫（入庫・他店への移動出庫・廃棄・棚卸）。
+
+    quantity の意味は movement_type で決まる:
+    - receipt（入庫）: 増えた数（プラス）
+    - transfer_out（移動出庫）・disposal（廃棄）: 減った数（マイナス）
+    - count（棚卸）: 数えた在庫数そのもの（実数。0 以上）。増減ではないので、増減と足さない
+
+    店舗 × 商品ごとに、時刻の順に帳簿の在庫数をたどる（期首の在庫は記録の外にある）。在庫が
+    0 より少なくならないよう、出庫・廃棄は在庫の範囲にし、在庫が無ければ入庫にする。棚卸は
+    帳簿の在庫数に小さなずれを足した数（0 以上）で、棚卸の後は帳簿をその数に合わせる。
+    """
     rng = _rng(seed, "inventory")
     shops = [s[0] for s in stores if s[2] == "store"]
-    rows: list[tuple[object, ...]] = []
-    for i in range(1, n + 1):
+    events: list[tuple[datetime, object, object, str]] = []
+    for _ in range(n):
         product = rng.choice(products)
         moved_at = datetime.combine(rand_date(rng, START, END), datetime.min.time()) + timedelta(
             hours=rng.randint(7, 21), minutes=rng.choice([0, 15, 30, 45])
         )
-        kind = weighted(rng, MOVEMENT_TYPES)
-        qty = {
-            "receipt": rng.randint(5, 60),
-            "transfer_out": -rng.randint(1, 10),
-            "disposal": -rng.randint(1, 5),
-            "count": rng.randint(-3, 3),
-        }[kind]
+        events.append((moved_at, rng.choice(shops), product[0], weighted(rng, MOVEMENT_TYPES)))
+    events.sort(key=lambda e: (e[0], str(e[1]), str(e[2])))
+
+    book: dict[tuple[object, object], int] = {}
+    rows: list[tuple[object, ...]] = []
+    for moved_at, shop, product_id, kind in events:
+        key = (shop, product_id)
+        if key not in book:
+            book[key] = rng.randint(0, 30)  # 期首の在庫
+        stock = book[key]
+        if kind in ("transfer_out", "disposal") and stock == 0:
+            kind = "receipt"  # 在庫が無ければ出せない
+        if kind == "receipt":
+            qty = rng.randint(5, 60)
+            stock += qty
+        elif kind == "transfer_out":
+            qty = -min(stock, rng.randint(1, 10))
+            stock += qty
+        elif kind == "disposal":
+            qty = -min(stock, rng.randint(1, 5))
+            stock += qty
+        else:  # count: 数えた在庫数（実数）。帳簿をこれに合わせる
+            qty = max(0, stock + rng.randint(*COUNT_DISCREPANCY))
+            stock = qty
+        book[key] = stock
         rows.append(
-            (i, rng.choice(shops), product[0], moved_at, kind, qty, moved_at + timedelta(hours=1))
+            (len(rows) + 1, shop, product_id, moved_at, kind, qty, moved_at + timedelta(hours=1))
         )
     return rows
 
@@ -330,6 +400,8 @@ DDL = {
         quantity INTEGER, return_reason VARCHAR""",
     "inventory": """inventory_id INTEGER, store_id INTEGER, product_id INTEGER,
         moved_at TIMESTAMP, movement_type VARCHAR, quantity INTEGER, updated_at TIMESTAMP""",
+    "reviews": """review_id INTEGER, order_item_id INTEGER, product_id INTEGER,
+        customer_id INTEGER, rating INTEGER, reviewed_at TIMESTAMP""",
 }
 
 
