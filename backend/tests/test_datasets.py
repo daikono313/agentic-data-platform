@@ -392,3 +392,16 @@ def test_used_by_is_unknown_without_manifest(tmp_path: Path) -> None:
     (tmp_path / "warehouse").mkdir()
     [source] = DatasetIndex(tmp_path, Catalog(db)).sources([])
     assert source.used_by is None  # 分からない（未活用とは言わない）
+
+
+def test_beams_skip_broken_files_and_report_them(tmp_path: Path) -> None:
+    """壊れた BEAM の YAML は一覧から外し、エラーに出す（ほかの成果物は出す。#110）。"""
+    beam = tmp_path / "beam"
+    beam.mkdir()
+    (beam / "a.yml").write_text("name: a\nmetrics:\n  - name: m\n", encoding="utf-8")
+    (beam / "b.yml").write_text("name: [\n", encoding="utf-8")
+    (beam / "c.yml").write_text("title: name が無い\n", encoding="utf-8")
+    errors: list[str] = []
+    beams = DatasetIndex(tmp_path, None).beams(errors)
+    assert [(b.name, b.metrics) for b in beams] == [("a", ["m"])]
+    assert errors == ["b.yml を読めませんでした", "c.yml を読めませんでした"]

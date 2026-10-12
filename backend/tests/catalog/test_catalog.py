@@ -344,7 +344,10 @@ def test_pii_meta_is_read_from_sources_yml_without_manifest(tmp_path: Path) -> N
         "sources:\n  - name: raw\n    tables:\n      - name: people\n        columns:\n"
         "          - {name: nickname, meta: {pii: true}}\n"
         "          - {name: email, config: {meta: {pii: false}}}\n"
+        "          - {meta: {pii: true}}\n"
     )
+    # 壊れた yml があっても、ほかの yml の meta.pii は読む（#110）
+    (tmp_path / "models" / "broken.yml").write_text("sources: [\n  - name: :\n")
     (tmp_path / "data").mkdir()
     db = tmp_path / "data" / "dev.duckdb"
     con = duckdb.connect(str(db))

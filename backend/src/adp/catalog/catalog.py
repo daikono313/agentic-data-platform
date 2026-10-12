@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-import yaml
 from pydantic import BaseModel
+
+from adp.yaml_docs import load_yaml_docs, named
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FK_MIN_MATCH_RATIO = 0.95
@@ -775,27 +776,14 @@ def _load_pii_yaml(warehouse: Path) -> dict[tuple[str, str, str], bool]:
     if not (warehouse / "dbt_project.yml").exists():
         return {}
     result: dict[tuple[str, str, str], bool] = {}
-    for path in sorted((warehouse / "models").rglob("*.yml")):
-        try:
-            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (yaml.YAMLError, UnicodeDecodeError):
-            continue
-        if not isinstance(doc, dict):
-            continue
-        for src in doc.get("sources") or []:
-            if not isinstance(src, dict):
-                continue
-            schema = src.get("schema", src.get("name"))
-            for table in src.get("tables") or []:
-                if not isinstance(table, dict):
-                    continue
-                name = table.get("identifier") or table.get("name")
-                for col in table.get("columns") or []:
-                    if not isinstance(col, dict) or "name" not in col:
-                        continue
-                    meta = col.get("meta") or (col.get("config") or {}).get("meta") or {}
-                    if isinstance(meta, dict) and "pii" in meta:
-                        result[(str(schema), str(name), str(col["name"]))] = bool(meta["pii"])
+    for _, src in load_yaml_docs(warehouse / "models").entries("sources"):
+        schema = src.get("schema", src["name"])
+        for table in named(src.get("tables")):
+            name = table.get("identifier") or table["name"]
+            for col in named(table.get("columns")):
+                meta = col.get("meta") or (col.get("config") or {}).get("meta") or {}
+                if isinstance(meta, dict) and "pii" in meta:
+                    result[(str(schema), str(name), str(col["name"]))] = bool(meta["pii"])
     return result
 
 

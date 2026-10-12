@@ -18,11 +18,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
 
 from adp.catalog.catalog import Catalog, CatalogUnavailable, TableProfile
 from adp.charts import ChartError, MetricFlowCompiler
+from adp.yaml_docs import load_yaml_docs
 
 
 class Dimension(BaseModel):
@@ -343,9 +343,11 @@ class DatasetIndex:
 
     def beams(self, errors: list[str]) -> list[BeamInfo]:
         result = []
-        for path in sorted((self.repo_root / "beam").glob("*.yml")):
+        docs = load_yaml_docs(self.repo_root / "beam", "*.yml")
+        failed = [p.path for p in docs.problems]
+        for doc in docs.docs:
             try:
-                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                data = doc.data
                 result.append(
                     BeamInfo(
                         name=data["name"],
@@ -355,7 +357,8 @@ class DatasetIndex:
                     )
                 )
             except Exception:
-                errors.append(f"{path.name} を読めませんでした")
+                failed.append(doc.path)
+        errors.extend(f"{p.name} を読めませんでした" for p in sorted(failed))
         return result
 
     def profile(self, table: str) -> SourceProfile:
