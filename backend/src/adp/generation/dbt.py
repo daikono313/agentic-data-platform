@@ -28,6 +28,7 @@ from adp.generation.semantic import (
     fact_semantics,
     metric_definitions,
 )
+from adp.yaml_docs import named
 
 UNKNOWN_LABEL = "不明"
 
@@ -345,7 +346,7 @@ def _extend_existing_fact(
         return None
     if base not in sql_text:
         return None
-    data = yaml.safe_load(yml_text)
+    data = yaml.safe_load(yml_text)  # 下で書き換えるので、キャッシュの dict（yaml_docs）は使わない
     model = next(
         (m for m in data.get("models", []) if isinstance(m, dict) and m.get("name") == fact.name),
         None,
@@ -359,13 +360,13 @@ def _extend_existing_fact(
     planned = yaml.safe_load(planned_files[1].content)
     planned_model = planned["models"][0]
 
-    existing_metrics = {m.get("name") for m in model.get("metrics", []) or []}
-    existing_metrics |= {m.get("name") for m in data.get("metrics", []) or []}
+    existing_metrics = {m["name"] for m in named(model.get("metrics"))}
+    existing_metrics |= {m["name"] for m in named(data.get("metrics"))}
     new_in_model = [
         m for m in planned_model.get("metrics", []) if m["name"] not in existing_metrics
     ]
     # 足すのは新しい指標の元になる列だけ（粒度や entity は既存のものを使う）
-    have = {c["name"] for c in model.get("columns", []) if isinstance(c, dict)}
+    have = {c["name"] for c in named(model.get("columns"))}
     # 同じ式の列が既にあれば、別名の列を足さずにそれを使う（t0.quantity を 2 列にしない。#113）
     same_expr = _existing_select_exprs(sql_text)
     for m in new_in_model:

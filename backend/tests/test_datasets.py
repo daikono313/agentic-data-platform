@@ -401,7 +401,8 @@ def test_beams_skip_broken_files_and_report_them(tmp_path: Path) -> None:
     (beam / "a.yml").write_text("name: a\nmetrics:\n  - name: m\n", encoding="utf-8")
     (beam / "b.yml").write_text("name: [\n", encoding="utf-8")
     (beam / "c.yml").write_text("title: name が無い\n", encoding="utf-8")
+    (beam / "d.yml").write_text("name: d\ncreated: 2020-02-30\n", encoding="utf-8")
     errors: list[str] = []
     beams = DatasetIndex(tmp_path, None).beams(errors)
     assert [(b.name, b.metrics) for b in beams] == [("a", ["m"])]
-    assert errors == ["b.yml を読めませんでした", "c.yml を読めませんでした"]
+    assert errors == [f"{n}.yml を読めませんでした" for n in "bcd"]

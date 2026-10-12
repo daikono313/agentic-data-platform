@@ -2,8 +2,8 @@
 
 壊れた YAML・dict でない文書は飛ばして `problems` に残し（ログにも出す）、ほかのファイルは
 読む（1 つの壊れたファイルで呼び出し側の処理全体を落とさない）。内容が変わっていない
-ファイル（パス・mtime・サイズが同じ）は読み直さない。返す dict はキャッシュと共有するので、
-呼び出し側で書き換えない。
+ファイル（パス・mtime・ctime・サイズ・inode が同じ）は読み直さない。返す dict はキャッシュと
+共有するので、呼び出し側で書き換えない。
 
 他の adp のモジュールに依存しない。
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,7 +61,10 @@ def named(value: Any) -> list[dict[str, Any]]:
 
 _log = logging.getLogger(__name__)
 _MAX_CACHED = 4096
-_cache: dict[Path, tuple[int, int, YamlDoc | YamlProblem]] = {}
+_RACY_NS = 2_000_000_000
+"""mtime がこれより新しいファイルはキャッシュから返さない（mtime の刻みが粗いファイルシステムで、
+同じサイズへの続けての書き換えを見逃さないため。git の racy-git と同じ考え）。"""
+_cache: dict[Path, tuple[tuple[int, ...], YamlDoc | YamlProblem]] = {}
 _lock = threading.Lock()
 
 
@@ -82,17 +86,18 @@ def _load(path: Path) -> YamlDoc | YamlProblem:
         st = path.stat()
     except OSError as e:
         return YamlProblem(path, f"読めません: {type(e).__name__}")
+    key = (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino)
     with _lock:
         hit = _cache.get(path)
-    if hit is not None and hit[:2] == (st.st_mtime_ns, st.st_size):
-        return hit[2]
+    if hit is not None and hit[0] == key and time.time_ns() - st.st_mtime_ns > _RACY_NS:
+        return hit[1]
     result = _parse(path)
     if isinstance(result, YamlProblem):  # 読み直したときだけ出す
         _log.warning("YAML を飛ばしました: %s: %s", path, result.reason)
     with _lock:
         if len(_cache) >= _MAX_CACHED:  # 消えた worktree のファイルなどが溜まり続けないように
             _cache.clear()
-        _cache[path] = (st.st_mtime_ns, st.st_size, result)
+        _cache[path] = (key, result)
     return result
 
 
@@ -103,7 +108,7 @@ def _parse(path: Path) -> YamlDoc | YamlProblem:
         return YamlProblem(path, f"読めません: {type(e).__name__}")
     try:
         data = yaml.safe_load(text)
-    except yaml.YAMLError as e:
+    except Exception as e:  # 構文の誤りのほか、存在しない日付（ValueError）・深い入れ子なども
         return YamlProblem(path, f"YAML として読めません（{type(e).__name__}）")
     if not isinstance(data, dict):
         return YamlProblem(path, "YAML の中身が辞書（key: value）ではありません")
