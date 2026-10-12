@@ -14,4 +14,4 @@ union all
 
 select
     {{ unknown_key() }},
-    null, '不明', null, null, null, null, null, null
+    null, '不明', '不明', null, '不明', '不明', '不明', null

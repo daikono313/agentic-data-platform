@@ -209,10 +209,11 @@ def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> lis
         + _from_clause(dim.base, dim.joins)
         # 自然キーごとに 1 行にする（NULL の自然キーは不明メンバーと重複するので除く）
         + f"\nwhere {natural.expr} is not null"
+        # 同じ自然キーの行が複数あっても、残す行が実行ごとに変わらないよう全列で順序を決める
         + "\nqualify row_number() over (partition by "
         + natural.expr
         + " order by "
-        + natural.expr
+        + ", ".join(c.expr for c in dim.columns)
         + ") = 1"
         + "\n\nunion all\n\n-- 不明メンバー\nselect "
         + ", ".join(unknown)
@@ -280,6 +281,8 @@ def fact_files(
         tests: list[Any] = []
         if fact.grain_columns == [c.name]:
             tests += ["unique", "not_null"]
+        elif c.name in fact.grain_columns:
+            tests.append("not_null")  # 複数列の粒度も、各列が NULL だと 1 行を特定できない
         if c.role in (ColumnRole.FOREIGN_KEY, ColumnRole.TIME) and c.references:
             ref_model, _, ref_col = c.references.partition(".")
             if not c.nullable and "not_null" not in tests:
@@ -298,7 +301,7 @@ def fact_files(
     top_metrics: list[dict[str, Any]] = []
     queries: list[MetricQuery] = []
     if beam is not None and design is not None and event is not None:
-        model |= fact_model_semantics(fact, has_date_entity)
+        model |= fact_model_semantics(fact, has_date_entity, event)
         defs = metric_definitions(beam, design, fact)
         if defs.in_model:
             model["metrics"] = defs.in_model

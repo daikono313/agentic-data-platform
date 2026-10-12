@@ -32,6 +32,7 @@ dbt-build:
 	cd backend && uv run python -m adp.charts check
 	cd backend && uv run python -m adp.ontology check
 	cd backend && uv run python -m adp.cleansing check
+	cd backend && uv run python -m adp.generation.conventions
 
 # クレンジングの定義（warehouse/cleansing/）からクレンジング層（models/staging/stg_*）を生成する。
 # 雛形は `cd backend && uv run python -m adp.cleansing draft raw.<table>`（源泉のプロファイル画面にも出る）

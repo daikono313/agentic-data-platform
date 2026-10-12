@@ -1,6 +1,7 @@
 """生成物の検証と自己修復ループ（design-doc R11: Sonnet 2 回 → Opus 1 回 → 人に渡す）。
 
-検証は `dbt build`・`dbt parse`・`mf validate-configs`・元の要求の `mf query`。
+検証は `dbt build`・`dbt parse`・`mf validate-configs`・元の要求の `mf query`・モデリング規約の検査
+（`adp.generation.conventions`）。
 失敗したら、ログを渡して生成エージェント（Claude）に warehouse の中だけを直させる。
 既存 dim への列追加など、テンプレートで作れない作業（AgentTask）も同じエージェントが行う。
 """
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from adp.generation.conventions import check_warehouse
 from adp.generation.dbt import AgentTask
 from adp.generation.guard import (
     ALLOWED_COMMANDS,
@@ -170,7 +172,10 @@ def ensure_deps(warehouse: Path, bin_dir: Path) -> CheckResult | None:
 
 
 def verify(warehouse: Path, bin_dir: Path, queries: list[MetricQuery]) -> CheckResult:
-    """dbt build → parse → mf validate-configs → 元の要求の mf query。最初の失敗で止める。"""
+    """dbt build → parse → mf validate-configs → 元の要求の mf query → モデリング規約の検査。
+
+    最初の失敗で止める。
+    """
     dbt, mf = str(bin_dir / "dbt"), str(bin_dir / "mf")
     if python_models(warehouse):
         return CheckResult(False, "Python モデルは使えません", "\n".join(python_models(warehouse)))
@@ -196,6 +201,14 @@ def verify(warehouse: Path, bin_dir: Path, queries: list[MetricQuery]) -> CheckR
                 False, f"{name} が失敗しました", _clean_log(result.stdout + result.stderr)
             )
         passed.append(name)
+    violations = check_warehouse(warehouse)
+    if violations:
+        return CheckResult(
+            False,
+            "モデリング規約の検査が失敗しました（docs/modeling-conventions.md）",
+            "\n".join(str(v) for v in violations),
+        )
+    passed.append("モデリング規約の検査")
     return CheckResult(True, "、".join(passed) + " が成功しました")
 
 
