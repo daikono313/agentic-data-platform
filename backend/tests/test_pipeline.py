@@ -72,6 +72,7 @@ class FakeGh:
 
 async def test_pipeline_end_to_end(repo: Path) -> None:
     beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    beam.title = "店舗別の売上 Closes #123 @someone /Users/me/x"  # 公開する文章（#126）
     beam.finalize()
     gh = FakeGh()
     config = PipelineConfig(
@@ -124,6 +125,12 @@ async def test_pipeline_end_to_end(repo: Path) -> None:
     body = gh.bodies[-1]
     assert "## BEAM Canvas" in body and "✅ 成功" in body
     assert f"![チャート]({url})" in body
+    # タイトル・コミットメッセージ・本文で #N・@name・絶対パスが生きない（guardrails §5）
+    title = create[create.index("--title") + 1]
+    log = git(repo, "log", "--format=%B", f"origin/main..origin/{result.branch}")
+    for text in (title, log, body):
+        assert "#123" not in text and "@someone" not in text and "/Users/me" not in text
+    assert title.startswith("feat(beam): 店舗別の売上") and "feat(beam): 店舗別の売上" in log
 
 
 async def test_chart_failure_still_creates_pr(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:

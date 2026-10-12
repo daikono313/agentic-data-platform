@@ -32,8 +32,15 @@ PROTECTED_FILES = {
 # クレンジングの定義も同様（定義から adp.cleansing がクレンジング層を生成する。#68）
 # macros は、汎用テスト（relationships など）を上書きしていつも通るようにできるので書かせない
 PROTECTED_DIRS = {"charts", "chart_specs", "cleansing", "macros"}
-_DBT = {"parse", "build", "compile", "test", "ls", "list"}
-_MF = {"validate-configs", "query", "list"}
+# 生成エージェントが使える dbt / mf のサブコマンド（docs/guardrails.md の 4）。
+# dbt の run・show・deps は使わせない（build で足りる。show は任意の SQL を流せ、
+# deps はネットワークから取ってくる）
+_DBT_SHOWN = ("parse", "build", "compile", "test", "ls")
+_DBT = {*_DBT_SHOWN, "list"}  # list は ls の別名
+_MF_SHOWN = ("validate-configs", "query", "list")
+_MF = set(_MF_SHOWN)
+ALLOWED_COMMANDS = f"dbt（{' / '.join(_DBT_SHOWN)}）と mf（{' / '.join(_MF_SHOWN)}）"
+"""プロンプトと拒否の理由に書く、使えるコマンド（ガードの許可リストから作る）。"""
 # 値を取るオプション（値にパスを渡せないものだけ）
 _DBT_FLAGS = {"-s", "--select", "--exclude", "--resource-type", "--output"}
 _DBT_SWITCHES = {"--quiet", "-q", "--no-partial-parse", "--fail-fast", "-x"}
@@ -168,10 +175,7 @@ class WorkspaceGuard:
         elif argv[0] == "mf" and argv[1] in _MF:
             flags, switches = _MF_FLAGS, _MF_SWITCHES
         else:
-            return (
-                "実行できるのは dbt（parse / build / compile / test / ls）と"
-                " mf（validate-configs / query / list）だけです"
-            )
+            return f"実行できるのは {ALLOWED_COMMANDS} だけです"
         args = argv[2:]
         i = 0
         while i < len(args):

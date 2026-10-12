@@ -286,7 +286,8 @@ class GenerationPipeline:
             files = await job.commit_and_push(
                 wt,
                 ["warehouse", "beam", "ontology", "docs/ontology.md"],
-                f"feat(beam): {beam.title}\n\nBEAM 成果物 beam/{beam.name}.yml から生成",
+                # 件名も無害化する（squash の既定のメッセージになるため。#126）
+                f"{pr_title(beam)}\n\nBEAM 成果物 beam/{beam.name}.yml から生成",
                 before_push=commit_image,
             )
             result.files = files

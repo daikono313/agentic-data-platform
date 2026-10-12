@@ -185,6 +185,37 @@ def test_pr_body_is_safe_for_public_repo() -> None:
     assert "```" not in text
 
 
+def test_pr_title_and_event_matrix_are_sanitised() -> None:
+    """BEAM のタイトルと Event Matrix のラベル（イベント・ディメンション）も無害化する（#126）。"""
+    beam = load(FIXTURE)
+    evil = "Closes #123 cc @someone | x\n/Users/me/secret"
+    beam = beam.model_copy(
+        update={
+            "title": evil,
+            "events": [
+                e.model_copy(
+                    update={
+                        "label": evil,
+                        "dimensions": [d.model_copy(update={"label": evil}) for d in e.dimensions],
+                    }
+                )
+                for e in beam.events
+            ],
+        }
+    )
+    title = pr_title(beam)
+    assert title.startswith("feat(beam): ") and "\n" not in title
+    assert "#123" not in title and "@someone" not in title and "/Users/me" not in title
+
+    body = pr_body(beam, DesignBuilder(FakeSchema()).build(load(FIXTURE)), [], Verification(True))
+    matrix = body.split("## Event Matrix", 1)[1].split("## ", 1)[0]
+    assert "#123" not in matrix and "@someone" not in matrix and "/Users/me" not in matrix
+    header, _, *rows = [line for line in matrix.splitlines() if line.startswith("|")]
+    columns = header.count(" | ") + 1
+    assert all(r.count(" | ") + 1 == columns for r in rows)  # 「|」で列がずれない
+    assert "#123" not in body and "@someone" not in body
+
+
 def test_long_body_uses_file_and_is_truncated(repo: Path) -> None:
     seen: dict[str, str] = {}
 

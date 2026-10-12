@@ -53,7 +53,7 @@ make eval-compare BEFORE=… AFTER=…                  # プロンプトを変�
 make eval-repair                                    # 生成の自己修復の eval
 make e2e                                            # S1 を通しで実行（dry-run。PR=1 で本物の PR）
 make e2e SCENARIO=return_rate_by_category V2=1      # S3・S4
-make e2e SCENARIO=inventory V3=1                    # S5（源泉の取り込みから）
+make e2e V3=1                                      # S5（源泉の取り込みから）
 make feedback-report                                # フィードバックの集計（docs/feedback-loop.md）
 ```
 
