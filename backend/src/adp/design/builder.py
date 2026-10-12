@@ -24,13 +24,14 @@ from adp.design.models import (
     ColumnRole,
     DesignIssue,
     DimTable,
+    ExistingFact,
     FactTable,
     IssueSeverity,
     Join,
     PhysicalDesign,
     SourceTable,
 )
-from adp.ontology.models import Ontology
+from adp.ontology.models import Concept, Ontology
 
 
 @dataclass(frozen=True)
@@ -181,17 +182,47 @@ def dim_key_expr(expr: str) -> str:
     return "{{ dim_key(" + quote + expr + quote + ") }}"
 
 
+def _grain_refs(event: BusinessEvent) -> list[SourceRef]:
+    refs = []
+    for key in event.grain_keys:
+        if (dg := event.degenerate(key)) is not None:
+            refs.append(dg.source)
+        elif (d := event.dimension(key)) is not None and d.fact_key is not None:
+            refs.append(d.fact_key)
+    return refs
+
+
+def base_table(event: BusinessEvent, schema: SchemaInfo) -> str | None:
+    """fct の 1 行の元になるテーブル: 粒度のキーのテーブルのうち、他のすべてへ多対一で結合できる
+    もの（最も細かいテーブル）。決まらなければ None。"""
+    tables = list(dict.fromkeys(r.table for r in _grain_refs(event)))
+    for candidate in tables:
+        src = _Sources(candidate, schema)
+        if all(src.reachable(t) for t in tables):
+            return candidate
+    return None
+
+
+def grain_sources(event: BusinessEvent) -> frozenset[str]:
+    """粒度のキーの源泉（raw.order_items.order_item_id など）。名前が違っても粒度を比べられる。"""
+    return frozenset(f"{r.table}.{r.column or r.expr}" for r in _grain_refs(event))
+
+
 class DesignBuilder:
     def __init__(
         self,
         schema: SchemaInfo,
         existing_dims: dict[str, set[str]] | None = None,
         ontology: Ontology | None = None,
+        existing_facts: dict[str, ExistingFact] | None = None,
     ):
         self.schema = schema
         self.existing_dims = existing_dims or {}
         self.ontology = ontology
         """あれば、ディメンションの名前がオントロジーの概念の dim と合うかを確かめる（#69）。"""
+        self.existing_facts = existing_facts
+        """既存の fct の種類と粒度（確定した BEAM 成果物から。用途の重複の判定に使う。#113）。
+        None なら比べない（オントロジーの名前だけで判定する）。"""
         self.issues: list[DesignIssue] = []
 
     def _issue(self, severity: IssueSeverity, message: str, ref: str | None = None) -> None:
@@ -205,6 +236,8 @@ class DesignBuilder:
         facts = [f for e in beam.events if (f := self._fact(e)) is not None]
         dims = self._dims(beam)
         self._check_ontology(dims)
+        self._check_ontology_sources(facts, dims)
+        self._check_duplicate_facts(beam, facts)
         design = PhysicalDesign(
             beam=beam.name,
             facts=facts,
@@ -238,32 +271,154 @@ class DesignBuilder:
                     dim.dimension,
                 )
 
+    def _check_ontology_sources(self, facts: list[FactTable], dims: list[DimTable]) -> None:
+        """オントロジーに無い（未整理の）源泉からモデルを作ろうとしていないか（#109）。
+
+        源泉が増えたら、まずオントロジーに追加し（取り込み）、クレンジング層を作ってから fact / dim
+        を整理する（CLAUDE.md の規約）。生成 PR がそれを迂回しないよう、確定の前に止める。
+        ベースのテーブルだけでなく、結合するテーブルも見る（生成はそのクレンジング層も作る）。
+        """
+        if self.ontology is None:
+            return
+        known = {c.source for c in self.ontology.concepts}
+        models: list[tuple[str, SourceTable, list[Join], str]] = [
+            (f.name, f.base, f.joins, f.event) for f in facts
+        ]
+        models += [(d.name, d.base, d.joins, d.dimension) for d in dims]
+        for model, base, joins, ref in models:
+            tables = dict.fromkeys([base.table, *(j.right.table for j in joins)])
+            for table in tables:
+                if table in known:
+                    continue
+                role = "源泉" if table == base.table else "結合する源泉"
+                self._blocker(
+                    f"{model} の{role} {table} は、まだオントロジーにありません（未整理）。"
+                    "開始画面の源泉一覧の「取り込む」から先に取り込んでください。"
+                    "取り込みの PR がマージされ、手元に反映（git pull など）されると確定できます",
+                    ref,
+                )
+
+    def _check_duplicate_facts(self, beam: BeamModel, facts: list[FactTable]) -> None:
+        """同じ出来事の fact がすでにあるのに、用途の重なる fact を作ろうとしていないか（#113）。
+
+        オントロジーの概念とモデルは 1 対 1（#114）。出来事（event）の概念にモデル（fct）があれば、
+        その源泉の fact はそれだけにする（用途が同じ fact を 2 つ作らない）。
+        - 種類（transaction など）と粒度が同じなら、イベントの table_name を合わせて既存の fact に
+          指標を足す（名前が同じなら、そのまま足す）
+        - 種類か粒度が違う fact は、先にその fact 用の概念をオントロジーに足す。同じ源泉にモデルの
+          無い出来事の概念があれば、それに結び付けて作る。同じ名前のまま種類・粒度は変えられない
+        - 既存の fct の種類・粒度が確定した BEAM 成果物から分からない（無い・食い違う）ときは、
+          確かめるよう課題に出す
+        同じ BEAM の中で、同じ源泉から 2 つの fact を作ることも止める。
+        """
+        by_base: dict[str, list[FactTable]] = {}
+        for fact in facts:
+            by_base.setdefault(fact.base.table, []).append(fact)
+        for table, same_base in by_base.items():
+            if len(same_base) > 1:
+                names = "、".join(f"{f.name}（{f.event}）" for f in same_base)
+                self._blocker(
+                    f"同じ源泉 {table} から、複数の fact（{names}）を作ろうとしています。"
+                    "用途が同じ fact を作らないよう、1 つの出来事にまとめてください",
+                    same_base[1].event,
+                )
+        if self.ontology is None:
+            return
+        events: dict[str, list[Concept]] = {}
+        for c in self.ontology.concepts:
+            if c.kind == "event":
+                events.setdefault(c.source, []).append(c)
+        for fact in facts:
+            concepts = events.get(fact.base.table, [])
+            linked = [c for c in concepts if c.model]
+            event = beam.event(fact.event)
+            if not linked or event is None:
+                continue
+            same_name = next((c for c in linked if c.model == fact.name), None)
+            concept = same_name or linked[0]
+            model = concept.model or ""
+            table_name = model.removeprefix("fct_")
+            head = (
+                f"{fact.name} の源泉 {fact.base.table} の出来事は、既に"
+                f"「{concept.label}」（{model}）としてあります。"
+            )
+            if self.existing_facts is None:
+                if same_name is None:
+                    self._blocker(
+                        head + f"用途が同じ fact を作らず、イベントの table_name を {table_name}"
+                        f" にして {model} に指標を足してください"
+                        "（measure と切り口は、list_facts にある既存の列名を使う）",
+                        fact.event,
+                    )
+                continue
+            known = self.existing_facts.get(model)
+            if known is None or known.fact_type is None:
+                reason = (
+                    known.conflict
+                    if known is not None and known.conflict
+                    else "確定した BEAM 成果物（beam/）にありません"
+                )
+                if same_name is not None:
+                    self._issue(
+                        IssueSeverity.WARNING,
+                        f"既存の {model} の種類・粒度を確かめられません（{reason}）。"
+                        f"この要求の fact（{fact.fact_type.value}、粒度: {fact.grain}）と"
+                        "同じかを、PR で確かめてください",
+                        fact.event,
+                    )
+                else:
+                    self._blocker(
+                        head + f"ただし既存の {model} の種類・粒度を確かめられません"
+                        f"（{reason}）。同じ種類・粒度なら、イベントの table_name を "
+                        f"{table_name} にして {model} に指標を足してください。違うなら、先に"
+                        "その fact 用の概念をオントロジーに追加してください（オーナーの確認が"
+                        "必要です）",
+                        fact.event,
+                    )
+                continue
+            differs = []
+            if known.fact_type != fact.fact_type:
+                differs.append(f"種類（{known.fact_type.value} と {fact.fact_type.value}）")
+            new_grain = grain_sources(event)
+            if known.grain_sources and new_grain and known.grain_sources != new_grain:
+                differs.append(
+                    f"粒度のキー（{', '.join(sorted(known.grain_sources))} と "
+                    f"{', '.join(sorted(new_grain))}）"
+                )
+            if differs:
+                if same_name is None and any(not c.model for c in concepts):
+                    continue  # 種類・粒度の違う fact 用の概念が足してある（それに結び付ける）
+                what = "・".join(differs)
+                if same_name is not None:
+                    message = (
+                        f"既存の {model} と、この要求の fact の{what}が違います。"
+                        "既存の fct の種類・粒度は変えられません。"
+                    )
+                else:
+                    message = head + f"{what}が違います。"
+                self._blocker(
+                    message + "オントロジーの概念とモデルは 1 対 1 なので、種類・粒度の違う"
+                    " fact を作るには、別の名前にして、先にその fact 用の概念をオントロジーに"
+                    "追加してください（オーナーの確認が必要です）",
+                    fact.event,
+                )
+                continue
+            if same_name is None:
+                self._blocker(
+                    head + f"用途が同じ fact を作らず、イベントの table_name を {table_name}"
+                    f" にして {model} に指標を足してください"
+                    "（measure と切り口は、list_facts にある既存の列名を使う）",
+                    fact.event,
+                )
+
     # --- fct -------------------------------------------------------------------------------
-
-    def _grain_tables(self, event: BusinessEvent) -> list[str]:
-        tables = []
-        for key in event.grain_keys:
-            if (dg := event.degenerate(key)) is not None:
-                tables.append(dg.source.table)
-            elif (d := event.dimension(key)) is not None and d.fact_key is not None:
-                tables.append(d.fact_key.table)
-        return tables
-
-    def _base_table(self, event: BusinessEvent) -> str | None:
-        """粒度のキーのテーブルのうち、他のすべてへ多対一で結合できるもの（最も細かいテーブル）。"""
-        tables = list(dict.fromkeys(self._grain_tables(event)))
-        for candidate in tables:
-            src = _Sources(candidate, self.schema)
-            if all(src.reachable(t) for t in tables):
-                return candidate
-        return None
 
     def _fact(self, event: BusinessEvent) -> FactTable | None:
         p = f"[{event.name}]"
         if event.fact_type == FactType.PERIODIC_SNAPSHOT:
             self._blocker(f"{p} 定期スナップショット（recurring）は MVP では生成できません")
             return None
-        base = self._base_table(event)
+        base = base_table(event, self.schema)
         if base is None or not event.grain:
             self._blocker(f"{p} 粒度（grain_keys）からベースのテーブルを決められません")
             return None

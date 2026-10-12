@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from adp.api.store import FeedbackRow, Store
 from adp.evals.compare import compare
 from adp.evals.feedback import drafts, no_drafts_hint, report, summarize
@@ -319,3 +321,56 @@ def test_effort_and_irregular_detection_avoids_false_matches() -> None:
     assert not _transcript_check_map([_msg("例外なく全店舗を含めてよいですか？")])[
         "asks_irregular_cases"
     ].passed
+
+
+def test_fact_source_check() -> None:
+    """fact_source: その源泉を元にした出来事があり、ほかの源泉の既存の fact ではない（#113）。"""
+    from adp.beam import BeamModel
+    from adp.beam import load as load_beam
+    from adp.evals.interview import Scenario, _check
+    from adp.llm.settings import REPO_ROOT
+
+    fixtures = Path(__file__).parents[1] / "fixtures" / "beam"
+    payments = load_beam(fixtures / "payments_by_method.yml")
+    assert _check(payments, {"fact_source": "raw.payments"}).passed
+    assert not _check(payments, {"fact_source": "raw.reviews"}).passed
+    # 名前を既存の別の fact（fct_order_lines。源泉は raw.order_items）にしたら不合格
+    data = payments.model_dump(mode="json")
+    data["events"][0]["table_name"] = "order_lines"
+    assert not _check(BeamModel.model_validate(data), {"fact_source": "raw.payments"}).passed
+    # source_tables にあるだけでは合格にしない（設計と同じく、粒度から決まる元のテーブルで判定）
+    sales = load_beam(fixtures / "sales_by_store.yml")
+    assert "raw.orders" in sales.events[0].source_tables
+    assert not _check(sales, {"fact_source": "raw.orders"}).passed
+    # source_tables が空でも、粒度のキーのテーブルで判定する
+    data = payments.model_dump(mode="json")
+    data["events"][0]["source_tables"] = []
+    assert _check(BeamModel.model_validate(data), {"fact_source": "raw.payments"}).passed
+
+    reviews = Scenario.load(REPO_ROOT / "evals" / "interview" / "reviews.yml")
+    assert reviews.onboard == "raw.reviews"
+    assert {"fact_source": "raw.reviews"} in reviews.checks
+
+
+def test_onboarded_ontology_for_scenarios_with_a_new_source(tmp_path: Path) -> None:
+    """onboard のあるシナリオは、プロファイルからの追加案で取り込んだ後のオントロジーで確かめる。"""
+    from adp.catalog.catalog import Catalog
+    from adp.design.check import existing_facts
+    from adp.evals.interview import onboarded_ontology
+    from adp.llm.settings import REPO_ROOT
+    from adp.ontology import load
+
+    db = REPO_ROOT / "warehouse" / "data" / "dev.duckdb"
+    if not db.exists():
+        pytest.skip("make setup が必要")
+    import asyncio
+
+    # 「raw.」を省いても同じ。実行ごとに別のディレクトリ
+    path = asyncio.run(onboarded_ontology(Catalog(db), "reviews", tmp_path / "x"))
+    other = asyncio.run(onboarded_ontology(Catalog(db), "raw.reviews", tmp_path / "x"))
+    assert path != other and path.exists() and other.exists()
+    concepts = load(path).concepts
+    assert any(c.source == "raw.reviews" and c.kind == "event" for c in concepts)
+    with pytest.raises(ValueError, match="make sample-data"):
+        asyncio.run(onboarded_ontology(Catalog(db), "raw.no_such_table", tmp_path / "x"))
+    assert existing_facts(path.parent.parent / "beam")  # 既存の BEAM も読める

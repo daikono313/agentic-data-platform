@@ -36,6 +36,10 @@ flowchart LR
     c_return(["返品"])
     a_return["返品日時<br/>返品数量<br/>返品理由"]:::attr
   end
+  subgraph d_inventory["在庫"]
+    c_inventory_movement(["在庫の入出庫"])
+    a_inventory_movement["入出庫日時<br/>入出庫の種類<br/>数量"]:::attr
+  end
   c_customer -.- a_customer
   c_product -.- a_product
   c_store -.- a_store
@@ -45,6 +49,7 @@ flowchart LR
   c_payment -.- a_payment
   c_shipment -.- a_shipment
   c_return -.- a_return
+  c_inventory_movement -.- a_inventory_movement
   c_customer -- "注文する" --> c_order
   c_store -- "受け付ける" --> c_order
   c_promotion -- "適用される" --> c_order
@@ -53,6 +58,8 @@ flowchart LR
   c_order -- "支払われる" --> c_payment
   c_order -- "配送される" --> c_shipment
   c_order_line -- "返品される" --> c_return
+  c_store -- "入出庫する" --> c_inventory_movement
+  c_inventory_movement -- "動かす" --> c_product
   k_0["channel が online / app の店舗は都道府県・地方を持たない"]:::constraint
   k_0 -.- c_store
   k_1["1 明細でも返品があれば order_status は returned"]:::constraint
@@ -61,11 +68,13 @@ flowchart LR
   k_2 -.- c_shipment
   k_3["unit_cost は標準原価で、実績原価ではない"]:::constraint
   k_3 -.- c_product
+  k_4["数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。月末在庫は、その月までの最新の棚卸の数か、そこから後の入庫・移動出庫・廃棄を足した帳簿の数"]:::constraint
+  k_4 -.- c_inventory_movement
   classDef attr fill:#f4f4f5,stroke:#a1a1aa,color:#3f3f46,font-size:11px
   classDef constraint fill:#dcfce7,stroke:#22c55e,color:#14532d,font-size:11px
   classDef event fill:#166534,stroke:#14532d,color:#ffffff
   classDef entity fill:#1e3a8a,stroke:#172554,color:#ffffff
-  class c_order,c_order_line,c_payment,c_shipment,c_return event
+  class c_order,c_order_line,c_payment,c_shipment,c_return,c_inventory_movement event
   class c_customer,c_product,c_store,c_promotion entity
 ```
 
@@ -82,6 +91,7 @@ flowchart LR
 | 支払 `payment` | 出来事 | 決済・配送・返品 | `raw.payments`（`payment_id`） | 未整備 | 支払方法（`payment_method`）、支払金額（`amount`）、支払日時（`paid_at`） |
 | 配送 `shipment` | 出来事 | 決済・配送・返品 | `raw.shipments`（`shipment_id`） | 未整備 | 配送方法（`shipping_method`）、出荷日時（`shipped_at`）、配達日時（`delivered_at`） |
 | 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | 未整備 | 返品日時（`returned_at`）、返品数量（`quantity`）、返品理由（`return_reason`） |
+| 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`）、入出庫の種類（`movement_type`）、数量（`quantity`） |
 
 ## 関係
 
@@ -95,6 +105,8 @@ flowchart LR
 | 注文 | 支払われる | 支払 | `raw.payments.order_id` |
 | 注文 | 配送される | 配送 | `raw.shipments.order_id` |
 | 注文明細 | 返品される | 返品 | `raw.returns.order_item_id` |
+| 店舗・チャネル | 入出庫する | 在庫の入出庫 | `raw.inventory.store_id` |
+| 在庫の入出庫 | 動かす | 商品 | `raw.inventory.product_id` |
 
 ## 制約
 
@@ -104,3 +116,4 @@ flowchart LR
 | 注文 | 1 明細でも返品があれば order_status は returned |
 | 配送 | online / app の注文のみ配送がある |
 | 商品 | unit_cost は標準原価で、実績原価ではない |
+| 在庫の入出庫 | 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。月末在庫は、その月までの最新の棚卸の数か、そこから後の入庫・移動出庫・廃棄を足した帳簿の数 |

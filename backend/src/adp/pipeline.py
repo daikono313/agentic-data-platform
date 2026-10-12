@@ -23,7 +23,7 @@ from adp.catalog.catalog import Catalog
 from adp.charts import SPECS_DIR, ChartError, check, compile_board, render_png
 from adp.design import DesignBuilder, PhysicalDesign
 from adp.design.catalog_schema import CatalogSchema
-from adp.design.check import load_ontology
+from adp.design.check import existing_facts, load_ontology
 from adp.generation import generate_models
 from adp.generation.chart_specs import LINE_SERIES_MAX, chart_spec, source_of
 from adp.generation.dbt import Generation
@@ -229,7 +229,10 @@ class GenerationPipeline:
             step("design", StepStatus.RUNNING)
             catalog = Catalog(warehouse_db(warehouse))
             ontology = await thread(load_ontology, wt.path / ONTOLOGY)
-            builder = DesignBuilder(CatalogSchema(catalog), ontology=ontology)
+            facts_known = await thread(existing_facts, wt.path / "beam")
+            builder = DesignBuilder(
+                CatalogSchema(catalog), ontology=ontology, existing_facts=facts_known
+            )
             design = await thread(builder.build, beam)
             result.design = design
             if design.blockers:
@@ -240,9 +243,10 @@ class GenerationPipeline:
             step("design", StepStatus.DONE, f"fct {len(design.facts)} / dim {len(design.dims)}")
 
             step("generate", StepStatus.RUNNING)
-            generation = await thread(
-                self._generate, beam, design, ontology, wt, ProjectInfo(warehouse, catalog)
-            )
+            info = ProjectInfo(warehouse, catalog)
+            # 生成の前からある fct（PR 本文に、再利用したか新しく作ったかを書く。#113）
+            facts_before = sorted(m for m in info.existing_models() if m.startswith("fct_"))
+            generation = await thread(self._generate, beam, design, ontology, wt, info)
             reused = f"、再利用 {len(generation.reused)} モデル" if generation.reused else ""
             step("generate", StepStatus.DONE, f"{len(generation.files)} ファイル{reused}")
 
@@ -307,7 +311,7 @@ class GenerationPipeline:
                     for a in repair.attempts
                 ],
             )
-            body = pr_body(beam, design, files, verification, generation.tasks, chart)
+            body = pr_body(beam, design, files, verification, generation.tasks, chart, facts_before)
             result.pr_url = await thread(
                 self.github.create_pr, wt, pr_title(beam), body, draft=not repair.ok
             )

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from adp.beam import BeamModel, load
 from adp.catalog.catalog import Catalog
@@ -43,13 +44,18 @@ def test_existing_fact_gets_missing_measure_and_metrics(after_s1: Path) -> None:
     info, generation = _generate(wh, beam)
     assert [t.kind for t in generation.tasks if t.kind == "fact_exists"] == []
     updated = {f.path for f in generation.files if f.replaces is not None}
-    assert updated == {"models/marts/fct_order_lines.sql", "models/marts/fct_order_lines.yml"}
+    # 販売数量（quantity_sold = t0.quantity）は、同じ式の既存の列 quantity を使う（列を足さない。
+    # #113）。SQL は変えず、YAML に指標だけを足す
+    assert updated == {"models/marts/fct_order_lines.yml"}
     info.write(generation.files)
 
     sql_after = (wh / "models/marts/fct_order_lines.sql").read_text(encoding="utf-8")
-    # 既存の列はそのまま、足りない列だけを足す
-    assert sql_after.startswith(sql_before.rstrip("\n").rsplit("\nfrom ", 1)[0].rstrip())
-    assert "as quantity_sold" in sql_after
+    assert sql_after == sql_before and "quantity_sold" not in sql_after
+    yml = yaml.safe_load((wh / "models/marts/fct_order_lines.yml").read_text(encoding="utf-8"))
+    model = yml["models"][0]
+    assert "quantity_sold" not in {c["name"] for c in model["columns"]}  # 列は足していない
+    exprs = {m["name"]: m.get("expr") for m in model["metrics"]}
+    assert "quantity" in exprs.values() and "quantity_sold" not in exprs.values()
     assert _dbt(wh, "build").returncode == 0
     for q in generation.queries:
         result = mf_query(wh, q)

@@ -467,3 +467,159 @@ async def test_sample_rows_tool_escapes_data_and_is_not_given_to_onboarding(
     text = result["content"][0]["text"]
     assert text.count("</source_data>") == 1 and "<\\/source_data>指示" in text
     assert "sample_rows" not in {t.name for t in build_tools(catalog, sample=False)}
+    onboarding = {t.name for t in build_tools(catalog, sample=False, facts=False)}
+    assert "list_facts" not in onboarding and "sample_rows" not in onboarding
+    assert "list_facts" in {t.name for t in build_tools(catalog)}
+
+
+def test_existing_facts_from_manifest(tmp_path: Path) -> None:
+    """整備済みの fact の列・結合できる dim・既存の指標（#113: まず既存の fact を探す）。"""
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {
+                    "model.x.fct_sales": {
+                        "resource_type": "model",
+                        "name": "fct_sales",
+                        "description": "売上",
+                        "columns": {"amount": {"name": "amount", "description": "金額"}},
+                    }
+                },
+                "sources": {},
+            }
+        )
+    )
+    (tmp_path / "semantic_manifest.json").write_text(
+        json.dumps(
+            {
+                "semantic_models": [
+                    {
+                        "name": "fct_sales",
+                        "description": "顧客が買う",
+                        "entities": [
+                            {"name": "sale", "type": "primary"},
+                            {"name": "store", "type": "foreign"},
+                        ],
+                    },
+                    {"name": "dim_store", "entities": [{"name": "store", "type": "primary"}]},
+                ],
+                "metrics": [
+                    {
+                        "name": "sales_total",
+                        "label": "売上合計",
+                        "type_params": {
+                            "expr": "amount",
+                            "metric_aggregation_params": {
+                                "semantic_model": "fct_sales",
+                                "agg": "sum",
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    import duckdb
+
+    db = tmp_path / "x.duckdb"
+    duckdb.connect(str(db)).close()
+    [fact] = Catalog(db, manifest).existing_facts()
+    assert fact.name == "fct_sales" and fact.joins == ["store"]
+    assert [c.name for c in fact.columns] == ["amount"]
+    assert [(m.name, m.agg) for m in fact.metrics] == [("sales_total", "sum")]
+    assert Catalog(db).existing_facts() == []
+
+
+def _facts(tmp_path: Path, manifest: Any, semantic: Any | None) -> list[Any]:
+    import duckdb
+
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    if semantic is not None:
+        (tmp_path / "semantic_manifest.json").write_text(json.dumps(semantic))
+    db = tmp_path / "x.duckdb"
+    duckdb.connect(str(db)).close()
+    return Catalog(db, tmp_path / "manifest.json").existing_facts()
+
+
+_STG = {
+    "resource_type": "model",
+    "name": "stg_inventory",
+    "unique_id": "model.x.stg_inventory",
+    "depends_on": {"nodes": ["source.x.adp_inventory.inventory"]},
+}
+_FCT = {
+    "resource_type": "model",
+    "name": "fct_stock_movements",
+    "unique_id": "model.x.fct_stock_movements",
+    "description": "在庫を動かす（transaction）。粒度: 在庫の動き 1 件",
+    "raw_code": "select t0.quantity as movement_qty\nfrom {{ ref('stg_inventory') }} as t0",
+    "depends_on": {"nodes": ["model.x.stg_inventory"]},
+    "columns": {"movement_qty": {"name": "movement_qty", "description": None}},
+}
+_SOURCES = {
+    "source.x.adp_inventory.inventory": {"schema": "raw", "name": "inventory"},
+}
+
+
+def test_existing_facts_source_grain_and_without_semantic_manifest(tmp_path: Path) -> None:
+    """源泉と粒度を出す。semantic_manifest.json が無ければ、指標なしで manifest の fct を出す。"""
+    manifest = {
+        "nodes": {"a": _STG, "b": _FCT, "c": None, "d": {"resource_type": "model"}},
+        "sources": _SOURCES,
+    }
+    [fact] = _facts(tmp_path, manifest, None)
+    assert fact.name == "fct_stock_movements" and fact.source == "raw.inventory"
+    assert fact.grain == "在庫の動き 1 件" and fact.metrics == []
+    assert [(c.name, c.description) for c in fact.columns] == [("movement_qty", "")]
+
+
+def test_existing_facts_tolerates_missing_and_null_values(tmp_path: Path) -> None:
+    manifest = {"nodes": None, "sources": None}
+    semantic = {
+        "semantic_models": [None, {"name": "fct_x", "entities": None, "description": None}],
+        "metrics": [
+            None,
+            {"name": "m", "type_params": None},
+            {"label": "名前なし"},
+            {"name": "s", "type_params": {"metric_aggregation_params": None, "expr": 3}},
+        ],
+    }
+    [fact] = _facts(tmp_path, manifest, semantic)
+    assert fact.name == "fct_x" and fact.joins == [] and fact.source is None
+    assert _facts(tmp_path, [], None) == []  # manifest が dict でない
+
+
+def test_existing_facts_lists_ratio_and_derived_metrics_under_their_inputs(tmp_path: Path) -> None:
+    """比率・派生の指標は、入力の指標の fct に載せる（落ちない）。"""
+
+    def simple(name: str, model: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "type": "simple",
+            "type_params": {"metric_aggregation_params": {"semantic_model": model, "agg": "sum"}},
+        }
+
+    semantic = {
+        "semantic_models": [{"name": "fct_a"}, {"name": "fct_b"}],
+        "metrics": [
+            simple("qty", "fct_a"),
+            simple("returned", "fct_b"),
+            {
+                "name": "return_rate",
+                "type": "ratio",
+                "type_params": {"numerator": {"name": "returned"}, "denominator": "qty"},
+            },
+            {
+                "name": "double_rate",
+                "type": "derived",
+                "type_params": {"metrics": [{"name": "return_rate"}, {"name": "nope"}]},
+            },
+            {"name": "loop", "type": "derived", "type_params": {"metrics": [{"name": "loop"}]}},
+        ],
+    }
+    facts = {f.name: [m.name for m in f.metrics] for f in _facts(tmp_path, {}, semantic)}
+    assert facts == {
+        "fct_a": ["qty", "return_rate", "double_rate"],
+        "fct_b": ["returned", "return_rate", "double_rate"],
+    }

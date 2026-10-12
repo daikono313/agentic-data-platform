@@ -14,11 +14,11 @@ from adp.llm import LLMSettings, ScriptedRunner
 from adp.onboarding.agent import propose_with_agent
 from adp.onboarding.plan import bus_with_candidates
 from adp.onboarding.proposal import OntologyPatch, apply, propose_from_profile, validate_patch
-from adp.ontology import load
 from adp.ontology.models import link_models
+from tests.ontology_before_inventory import ontology as before_inventory
 
 REPO = Path(__file__).resolve().parents[3]
-ONTOLOGY = load(REPO / "ontology" / "ontology.yml")
+ONTOLOGY = before_inventory()  # 在庫を取り込む前（在庫を後から増えた源泉として使う）
 
 
 @pytest.fixture
@@ -231,6 +231,19 @@ def test_link_models_picks_model_by_kind() -> None:
     onto = apply(ONTOLOGY, patch)
     linked, names = link_models(onto, [("raw.inventory", "fct_inv"), ("raw.inventory", "dim_inv")])
     assert names == ["inventory"] and linked.concept("inventory").model == "fct_inv"
+
+
+def test_link_models_keeps_one_concept_per_model() -> None:
+    """再利用した既存の fct は、同じ源泉のほかの（モデルの無い）概念に書き込まない（1 対 1）。"""
+    line = ONTOLOGY.concept("order_line")
+    assert line is not None and line.model == "fct_order_lines"
+    extra = line.model_copy(update={"name": "order_line_pipeline", "model": None})
+    onto = ONTOLOGY.model_copy(update={"concepts": [*ONTOLOGY.concepts, extra]})
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_lines")])
+    assert names == [] and linked.concept("order_line_pipeline").model is None
+    # 新しい名前の fct なら、モデルの無い概念に書き込む
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_pipelines")])
+    assert names == ["order_line_pipeline"]
 
 
 def test_design_check_ignores_other_dimensions_of_the_same_source() -> None:

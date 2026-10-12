@@ -33,47 +33,14 @@ from adp.vcs import GitHub, GitWorkspace
 from tests.api.test_api import parse_sse
 from tests.generation.test_dbt_codegen import DBT, FIXTURES
 from tests.generation.test_repair import FixingRunner
+from tests.ontology_before_inventory import inventory_patch, ontology_yaml
 from tests.test_pipeline import FakeGh, repo  # noqa: F401  （fixture）
 from tests.vcs.test_vcs import git
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# エージェントが出す追加案（日本語の表示名・関係の動詞・制約）
-PATCH: dict[str, Any] = {
-    "domains": [{"name": "inventory", "label": "在庫"}],
-    "concepts": [
-        {
-            "name": "inventory_movement",
-            "label": "在庫の入出庫",
-            "domain": "inventory",
-            "kind": "event",
-            "source": "raw.inventory",
-            "key": "inventory_id",
-            "attributes": [
-                {"name": "moved_at", "label": "入出庫日時", "column": "moved_at"},
-                {"name": "movement_type", "label": "入出庫の種類", "column": "movement_type"},
-                {"name": "quantity", "label": "数量", "column": "quantity"},
-            ],
-        }
-    ],
-    "relations": [
-        {
-            "from": "store",
-            "to": "inventory_movement",
-            "verb": "入出庫する",
-            "via": "raw.inventory.store_id",
-        },
-        {
-            "from": "inventory_movement",
-            "to": "product",
-            "verb": "動かす",
-            "via": "raw.inventory.product_id",
-        },
-    ],
-    "constraints": [
-        {"concept": "inventory_movement", "text": "数量は入荷がプラス、移動・廃棄がマイナス"}
-    ],
-}
+# エージェントが出す追加案（日本語の表示名・関係の動詞・制約）。ontology.yml の在庫の部分と同じ
+PATCH: dict[str, Any] = inventory_patch()
 
 
 def _wait(client: TestClient, job_id: str) -> dict[str, Any]:
@@ -89,7 +56,8 @@ def _wait(client: TestClient, job_id: str) -> dict[str, Any]:
 def test_v3_end_to_end(repo: Path) -> None:  # noqa: F811
     # 前提: オントロジーがある（main に入っている）
     (repo / "ontology").mkdir()
-    shutil.copy(ROOT / "ontology" / "ontology.yml", repo / "ontology" / "ontology.yml")
+    # 在庫（raw.inventory）を取り込む前の状態にする（main では取り込み済み。#109）
+    (repo / "ontology" / "ontology.yml").write_text(ontology_yaml(), encoding="utf-8")
     (repo / "docs").mkdir()
     shutil.copy(ROOT / "docs" / "ontology.md", repo / "docs" / "ontology.md")
     git(repo, "add", ".")

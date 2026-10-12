@@ -25,12 +25,16 @@ from adp.beam import Aggregation, Availability, BeamModel, GapKind, MetricType, 
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
-from adp.design.check import design_issues
+from adp.design import ForeignKey, SchemaInfo
+from adp.design.builder import base_table
+from adp.design.catalog_schema import CatalogSchema
+from adp.design.check import design_issues, load_ontology
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
 from adp.interview.wording import is_position_sentence
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
+from adp.warehouse import warehouse_db
 
 SCENARIO_DIR = REPO_ROOT / "evals" / "interview"
 
@@ -53,6 +57,9 @@ class Scenario:
     request: str
     persona: str
     checks: list[Any]
+    onboard: str | None = None
+    """まだオントロジーに無い源泉（例: raw.reviews）。eval ではプロファイルからの決定的な追加案で
+    取り込んだものとして設計を確かめ、E2E（--v3）では本物の取り込み（エージェント → PR）をする。"""
 
     @classmethod
     def load(cls, path: Path) -> Scenario:
@@ -139,9 +146,44 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             str([m.measure for m in beam.metrics]),
         ),
         "min_events": lambda: (len(beam.events) >= int(arg), str(len(beam.events))),
+        # 指標の出来事が、この fact になる（既存の fact を再利用したか・新しい fact か。#113）
+        "fact": lambda: (
+            any(e.fact_table == arg for e in beam.events),
+            str([e.fact_table for e in beam.events]),
+        ),
+        # この源泉を元にした出来事がある（fact の名前は問わない。ほかの源泉の既存の fact は除く）
+        "fact_source": lambda: _fact_source(beam, arg),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
+
+
+class _NoForeignKeys:
+    """DB が無いときのスキーマ（結合は求めない。粒度のキーが 1 テーブルなら決まる）。"""
+
+    def columns(self, table: str) -> list[str]:
+        return []
+
+    def foreign_keys(self, table: str) -> list[ForeignKey]:
+        return []
+
+
+def _schema() -> SchemaInfo:
+    db = warehouse_db(REPO_ROOT / "warehouse")
+    return CatalogSchema(Catalog(db)) if db.exists() else _NoForeignKeys()
+
+
+def _fact_source(beam: BeamModel, table: str) -> tuple[bool, str]:
+    """table を 1 行の元（設計と同じ base_table）にした出来事があり、その fact がほかの源泉の
+    既存の fact（オントロジーの概念のモデル）ではないか。"""
+    ontology = load_ontology(REPO_ROOT / "ontology" / "ontology.yml")
+    others = {
+        c.model for c in (ontology.concepts if ontology else []) if c.model and c.source != table
+    }
+    schema = _schema()
+    bases = [(e.fact_table, base_table(e, schema)) for e in beam.events]
+    passed = any(base == table and fact not in others for fact, base in bases)
+    return passed, str(bases)
 
 
 def _position_words(m: Any) -> bool:
@@ -393,11 +435,14 @@ async def run_scenario(
     max_turns: int = 25,
     log: Callable[[str], None] = print,
 ) -> EvalResult:
+    ontology_path = REPO_ROOT / "ontology" / "ontology.yml"
+    if scenario.onboard:
+        ontology_path = await onboarded_ontology(catalog, scenario.onboard)
     interviewer = Interviewer(
         runner,
         settings,
         {CATALOG_SERVER: catalog_tools(catalog)},
-        design_issues=design_issues(catalog, REPO_ROOT / "ontology" / "ontology.yml"),
+        design_issues=design_issues(catalog, ontology_path),
     )
     user = SimulatedUser(runner, settings, scenario.persona)
     state = new_state(scenario.request)
@@ -467,6 +512,49 @@ async def run_scenario(
         beam=state.beam.model_dump(mode="json"),
         error=error,
     )
+
+
+async def onboarded_ontology(catalog: Catalog, source: str, out_dir: Path | None = None) -> Path:
+    """source を取り込んだ後のオントロジー（取り込みの下書きの、プロファイルからの決定的な案）。
+
+    取り込み（PR のマージ）の後のインタビューを、LLM なしの取り込みで再現する。既存の BEAM 成果物
+    （beam/）も読めるよう、リポジトリと同じ並び（<dir>/ontology/ontology.yml・<dir>/beam）にする。
+    同時に走る eval で消し合わないよう、実行ごとに別のディレクトリ（.adp/eval-onboard/ の下）。
+    """
+    import shutil
+    import sys
+    import tempfile
+
+    from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
+    from adp.onboarding.proposal import apply
+    from adp.ontology.models import dump, load
+    from adp.pipeline import PipelineConfig
+
+    qualified = source if "." in source else f"raw.{source}"
+    if qualified not in {t.qualified for t in catalog.list_sources()}:
+        raise ValueError(
+            f"源泉 {qualified} が DuckDB にありません。make sample-data を実行してください"
+        )
+    ontology = load(REPO_ROOT / "ontology" / "ontology.yml")
+    onboarding = OnboardingPipeline(
+        PipelineConfig(REPO_ROOT, Path(sys.executable).parent, catalog.db_path, None),
+        None,
+        LLMSettings(),
+    )
+    try:
+        draft = await onboarding.draft(qualified, use_agent=False)
+        ontology = apply(ontology, draft.patch)
+    except AlreadyOnboarded:
+        pass  # 取り込み済みならそのまま
+    base = out_dir or REPO_ROOT / ".adp" / "eval-onboard"
+    base.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix=f"{qualified}-", dir=base))
+    (root / "ontology").mkdir()
+    path = root / "ontology" / "ontology.yml"
+    path.write_text(dump(ontology), encoding="utf-8")
+    if (REPO_ROOT / "beam").is_dir():
+        shutil.copytree(REPO_ROOT / "beam", root / "beam")
+    return path
 
 
 def save(result: EvalResult, out_dir: Path, suffix: str = "") -> Path:
