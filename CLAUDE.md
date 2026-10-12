@@ -33,10 +33,10 @@
 ## コマンド
 
 ```
-make setup      # uv sync / pnpm install / dbt deps（前提: uv, pnpm@9, Python 3.12）
+make setup      # uv sync / pnpm install / dbt deps / サンプルデータの生成（前提: uv, pnpm@9, Python 3.12）
 make lint       # ruff, mypy, eslint, tsc
 make test       # pytest, vitest
-make dbt-build  # dbt build + dbt parse（指標があれば mf validate-configs）、チャートとオントロジーの検査。dbt/mf は backend/.venv のもの
+make dbt-build  # dbt build + dbt parse（指標があれば mf validate-configs）、チャート・オントロジー・クレンジングの検査。dbt/mf は backend/.venv のもの
 make ontology   # ontology/ontology.yml から docs/ontology.md を生成し、源泉・dbt と照合する
 make cleansing  # warehouse/cleansing/ の定義からクレンジング層（stg）を生成する
 make eval       # インタビューの eval（実際の LLM。REPEAT=N で繰り返す）
