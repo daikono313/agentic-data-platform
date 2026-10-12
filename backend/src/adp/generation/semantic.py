@@ -53,6 +53,13 @@ def _fact_column_for(fact: FactTable, beam_ref: str) -> str | None:
     return col.name if col else None
 
 
+def _time_column(fact: FactTable, ref: str) -> str | None:
+    """BEAM の When の参照に対応する fct の日付列。"""
+    return next(
+        (c.name for c in fact.columns if c.source_ref == ref and c.role == ColumnRole.TIME), None
+    )
+
+
 def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
     """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。"""
     pe = fact.primary_entity
@@ -68,10 +75,7 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
         time = event.time_dimension
         if time is not None and time.ref == d.ref:
             return f"metric_time__{grain}"
-        col = next(
-            (c.name for c in fact.columns if c.source_ref == d.ref and c.role == ColumnRole.TIME),
-            None,
-        )
+        col = _time_column(fact, d.ref)
         if col is None:
             raise SemanticError(f"{ref} の日付列が {fact.name} にありません")
         return f"{pe}__{col}__{grain}"
@@ -108,20 +112,27 @@ def _filters(event: BusinessEvent, fact: FactTable, m: MetricRequest) -> str | N
 def non_additive_dimension(
     event: BusinessEvent, fact: FactTable, measure: Measure
 ) -> dict[str, Any] | None:
-    """semi_additive の measure（例: 残高）は、足せない When の最新の時点の値だけを集計する。"""
+    """semi_additive の measure（例: 残高）は、粒度の entity ごとに最新の時点の値だけを集計する。
+
+    足せない When は agg_time の列に限る（metric_time の区間ごとに最新を取るため）。
+    """
     if measure.additivity != Additivity.SEMI_ADDITIVE:
         return None
-    ref = measure.non_additive_dimension or ""
-    d = event.dimension(ref)
-    col = next(
-        (c.name for c in fact.columns if c.source_ref == ref and c.role == ColumnRole.TIME),
-        None,
-    )
-    if d is None or d.w != W.WHEN or col is None:
+    col = _time_column(fact, measure.non_additive_dimension or "")
+    if col is None or col != fact.agg_time_column:
         raise SemanticError(
-            f"measure {measure.name} の足せない When（{ref}）の日付列が {fact.name} にありません"
+            f"measure {measure.name} の足せない When（{measure.non_additive_dimension}）が"
+            f" {fact.name} の agg_time の日付列ではありません"
         )
-    return {"name": col, "window_agg": "max"}
+    group_by: list[str] = []
+    for c in fact.columns:
+        if c.name in fact.grain_columns and c.role == ColumnRole.FOREIGN_KEY and c.source_ref:
+            d = event.dimension(c.source_ref)
+            group_by.append(d.role or d.ref if d else c.name.removesuffix("_key"))
+    nad: dict[str, Any] = {"name": col, "window_agg": "max"}
+    if group_by:
+        nad["group_by"] = group_by
+    return nad
 
 
 def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str, Any]]:
@@ -233,6 +244,8 @@ def metric_definitions(
             if flt:
                 simple["filter"] = flt
             nad = non_additive_dimension(event, fact, measure)
+            if nad and m.type == MetricType.CUMULATIVE:
+                raise SemanticError(f"metric {m.name} は時点の値（semi_additive）の累計です")
             if nad:
                 simple["non_additive_dimension"] = nad
             if m.type == MetricType.SIMPLE:

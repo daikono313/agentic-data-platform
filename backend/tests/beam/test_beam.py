@@ -244,7 +244,7 @@ def test_multiple_when_requires_agg_time_dimension(model: BeamModel) -> None:
 
 
 def test_additivity_rules(model: BeamModel) -> None:
-    from adp.beam import Additivity, Aggregation
+    from adp.beam import Additivity, Aggregation, StoryType
 
     m = model.events[0].measures[0]
     m.aggregation = Aggregation.COUNT_DISTINCT
@@ -253,6 +253,8 @@ def test_additivity_rules(model: BeamModel) -> None:
     m.additivity = Additivity.SEMI_ADDITIVE
     assert any("non_additive_dimension" in i for i in model.finalize_issues())
     m.non_additive_dimension = "date"
+    assert any("story_type: recurring" in i for i in model.finalize_issues())
+    model.events[0].story_type = StoryType.RECURRING
     assert model.finalize_issues() == []
 
 

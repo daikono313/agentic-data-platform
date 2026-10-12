@@ -11,6 +11,7 @@ from adp.beam.models import (
     Additivity,
     Aggregation,
     Availability,
+    FactType,
     GapKind,
     MetricType,
     TimeGrain,
@@ -125,6 +126,16 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
                 issues.append(
                     f"{p} measure {m.name} は semi_additive なので、足せない When"
                     "（non_additive_dimension）を指定してください"
+                )
+            elif event.time_dimension is None or nad.ref != event.time_dimension.ref:
+                issues.append(
+                    f"{p} measure {m.name} の足せない When は、指標の時間軸"
+                    "（agg_time_dimension）と同じにしてください"
+                )
+            if event.fact_type != FactType.PERIODIC_SNAPSHOT:
+                issues.append(
+                    f"{p} measure {m.name} は時点の値（semi_additive）なので、"
+                    "定期的な状態の記録（story_type: recurring）のイベントに置いてください"
                 )
 
     fact_keys: dict[str, set[str]] = {}
