@@ -5,12 +5,10 @@ from __future__ import annotations
 import re
 from functools import cache
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 from adp.catalog.catalog import Catalog
 from adp.generation.dbt import GeneratedFile
+from adp.yaml_docs import YamlDocs, load_yaml_docs, named
 
 # 生成器が出す Jinja の形（これ以外は書かない。BEAM の文字列から env_var・run_query などを
 # 差し込ませないための最後の確認。#46）
@@ -59,19 +57,14 @@ class ProjectInfo:
         candidates = preferred or pks
         return candidates[0] if candidates else None
 
-    def _yaml_docs(self) -> list[dict[str, Any]]:
-        docs = []
-        for p in sorted((self.warehouse_dir / "models").rglob("*.yml")):  # 順序を決まったものに
-            data = yaml.safe_load(p.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                docs.append(data)
-        return docs
+    def _yaml_docs(self) -> YamlDocs:
+        # 壊れた yml・name の無い列は飛ばす（1 つのファイルで生成全体を落とさない。#110）
+        return load_yaml_docs(self.warehouse_dir / "models")
 
     def existing_columns(self, model: str) -> set[str]:
-        for doc in self._yaml_docs():
-            for m in doc.get("models", []) or []:
-                if isinstance(m, dict) and m.get("name") == model:
-                    return {c["name"] for c in m.get("columns", []) if isinstance(c, dict)}
+        for _, m in self._yaml_docs().entries("models"):
+            if m["name"] == model:
+                return {str(c["name"]) for c in named(m.get("columns"))}
         return set()
 
     def model_file(self, model: str, suffix: str) -> tuple[str, str] | None:
@@ -79,28 +72,22 @@ class ProjectInfo:
 
         (warehouse/ からの相対パス, 内容)。
         """
+        if suffix == ".yml":
+            for doc, m in self._yaml_docs().entries("models"):
+                if m["name"] == model:
+                    return str(doc.path.relative_to(self.warehouse_dir)), doc.text
+            return None
         for p in sorted((self.warehouse_dir / "models").rglob(f"*{suffix}")):
-            text = p.read_text(encoding="utf-8")
-            if suffix == ".sql":
-                if p.stem == model:
-                    return str(p.relative_to(self.warehouse_dir)), text
-                continue
-            data = yaml.safe_load(text)
-            if isinstance(data, dict) and any(
-                isinstance(m, dict) and m.get("name") == model for m in data.get("models", []) or []
-            ):
-                return str(p.relative_to(self.warehouse_dir)), text
+            if p.stem == model:
+                return str(p.relative_to(self.warehouse_dir)), p.read_text(encoding="utf-8")
         return None
 
     def declared_sources(self) -> dict[str, str]:
         declared: dict[str, str] = {}
-        for doc in self._yaml_docs():
-            for src in doc.get("sources", []) or []:
-                if isinstance(src, dict) and src.get("name"):
-                    schema = src.get("schema", src.get("name"))
-                    for t in src.get("tables", []) or []:
-                        if isinstance(t, dict) and "name" in t:
-                            declared.setdefault(f"{schema}.{t['name']}", str(src.get("name")))
+        for _, src in self._yaml_docs().entries("sources"):
+            schema = src.get("schema", src["name"])
+            for t in named(src.get("tables")):
+                declared.setdefault(f"{schema}.{t['name']}", str(src["name"]))
         return declared
 
     def distinct_values(self, table: str, column: str, limit: int) -> list[str] | None:
