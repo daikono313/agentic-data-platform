@@ -49,7 +49,7 @@ def test_metric_types(setup) -> None:  # type: ignore[no-untyped-def]
     beam, design, _, fact = setup
     common = {"label": "x", "question": "q", "framed_question": "q", "event": fact.event}
     beam.metrics += [
-        MetricRequest(name="qty", measure="quantity", **common),
+        MetricRequest.model_validate(common | {"name": "qty", "measure": "quantity"}),
         MetricRequest.model_validate(
             common
             | {"name": "avg_price", "type": "ratio", "numerator": "revenue", "denominator": "qty"}
@@ -88,7 +88,7 @@ def test_ratio_and_derived_keep_filters(setup) -> None:  # type: ignore[no-untyp
     beam, design, _, fact = setup
     common = {"label": "x", "question": "q", "framed_question": "q", "event": fact.event}
     beam.metrics += [
-        MetricRequest(name="qty", measure="quantity", **common),
+        MetricRequest.model_validate(common | {"name": "qty", "measure": "quantity"}),
         MetricRequest.model_validate(
             common
             | {
@@ -177,7 +177,7 @@ def test_semi_additive_measure_takes_latest_date(setup) -> None:  # type: ignore
     design = DesignBuilder(FakeSchema()).build(beam)
     fact = design.facts[0]
     common = {"label": "x", "question": "q", "framed_question": "q", "event": fact.event}
-    beam.metrics += [MetricRequest(name="qty", measure="quantity", **common)]
+    beam.metrics += [MetricRequest.model_validate(common | {"name": "qty", "measure": "quantity"})]
     defs = metric_definitions(beam, design, fact)
     qty = next(m for m in defs.in_model if m["name"] == "qty")
     assert qty["non_additive_dimension"] == {
@@ -195,6 +195,6 @@ def test_semi_additive_measure_takes_latest_date(setup) -> None:  # type: ignore
         metric_definitions(beam, design, fact)
     beam.metrics.pop()
     quantity.non_additive_dimension = "store"
-    beam.metrics += [MetricRequest(name="qty", measure="quantity", **common)]
+    beam.metrics += [MetricRequest.model_validate(common | {"name": "qty", "measure": "quantity"})]
     with pytest.raises(SemanticError, match="agg_time"):
         metric_definitions(beam, design, fact)
