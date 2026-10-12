@@ -24,7 +24,7 @@ def paragraphs(text: str) -> list[tuple[int, str]]:
     """（行番号, 空白を除いた段落）。表の行は 1 行ずつ、それ以外は空行までを 1 段落にする。"""
     body = body_of(text)
     out: list[tuple[int, str]] = []
-    start, buf = 0, []
+    start, buf = 0, list[str]()
     for i, line in enumerate(body.splitlines(), start=1):
         stripped = line.strip()
         if stripped.startswith("|"):
