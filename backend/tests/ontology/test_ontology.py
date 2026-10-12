@@ -265,6 +265,6 @@ def test_model_without_concept_is_an_error(tmp_path: Path) -> None:
     )
     ontology = Ontology.model_validate({"version": 1, "domains": [], "concepts": []})
     result = check(ontology, Catalog(db), manifest)
-    assert result.unmapped_models == ["dim_date", "fct_sales_copy"]
+    assert result.unmapped_models == ["dim_date"]  # ほかはエラーにだけ出す（2 回出さない）
     assert [e for e in result.errors if "fct_sales_copy" in e]
     assert not [e for e in result.errors if "dim_date" in e]

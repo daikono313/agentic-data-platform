@@ -17,7 +17,8 @@ class CheckResult(BaseModel):
     unmapped_sources: list[str]
     """カタログにあるが、どの概念の源泉にもなっていない源泉（未整理。#69 で使う）。"""
     unmapped_models: list[str] = []
-    """どの概念にも対応していない dim / fct（dim_date のような共通の暦は対象外にしてよい）。"""
+    """どの概念にも対応していない共通のモデル（dim_date）。ほかの dim / fct は errors に出る
+    （#114）。"""
 
 
 SHARED_MODELS = frozenset({"dim_date"})
@@ -112,17 +113,17 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                         f"（読んでいる源泉: {', '.join(sorted(models[c.model])) or 'なし'}）"
                     )
             mapped_models = {c.model for c in ontology.concepts if c.model}
-            unmapped_models = sorted(
+            unmapped = sorted(
                 m for m in models if m.startswith(("dim_", "fct_")) and m not in mapped_models
             )
+            unmapped_models = [m for m in unmapped if m in SHARED_MODELS]
             # 用途の分からない fact / dim を増やさない（#114。概念ごとにモデルは 1 つなので、同じ
             # 用途の 2 つ目のモデルは概念に結び付かず、ここで見つかる）。暦（dim_date）は対象外
-            for m in unmapped_models:
+            for m in unmapped:
                 if m not in SHARED_MODELS:
                     errors.append(
                         f"モデル {m} がオントロジーのどの概念にも結び付いていない。用途が同じ既存の"
-                        "モデルがあればそれを使い、新しい概念なら取り込み（オントロジーへの追加）を"
-                        "先にする"
+                        "モデルがあればそれを使い、無ければオントロジーにこのモデル用の概念を足す"
                     )
 
     mapped = {c.source for c in ontology.concepts}
