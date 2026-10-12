@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     for s in result.unmapped_sources:
         print(f"・未整理の源泉（どの概念にもなっていない）: {s}")
     for m in result.unmapped_models:
-        print(f"・どの概念にも対応していないモデル: {m}")
+        print(f"・概念を持たない共通のモデル: {m}")
     if result.errors:
         failed = True
     if not failed:

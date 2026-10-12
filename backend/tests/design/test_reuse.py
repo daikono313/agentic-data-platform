@@ -319,3 +319,37 @@ def test_existing_facts_from_beam_files(tmp_path: Path, caplog: pytest.LogCaptur
     save(other, tmp_path / "b.yml")
     known = existing_facts(tmp_path)["fct_order_lines"]
     assert known.fact_type is None and known.conflict and "食い違います" in known.conflict
+
+
+def _as_kind(source: str, kind: str) -> Ontology:
+    """source の概念を別の種類（モデルなし）にしたオントロジー。"""
+    o = _ontology()
+    return _ontology(
+        concepts=[
+            c.model_copy(update={"kind": kind, "model": None}) if c.source == source else c
+            for c in o.concepts
+        ]
+    )
+
+
+def test_fact_without_an_event_concept_is_blocked() -> None:
+    """もの・人の概念しか無い源泉から fct を作ると、どの概念にも結び付かず CI で落ちる。
+    確定前に止める（#114）。"""
+    messages = _messages(_renamed(), _as_kind("raw.order_items", "entity"))
+    assert any(
+        m.startswith("fct_order_pipelines を結び付けられるオントロジーの概念がありません")
+        and "1 対 1" in m
+        for m in messages
+    ), messages
+
+
+def test_dim_without_an_entity_concept_is_blocked() -> None:
+    """出来事の概念しか無い源泉から dim を作るのも止める（#114）。"""
+    messages = _messages(load(FIXTURES / "sales_by_store.yml"), _as_kind("raw.stores", "event"))
+    assert any(m.startswith("dim_store を結び付けられる") for m in messages), messages
+
+
+def test_linkable_models_are_not_blocked_twice() -> None:
+    """ほかの検査が止めたモデル（未整理の源泉）は、結び付かないことを重ねて出さない。"""
+    messages = _messages(load(FIXTURES / "sales_by_store.yml"), _without("raw.stores"))
+    assert not any("結び付けられる" in m for m in messages), messages
