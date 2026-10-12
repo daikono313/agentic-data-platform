@@ -109,6 +109,8 @@ def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str,
     for c in fact.columns:
         if c.role == ColumnRole.FOREIGN_KEY and c.source_ref:
             d = event.dimension(c.source_ref)
+            if d is not None and d.role:
+                continue  # 役割の entity は model の derived_semantics に書く（role_entities）
             name = d.ref if d else c.name.removesuffix("_key")
             result[c.name] = {"entity": {"type": "foreign", "name": name}}
         elif c.role == ColumnRole.DEGENERATE:
@@ -121,15 +123,34 @@ def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str,
     return result
 
 
-def fact_model_semantics(fact: FactTable, has_date_entity: bool) -> dict[str, Any]:
+def role_entities(fact: FactTable, event: BusinessEvent) -> list[dict[str, Any]]:
+    """role 付きディメンション（例: 配送先顧客 ship_to）の外部キーの entity。
+
+    規約（「Semantic Layer」の role 付きディメンション）どおり、列ではなく derived_semantics に
+    書く。
+    """
+    out: list[dict[str, Any]] = []
+    for c in fact.columns:
+        if c.role != ColumnRole.FOREIGN_KEY or not c.source_ref:
+            continue
+        d = event.dimension(c.source_ref)
+        if d is not None and d.role:
+            out.append({"type": "foreign", "name": d.role, "expr": c.name})
+    return out
+
+
+def fact_model_semantics(
+    fact: FactTable, has_date_entity: bool, event: BusinessEvent | None = None
+) -> dict[str, Any]:
     """fct のモデル単位で足す設定。"""
     model: dict[str, Any] = {"semantic_model": {"enabled": True}}
+    entities = role_entities(fact, event) if event is not None else []
     if fact.agg_time_column:
         model["agg_time_dimension"] = fact.agg_time_column
         if has_date_entity:
-            model["derived_semantics"] = {
-                "entities": [{"type": "foreign", "name": "date", "expr": fact.agg_time_column}]
-            }
+            entities.append({"type": "foreign", "name": "date", "expr": fact.agg_time_column})
+    if entities:
+        model["derived_semantics"] = {"entities": entities}
     if len(fact.grain_columns) != 1 or fact.grain_columns[0] not in {
         c.name for c in fact.columns if c.role == ColumnRole.DEGENERATE
     }:

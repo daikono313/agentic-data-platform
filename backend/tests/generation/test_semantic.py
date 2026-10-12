@@ -4,7 +4,14 @@ import pytest
 
 from adp.beam import FilterOperator, MetricFilter, MetricRequest, MetricType, load
 from adp.design import DesignBuilder
-from adp.generation.semantic import SemanticError, filter_expr, metric_definitions, mf_name
+from adp.generation.semantic import (
+    SemanticError,
+    fact_model_semantics,
+    fact_semantics,
+    filter_expr,
+    metric_definitions,
+    mf_name,
+)
 from tests.design.test_builder import FakeSchema
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml"
@@ -141,3 +148,18 @@ def test_filter_values_are_validated_like_charts(setup, value) -> None:  # type:
     )
     with pytest.raises(SemanticError, match="filter の値に使えない"):
         filter_expr(event, fact, f)
+
+
+def test_role_entities_go_to_derived_semantics() -> None:
+    """role 付きディメンションの entity は列ではなく model の derived_semantics に書く（#134）。"""
+    beam = load(FIXTURE)
+    event = beam.events[0]
+    customer = event.dimension("customer")
+    assert customer is not None
+    customer.role = "buyer"
+    fact = DesignBuilder(FakeSchema()).build(beam).facts[0]
+    key = next(c.name for c in fact.columns if c.source_ref == "buyer")
+    assert "entity" not in fact_semantics(fact, event).get(key, {})
+    entities = fact_model_semantics(fact, True, event)["derived_semantics"]["entities"]
+    assert {"type": "foreign", "name": "buyer", "expr": key} in entities
+    assert {"type": "foreign", "name": "date", "expr": fact.agg_time_column} in entities

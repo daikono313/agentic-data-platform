@@ -13,6 +13,7 @@ from adp.catalog.catalog import Catalog
 from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
+from adp.generation.conventions import check_warehouse
 from adp.generation.project import ProjectInfo
 from adp.generation.semantic import MetricQuery
 
@@ -47,6 +48,11 @@ def mf_query(warehouse: Path, q: MetricQuery, limit: int = 5) -> subprocess.Comp
         args += ["--group-by", ",".join(q.group_by)]
     env = os.environ | {"DBT_PROFILES_DIR": str(warehouse)}
     return subprocess.run(args, cwd=warehouse, env=env, capture_output=True, text=True, check=False)
+
+
+def conventions_violations(warehouse: Path) -> list[str]:
+    """build 済みの warehouse のモデリング規約の違反（adp.generation.conventions）。"""
+    return [str(v) for v in check_warehouse(warehouse)]
 
 
 @pytest.fixture(scope="module")
@@ -106,6 +112,8 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     assert "assert_fct_order_lines_reconciles_with_source" in result.stdout
     assert "accepted_values_fct_order_lines_payment_method" in result.stdout
 
+    # 生成した fct も手で書いた共通の dim も、モデリング規約の検査を通る（#134）
+    assert conventions_violations(warehouse) == []
     con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
     columns = (
         "order_line_id, order_id, customer_key, product_key, store_key, promotion_key,"
@@ -152,6 +160,7 @@ def test_new_dimension_and_staging_are_generated(tmp_path: Path) -> None:
     info.write(generation.files)
     result = _dbt(warehouse, "build")
     assert result.returncode == 0, result.stdout[-3000:]
+    assert conventions_violations(warehouse) == []
 
 
 def _drop_model_entry(text: str, name: str) -> str:

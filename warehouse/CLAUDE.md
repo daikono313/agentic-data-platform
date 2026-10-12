@@ -16,7 +16,7 @@ dbt プロジェクト。**ここのコード（SQL・YAML）は AI か決定的
 
 生成コードのお手本になるので、規約を厳密に守る。
 
-**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、リファレンス fct（生成器とは別に書いたもの）は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。
+**規約の正本は [docs/modeling-conventions.md](../docs/modeling-conventions.md)。** 既存の共通ディメンションは `models/marts/dim_*.sql`。fct はアプリが生成する（生成器は `backend/src/adp/generation/`、リファレンス fct（生成器とは別に書いたもの）は生成結果との比較用に `backend/tests/fixtures/generation/reference/` にある）。規約に合っているかは `make dbt-build` の最後に `adp.generation.conventions` が検査する。
 
 - dbt-core 1.12+、dbt-duckdb、dbt-metricflow、dbt_utils。DuckDB ファイルは `data/*.duckdb`（git では追跡しない）。
 - レイヤーは `models/staging/stg_*` → `models/intermediate/int_*` → `models/marts/dim_*`, `fct_*`。集計済みマート（`agg_*`）は作らない。集計は Semantic Layer で行う。

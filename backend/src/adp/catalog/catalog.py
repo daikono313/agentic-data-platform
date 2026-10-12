@@ -37,6 +37,7 @@ _PII_TOKENS = frozenset(
         "zipcode",
         "postcode",
         "birth",
+        "born",
         "birthday",
         "birthdate",
         "dob",

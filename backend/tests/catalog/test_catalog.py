@@ -289,6 +289,7 @@ def test_pii_columns_are_masked(tmp_path: Path) -> None:
         "postcode",
         "birthdate",
         "birth_date",
+        "born_on",
         "mail",
         "furigana",
         "username",

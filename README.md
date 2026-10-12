@@ -27,7 +27,7 @@
 ```
 make setup      # 依存のインストールとサンプルデータ
 make lint test  # lint / 型チェック / テスト
-make dbt-build  # dbt build と MetricFlow・チャート・オントロジー・クレンジングの検査
+make dbt-build  # dbt build と MetricFlow・チャート・オントロジー・クレンジング・モデリング規約の検査
 make dev        # backend (:8000) と frontend (:5173) を起動
 ```
 

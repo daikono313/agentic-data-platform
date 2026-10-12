@@ -204,7 +204,7 @@ flowchart LR
 | `adp.onboarding` | `backend/src/adp/onboarding/` | 源泉の取り込み: オントロジーへの追加案（エージェント / プロファイル）・検証・バスマトリクスの差分、確定後の PR（オントロジー・クレンジングの定義・stg）（#69） |
 | `adp.ontology` | `backend/src/adp/ontology/` | オントロジー（業務の概念・属性・関係・制約）の型・検証・Mermaid の図の生成、源泉と dbt との照合（#67） |
 | `adp.design` | `backend/src/adp/design/` | Event Matrix → スター設計への変換 |
-| `adp.generation` | `backend/src/adp/generation/` | dbt / Semantic Layer / テストの生成と自己修復ループ |
+| `adp.generation` | `backend/src/adp/generation/` | dbt / Semantic Layer / テストの生成と自己修復ループ、整備済みの dim / fct のモデリング規約の検査（#134） |
 | `adp.llm` | `backend/src/adp/llm/` | LLM 呼び出しの抽象化（モデルの段階的エスカレーション、認証の切り替え） |
 | `adp.vcs` | `backend/src/adp/vcs/` | git worktree / commit / PR 作成 |
 | `adp.api` | `backend/src/adp/api/` | FastAPI のルート（API の表）、セッション・ジョブの管理（`service.py`）、SQLite の永続化（`store.py`） |
