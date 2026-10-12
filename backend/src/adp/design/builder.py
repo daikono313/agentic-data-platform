@@ -31,7 +31,7 @@ from adp.design.models import (
     PhysicalDesign,
     SourceTable,
 )
-from adp.ontology.models import Concept, Ontology
+from adp.ontology.models import Concept, Ontology, link_models
 
 
 @dataclass(frozen=True)
@@ -238,6 +238,7 @@ class DesignBuilder:
         self._check_ontology(dims)
         self._check_ontology_sources(facts, dims)
         self._check_duplicate_facts(beam, facts)
+        self._check_linkable(facts, dims)
         design = PhysicalDesign(
             beam=beam.name,
             facts=facts,
@@ -261,7 +262,8 @@ class DesignBuilder:
         for dim in dims:
             concept = by_source.get(dim.base.table)
             natural = next((c.name for c in dim.columns if c.role == ColumnRole.NATURAL_KEY), None)
-            # 同じキーで識別するもの（同じ概念）だけ。地方のような、同じ源泉の別の切り口は対象外
+            # 同じキーで識別するもの（同じ概念）。別のキーの dim（地方など）は _check_linkable で
+            # 止める
             if concept is not None and natural == concept.key and concept.model != dim.name:
                 name = (concept.model or "").removeprefix("dim_")
                 self._blocker(
@@ -270,6 +272,34 @@ class DesignBuilder:
                     f"ディメンションの名前を {name} にして、{concept.model} を再利用してください",
                     dim.dimension,
                 )
+
+    def _check_linkable(self, facts: list[FactTable], dims: list[DimTable]) -> None:
+        """新しく作る fct / dim が、オントロジーのどれかの概念に結び付くか（#114）。
+
+        概念とモデルは 1 対 1 で、結び付かないモデルは `make dbt-build` の検査で落ちる。生成の後に
+        書き込むのと同じ規則（`link_models`。同じ源泉・種類が合う・概念にまだモデルが無い）で確かめ、
+        生成した PR が自分の CI で落ちないよう、確定の前に止める。ほかの検査が止めたもの（未整理の
+        源泉・同じ出来事の 2 つ目の fact・概念の dim と違う名前）は重ねて出さない。
+        """
+        if self.ontology is None:
+            return
+        existing = {c.model for c in self.ontology.concepts if c.model}
+        known = {c.source for c in self.ontology.concepts}
+        blocked = {i.ref for i in self.issues if i.severity == IssueSeverity.BLOCKER}
+        models = [(f.base.table, f.name, f.event, "出来事") for f in facts]
+        models += [(d.base.table, d.name, d.dimension, "もの・人・場所") for d in dims]
+        new = [m for m in models if m[1] not in existing and m[0] in known and m[2] not in blocked]
+        linked, _ = link_models(self.ontology, [(source, name) for source, name, _, _ in new])
+        mapped = {c.model for c in linked.concepts if c.model}
+        for source, name, ref, kind in new:
+            if name in mapped:
+                continue
+            self._blocker(
+                f"{name} を結び付けられるオントロジーの概念がありません（源泉 {source} に、"
+                f"モデルの無い{kind}の概念が無い）。概念とモデルは 1 対 1 なので、既存のモデルを"
+                "使うか、オントロジーにこのモデル用の概念を足してから作ってください",
+                ref,
+            )
 
     def _check_ontology_sources(self, facts: list[FactTable], dims: list[DimTable]) -> None:
         """オントロジーに無い（未整理の）源泉からモデルを作ろうとしていないか（#109）。

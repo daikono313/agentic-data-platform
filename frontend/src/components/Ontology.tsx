@@ -104,7 +104,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
               </p>
             ))}
             {view.unmapped_models.length > 0 && (
-              <p className="text-muted-foreground">どの概念にも対応していないモデル: {view.unmapped_models.join('、')}</p>
+              <p className="text-muted-foreground">概念を持たない共通のモデル: {view.unmapped_models.join('、')}</p>
             )}
             {view.unmapped_sources.length > 0 && (
               <p>
