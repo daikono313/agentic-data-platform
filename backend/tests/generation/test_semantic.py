@@ -163,3 +163,24 @@ def test_role_entities_go_to_derived_semantics() -> None:
     entities = fact_model_semantics(fact, True, event)["derived_semantics"]["entities"]
     assert {"type": "foreign", "name": "buyer", "expr": key} in entities
     assert {"type": "foreign", "name": "date", "expr": fact.agg_time_column} in entities
+
+
+def test_semi_additive_measure_takes_latest_date(setup) -> None:  # type: ignore[no-untyped-def]
+    """semi_additive の measure は、足せない When の最新の時点だけを集計する（#134）。"""
+    from adp.beam import Additivity
+
+    beam, design, event, fact = setup
+    quantity = event.measure("quantity")
+    quantity.additivity = Additivity.SEMI_ADDITIVE
+    quantity.non_additive_dimension = "date"
+    common = {"label": "x", "question": "q", "framed_question": "q", "event": fact.event}
+    beam.metrics += [MetricRequest(name="qty", measure="quantity", **common)]
+    defs = metric_definitions(beam, design, fact)
+    qty = next(m for m in defs.in_model if m["name"] == "qty")
+    assert qty["non_additive_dimension"] == {"name": fact.agg_time_column, "window_agg": "max"}
+    revenue = next(m for m in defs.in_model if m["name"] == "revenue")
+    assert "non_additive_dimension" not in revenue
+
+    quantity.non_additive_dimension = "store"
+    with pytest.raises(SemanticError, match="足せない When"):
+        metric_definitions(beam, design, fact)

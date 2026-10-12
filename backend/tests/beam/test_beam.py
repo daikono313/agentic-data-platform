@@ -256,6 +256,20 @@ def test_additivity_rules(model: BeamModel) -> None:
     assert model.finalize_issues() == []
 
 
+def test_semi_additive_measure_cannot_be_cumulative(model: BeamModel) -> None:
+    """残高のような時点の値は、累計すると意味が変わる（#134）。"""
+    from adp.beam import Additivity, MetricType
+
+    metric = next(x for x in model.metrics if x.measure)
+    m = model.events[0].measure(metric.measure or "")
+    assert m is not None
+    m.additivity = Additivity.SEMI_ADDITIVE
+    m.non_additive_dimension = "date"
+    metric.type = MetricType.CUMULATIVE
+    metric.window = "7 days"
+    assert any("累計にできません" in i for i in model.finalize_issues())
+
+
 def test_derived_and_ratio_rules(model: BeamModel) -> None:
     base = {
         "label": "x",

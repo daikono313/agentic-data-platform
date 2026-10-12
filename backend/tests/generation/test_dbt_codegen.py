@@ -311,6 +311,52 @@ def test_generated_revenue_matches_reference_metric(tmp_path: Path) -> None:
     assert expected is not None and total == float(expected[0])
 
 
+def test_semi_additive_metric_sums_only_the_latest_date(tmp_path: Path) -> None:
+    """semi_additive の指標は、MetricFlow で最新の日付の値だけを足す（#134）。"""
+    from adp.beam import Additivity, MetricRequest
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+    quantity = event.measure("quantity")
+    assert quantity is not None
+    quantity.additivity = Additivity.SEMI_ADDITIVE
+    quantity.non_additive_dimension = "date"
+    beam.metrics.append(
+        MetricRequest(
+            name="latest_quantity",
+            label="最新日の数量",
+            question="q",
+            framed_question="q",
+            event=event.name,
+            measure="quantity",
+        )
+    )
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+    out = subprocess.run(
+        [str(DBT.parent / "mf"), "query", "--metrics", "latest_quantity"]
+        + ["--csv", str(tmp_path / "q.csv")],
+        cwd=warehouse,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"DBT_PROFILES_DIR": str(warehouse)},
+        check=False,
+    )
+    assert out.returncode == 0, out.stdout[-2000:]
+    total = float((tmp_path / "q.csv").read_text().splitlines()[1])
+    fact = design.facts[0]
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    t, d = fact.name, fact.agg_time_column
+    expected = con.sql(
+        f"select sum(quantity) from main.{t} where {d} = (select max({d}) from main.{t})"
+    ).fetchone()
+    assert expected is not None and total == float(expected[0])
+
+
 def test_generated_tests_catch_broken_sql(tmp_path: Path) -> None:
     """生成 SQL の計算や結合を壊すと、生成したテストが失敗する（変異テスト）。"""
     warehouse = _warehouse_copy(tmp_path)

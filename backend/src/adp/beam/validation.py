@@ -171,6 +171,13 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 issues.append(f"{p} measure {metric.measure} がイベントに存在しません")
             elif measure.availability == Availability.UNAVAILABLE:
                 issues.append(f"{p} measure {measure.name} はデータなしのため作れません")
+            elif (
+                measure.additivity == Additivity.SEMI_ADDITIVE
+                and metric.type == MetricType.CUMULATIVE
+            ):
+                issues.append(
+                    f"{p} measure {measure.name} は時点の値（semi_additive）なので累計にできません"
+                )
         if not uses_measure and metric.measure is not None:
             issues.append(f"{p} {metric.type} には measure を指定しません")
         if metric.type != MetricType.RATIO and (metric.numerator or metric.denominator):

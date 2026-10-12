@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from adp.beam import (
+    Additivity,
     Aggregation,
     BeamModel,
     BusinessEvent,
     FilterOperator,
+    Measure,
     MetricFilter,
     MetricRequest,
     MetricType,
@@ -101,6 +103,25 @@ def filter_expr(event: BusinessEvent, fact: FactTable, f: MetricFilter) -> str:
 def _filters(event: BusinessEvent, fact: FactTable, m: MetricRequest) -> str | None:
     exprs = [filter_expr(event, fact, f) for f in m.filters]
     return " and ".join(exprs) if exprs else None
+
+
+def non_additive_dimension(
+    event: BusinessEvent, fact: FactTable, measure: Measure
+) -> dict[str, Any] | None:
+    """semi_additive の measure（例: 残高）は、足せない When の最新の時点の値だけを集計する。"""
+    if measure.additivity != Additivity.SEMI_ADDITIVE:
+        return None
+    ref = measure.non_additive_dimension or ""
+    d = event.dimension(ref)
+    col = next(
+        (c.name for c in fact.columns if c.source_ref == ref and c.role == ColumnRole.TIME),
+        None,
+    )
+    if d is None or d.w != W.WHEN or col is None:
+        raise SemanticError(
+            f"measure {measure.name} の足せない When（{ref}）の日付列が {fact.name} にありません"
+        )
+    return {"name": col, "window_agg": "max"}
 
 
 def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str, Any]]:
@@ -211,6 +232,9 @@ def metric_definitions(
             }
             if flt:
                 simple["filter"] = flt
+            nad = non_additive_dimension(event, fact, measure)
+            if nad:
+                simple["non_additive_dimension"] = nad
             if m.type == MetricType.SIMPLE:
                 in_model.append(base | simple)
             else:
