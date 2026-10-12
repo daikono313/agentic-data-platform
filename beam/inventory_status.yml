@@ -174,8 +174,4 @@ gaps:
 - kind: deferred
   description: 工数（medium）はモデラーの見積もり。在庫の動き 1 件ずつのモデルは単純だが、属性の履歴保持が必要なため
   event: store_moves_product_stock
-- kind: deferred
-  description: 棚卸（count）の数量を残高と見なすと、マイナス値（最小 -10）の意味が不明。ユーザーの了承のもと実装後に確認する。棚卸の数量が本当に残高かをデータで確認する
-  event: store_moves_product_stock
-  related: movement_qty
 finalized_at: '2026-10-11T13:18:39.866482Z'
