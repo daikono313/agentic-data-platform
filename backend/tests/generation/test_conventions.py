@@ -129,23 +129,33 @@ class FakeDb:
 STORE_TYPES = [("store_key", "VARCHAR"), ("store_id", "VARCHAR"), ("channel", "VARCHAR")]
 
 
-def test_unknown_member_row_and_naming() -> None:
-    manifest = _manifest(DIM, *DIM_TESTS, _model("fct_sales", {"sale_id": {}}))
-    db = FakeDb(
-        {
-            "dim_store": [*STORE_TYPES, ("opened_date", "DATE"), ("active", "BOOLEAN")],
-            "fct_sales": [("sale_id", "VARCHAR"), ("sold_time", "TIMESTAMP")],
-        },
-        {"dim_store": [("k", None, None, None, True)]},
-    )
-    messages = [v.message for v in data_violations(manifest, db)]
-    assert messages == [
-        "日付の列 opened_date は _on で終えます",
-        "フラグの列 active は is_ で始めます",
-        "不明メンバーの行の文字列の属性 channel が NULL です（「不明」か業務上の値にする）",
-        "不明メンバーの行の channel（None）が accepted_values にありません",
-        "日時の列 sold_time は _at で終えます",
+def test_unknown_member_row_attributes() -> None:
+    manifest = _manifest(DIM, *DIM_TESTS)
+    blank = FakeDb({"dim_store": STORE_TYPES}, {"dim_store": [("k", None, None)]})
+    # NULL は文字列の属性として報告し、accepted_values（dbt は NULL を見ない）では重ねない
+    assert [v.message for v in data_violations(manifest, blank)] == [
+        "不明メンバーの行の文字列の属性 channel が NULL です（「不明」か業務上の値にする）"
     ]
+    other = FakeDb({"dim_store": STORE_TYPES}, {"dim_store": [("k", None, "other")]})
+    assert [v.message for v in data_violations(manifest, other)] == [
+        "不明メンバーの行の channel（other）が accepted_values にありません"
+    ]
+
+
+def test_accumulating_snapshot_foreign_keys_may_be_null() -> None:
+    """規約「テスト（必須）」: 外部キーの not_null は transaction fact だけ。"""
+    columns = {"order_id": {}, "store_key": {"entity": {"type": "foreign", "name": "store"}}}
+    tests = (
+        _test("fct_orders", "unique", "order_id"),
+        _test("fct_orders", "not_null", "order_id"),
+        _test("fct_orders", "relationships", "store_key", to="ref('dim_store')", field="store_key"),
+    )
+    accumulating = _model("fct_orders", columns) | {"description": "注文（accumulating_snapshot）"}
+    assert structural_violations(_manifest(DIM, *DIM_TESTS, accumulating, *tests)) == []
+    transaction = _model("fct_orders", columns) | {"description": "注文（transaction）"}
+    assert [
+        v.message for v in structural_violations(_manifest(DIM, *DIM_TESTS, transaction, *tests))
+    ] == ["外部キー store_key に not_null がありません（NULL は不明メンバーのキーにする）"]
 
 
 def test_unknown_member_row_must_exist_once() -> None:

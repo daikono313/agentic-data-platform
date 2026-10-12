@@ -34,11 +34,11 @@ models:
       - {name: customer_id, description: 顧客ID（自然キー）}
       - {name: customer_name, description: 顧客名, dimension: {type: categorical}}
       - {name: gender, description: 性別, dimension: {type: categorical}}
-      - {name: born_on, description: 生年月日}
+      - {name: birth_date, description: 生年月日}
       - {name: prefecture, description: 居住都道府県, dimension: {type: categorical}}
       - {name: region, description: 居住地方, dimension: {type: categorical}}
       - {name: membership_rank, description: 会員ランク, dimension: {type: categorical}}
-      - {name: signed_up_on, description: 会員登録日}
+      - {name: signup_date, description: 会員登録日}
 
   - name: dim_product
     description: 商品ディメンション（What）。SCD Type1

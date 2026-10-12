@@ -3,11 +3,11 @@ select
     customer_id,
     customer_name,
     gender,
-    birth_date as born_on,
+    birth_date,
     prefecture,
     region,
     membership_rank,
-    signup_date as signed_up_on
+    signup_date
 from {{ ref('stg_customers') }}
 
 union all

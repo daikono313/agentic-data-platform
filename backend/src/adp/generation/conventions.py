@@ -17,10 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from adp.beam import FactType
+from adp.catalog.catalog import Catalog, CatalogUnavailable, quote_ident
+from adp.catalog.types import is_text_type
+
 Query = Callable[[str], list[tuple[Any, ...]]]
 
 TIME_SPINE = "dim_date"
-"""共通の暦。日付の列の命名と不明メンバーの規則の対象外（time spine を兼ねるため）。"""
+"""共通の暦。不明メンバーの規則の対象外（time spine を兼ねるため）。"""
 
 RESERVED_DIM_COLUMNS = frozenset({"day", "week", "month", "quarter", "year"})
 
@@ -49,9 +53,15 @@ class _Model:
         return self.name.startswith("dim_")
 
     @property
+    def is_accumulating(self) -> bool:
+        """accumulating snapshot か（生成した fct の description に種類が入る）。"""
+        return FactType.ACCUMULATING_SNAPSHOT.value in str(self.node.get("description", ""))
+
+    @property
     def relation(self) -> str:
         n = self.node
-        return f'"{n["database"]}"."{n["schema"]}"."{n.get("alias") or n["name"]}"'
+        parts = (n["database"], n["schema"], n.get("alias") or n["name"])
+        return ".".join(quote_ident(str(p)) for p in parts)
 
     @property
     def columns(self) -> dict[str, dict[str, Any]]:
@@ -129,7 +139,7 @@ def _foreign_keys(m: _Model, dim_entities: set[str]) -> list[Violation]:
                         f"外部キー {c} に dim への relationships がありません",
                     )
                 )
-            if "not_null" not in m.tests(c):
+            if "not_null" not in m.tests(c) and not m.is_accumulating:
                 out.append(
                     Violation(
                         m.name,
@@ -191,35 +201,23 @@ def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
     return out
 
 
-_TEXT = ("VARCHAR", "TEXT", "STRING")
+def _literal(value: object) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _types(m: _Model, query: Query) -> dict[str, str]:
     n = m.node
+    database, schema, name = (
+        _literal(n["database"]),
+        _literal(n["schema"]),
+        _literal(n.get("alias") or n["name"]),
+    )
     rows = query(
         "select column_name, data_type from information_schema.columns "
-        f"where table_catalog = '{n['database']}' and table_schema = '{n['schema']}' "
-        f"and table_name = '{n.get('alias') or n['name']}' order by ordinal_position"
+        f"where table_catalog = {database} and table_schema = {schema} "
+        f"and table_name = {name} order by ordinal_position"
     )
     return {str(c): str(t).upper() for c, t in rows}
-
-
-def _naming(m: _Model, types: dict[str, str]) -> list[Violation]:
-    if m.name == TIME_SPINE:
-        return []
-    out: list[Violation] = []
-    for c, t in types.items():
-        if t == "DATE" and not c.endswith("_on"):
-            out.append(Violation(m.name, "命名と記述", f"日付の列 {c} は _on で終えます"))
-        elif t.startswith("TIMESTAMP") and not c.endswith("_at"):
-            out.append(Violation(m.name, "命名と記述", f"日時の列 {c} は _at で終えます"))
-        elif t == "BOOLEAN" and not c.startswith("is_"):
-            out.append(Violation(m.name, "命名と記述", f"フラグの列 {c} は is_ で始めます"))
-    return out
-
-
-def _quote(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 UNKNOWN_KEY = "md5('__unknown__')"
@@ -239,8 +237,8 @@ def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Viol
         return []  # 主キーの違反として _primary_key が報告する
     cols = list(types)
     rows = query(
-        f"select {', '.join(_quote(c) for c in cols)} from {m.relation}"
-        f" where {_quote(key)} = {UNKNOWN_KEY}"
+        f"select {', '.join(quote_ident(c) for c in cols)} from {m.relation}"
+        f" where {quote_ident(key)} = {UNKNOWN_KEY}"
     )
     if len(rows) != 1:
         return [
@@ -258,7 +256,7 @@ def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Viol
     blank = [
         c
         for c in cols
-        if c not in natural and c != key and types[c].startswith(_TEXT) and row[c] is None
+        if c not in natural and c != key and is_text_type(types[c]) and row[c] is None
     ]
     if blank:
         out.append(
@@ -271,7 +269,8 @@ def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Viol
         )
     for c in cols:
         accepted = m.tests(c).get("accepted_values")
-        if accepted is not None and row[c] not in accepted.get("values", []):
+        # dbt の accepted_values は NULL を対象にしない（NULL の文字列は上で報告する）
+        if accepted is not None and row[c] is not None and row[c] not in accepted.get("values", []):
             out.append(
                 Violation(
                     m.name,
@@ -283,7 +282,7 @@ def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Viol
 
 
 def data_violations(manifest: dict[str, Any], query: Query) -> list[Violation]:
-    """ビルド済みのテーブルを見て分かる違反（列の型の命名、不明メンバーの行）。"""
+    """ビルド済みのテーブルを見て分かる違反（不明メンバーの行）。"""
     out: list[Violation] = []
     for m in _marts(manifest):
         types = _types(m, query)
@@ -292,7 +291,6 @@ def data_violations(manifest: dict[str, Any], query: Query) -> list[Violation]:
                 Violation(m.name, "レイヤー", "テーブルがありません（make dbt-build を実行する）")
             )
             continue
-        out += _naming(m, types)
         if m.is_dim and m.name != TIME_SPINE:
             out += _unknown_member(m, types, query)
     return out
@@ -300,8 +298,6 @@ def data_violations(manifest: dict[str, Any], query: Query) -> list[Violation]:
 
 def check_warehouse(warehouse: Path) -> list[Violation]:
     """build 済みの dbt プロジェクトの違反。manifest が無ければ、それ自体を違反として返す。"""
-    import duckdb
-
     from adp.warehouse import warehouse_db
 
     path = warehouse / "target" / "manifest.json"
@@ -313,11 +309,11 @@ def check_warehouse(warehouse: Path) -> list[Violation]:
         ]
     manifest = json.loads(path.read_text(encoding="utf-8"))
     violations = structural_violations(manifest)
-    con = duckdb.connect(str(warehouse_db(warehouse)), read_only=True)
     try:
-        violations += data_violations(manifest, lambda sql: con.execute(sql).fetchall())
-    finally:
-        con.close()
+        with Catalog(warehouse_db(warehouse)).connect() as con:
+            violations += data_violations(manifest, lambda sql: con.execute(sql).fetchall())
+    except CatalogUnavailable as e:
+        violations.append(Violation("warehouse", "レイヤー", str(e)))
     return violations
 
 

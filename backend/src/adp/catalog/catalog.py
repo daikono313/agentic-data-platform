@@ -37,7 +37,6 @@ _PII_TOKENS = frozenset(
         "zipcode",
         "postcode",
         "birth",
-        "born",
         "birthday",
         "birthdate",
         "dob",
@@ -120,13 +119,13 @@ class CatalogUnavailable(Exception):
     """DB が使えない（dbt が書き込み中でロックされているなど）。"""
 
 
-def _q(identifier: str) -> str:
+def quote_ident(identifier: str) -> str:
     """識別子を二重引用符で囲む。DB から読んだ名前にも必ず使う。"""
     return '"' + identifier.replace('"', '""') + '"'
 
 
 def _table(schema: str, name: str) -> str:
-    return f"{_q(schema)}.{_q(name)}"
+    return f"{quote_ident(schema)}.{quote_ident(name)}"
 
 
 def _plural_forms(stem: str) -> set[str]:
@@ -338,7 +337,8 @@ class Catalog:
         return looks_like_pii(column)
 
     @contextmanager
-    def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
+    def connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
+        """読み取り専用の接続。ロック中は少し待って再試行し、だめなら CatalogUnavailable。"""
         # 読み取り専用に加えて外部アクセス（COPY TO、ファイル読み込み、ATTACH）を禁止する
         last: Exception | None = None
         for attempt in range(4):
@@ -370,7 +370,7 @@ class Catalog:
         return schema, name
 
     def list_sources(self) -> list[TableInfo]:
-        with self._connect() as con:
+        with self.connect() as con:
             rows = con.execute(
                 "select table_schema, table_name from information_schema.tables"
                 " where table_schema in (select unnest(?)) order by 1, 2",
@@ -407,12 +407,12 @@ class Catalog:
     def columns(self, table: str) -> list[ColumnInfo]:
         """列の名前・型・説明だけを返す（プロファイリングをしない軽い版）。"""
         schema, name = self._resolve(table)
-        with self._connect() as con:
+        with self.connect() as con:
             return self._columns(con, schema, name)
 
     def describe_table(self, table: str) -> TableDetail:
         schema, name = self._resolve(table)
-        with self._connect() as con:
+        with self.connect() as con:
             columns = self._columns(con, schema, name)
             count = int(_scalar(con, f"select count(*) from {_table(schema, name)}"))
             pk = [c.name for c in columns if count > 0 and _is_unique(con, schema, name, c.name)]
@@ -461,12 +461,13 @@ class Catalog:
                 try:
                     if not _is_unique(con, rs, rt, c.name):
                         continue
+                    col = quote_ident(c.name)
                     ratio = _scalar(
                         con,
-                        f"select coalesce(avg(case when r.{_q(c.name)} is null then 0 else 1.0"
+                        f"select coalesce(avg(case when r.{col} is null then 0 else 1.0"
                         f" end), 0) from {_table(schema, name)} t left join {_table(rs, rt)} r"
-                        f" on cast(t.{_q(c.name)} as varchar) = cast(r.{_q(c.name)} as varchar)"
-                        f" where t.{_q(c.name)} is not null",
+                        f" on cast(t.{col} as varchar) = cast(r.{col} as varchar)"
+                        f" where t.{col} is not null",
                     )
                 except duckdb.Error:
                     continue
@@ -485,14 +486,14 @@ class Catalog:
         schema, name = self._resolve(table)
         if not _IDENT.match(column):
             raise ValueError(f"不正な列名です: {column}")
-        with self._connect() as con:
+        with self.connect() as con:
             return _is_unique(con, schema, name, column)
 
     def profile_column(self, table: str, column: str, top: int = 10) -> ColumnProfile:
         schema, name = self._resolve(table)
         if not _IDENT.match(column):
             raise ValueError(f"不正な列名です: {column}")
-        with self._connect() as con:
+        with self.connect() as con:
             info = {c.name: c for c in self._columns(con, schema, name)}
             if column not in info:
                 raise ValueError(f"列が見つかりません: {schema}.{name}.{column}")
@@ -517,11 +518,11 @@ class Catalog:
             raise ValueError("value を指定したときは where_column も指定してください")
         schema, name = self._resolve(table)
         limit = max(1, min(int(limit), SAMPLE_MAX))
-        with self._connect() as con:
+        with self.connect() as con:
             columns = [c.name for c in self._columns(con, schema, name)]
             pii = {c for c in columns if self.is_pii(schema, name, c)}
             free = {c for c in columns if c not in pii and _FREE_TEXT.search(c)}
-            sql = f"select * from {_q(schema)}.{_q(name)}"
+            sql = f"select * from {quote_ident(schema)}.{quote_ident(name)}"
             params: list[Any] = []
             if where_column:
                 if where_column not in columns:
@@ -530,7 +531,7 @@ class Catalog:
                     raise ValueError("個人情報・自由記述の列では絞り込めません")
                 if value is None:
                     raise ValueError("where_column を指定したときは value も指定してください")
-                sql += f" where cast({_q(where_column)} as varchar) = ?"
+                sql += f" where cast({quote_ident(where_column)} as varchar) = ?"
                 params.append(str(value))
             sql += f" limit {limit}"
             rows = con.execute(sql, params).fetchall()
@@ -559,7 +560,7 @@ class Catalog:
         detail: 月ごとの件数・分布も出す（プロファイル画面だけ。#71）。
         """
         schema, name = self._resolve(table)
-        with self._connect() as con:
+        with self.connect() as con:
             columns = self._columns(con, schema, name)
             profiles = [
                 _profile(
@@ -591,8 +592,8 @@ class Catalog:
         schema, name = self._resolve(table)
         if not _IDENT.match(column) or not _CAST_TYPE.fullmatch(data_type):
             raise ValueError(f"不正な列名か型です: {column} / {data_type}")
-        col = _q(column)
-        with self._connect() as con:
+        col = quote_ident(column)
+        with self.connect() as con:
             return int(
                 _scalar(
                     con,
@@ -605,7 +606,7 @@ class Catalog:
         """列名・説明・テーブル説明に、いずれかの語を含む列を返す（大文字小文字は区別しない）。"""
         terms = [t.lower() for t in query.split() if t]
         matches = []
-        with self._connect() as con:
+        with self.connect() as con:
             rows = con.execute(
                 "select table_schema, table_name, column_name, data_type"
                 " from information_schema.columns where table_schema in (select unnest(?))"
@@ -634,7 +635,7 @@ def _profile(
     detail: bool = False,
     masked: bool = False,
 ) -> ColumnProfile:
-    q, col = _table(schema, name), _q(column.name)
+    q, col = _table(schema, name), quote_ident(column.name)
     row = con.execute(
         f"select count(*), count(*) - count({col}), count(distinct {col}),"
         f" cast(min({col}) as varchar), cast(max({col}) as varchar) from {q}"
@@ -739,7 +740,7 @@ def _histogram(
 
 
 def _is_unique(con: duckdb.DuckDBPyConnection, schema: str, name: str, column: str) -> bool:
-    col = _q(column)
+    col = quote_ident(column)
     return bool(
         _scalar(
             con,
