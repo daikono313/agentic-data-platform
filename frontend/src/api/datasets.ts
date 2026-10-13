@@ -172,6 +172,7 @@ const isText = (c: ColumnInfo) => !c.data_type || /VARCHAR|TEXT|STRING/i.test(c.
  * 元データの列から「作れそうな指標」の要求の例を作る。
  * 金額・数量の列と、同じテーブルの区分の列（ID・日時・名前以外の文字列）を組み合わせる。
  * 1 つのテーブルに偏らないよう、テーブルを順に回して 1 件ずつ選ぶ。
+ * 日本語の名前（説明。無ければ backend がオントロジーのラベルで埋める）が無いものは使わない。
  */
 export function exampleRequests(sources: SourceInfo[], limit = 4): string[] {
   const perTable: string[][] = sources.map((s) => {
@@ -184,8 +185,12 @@ export function exampleRequests(sources: SourceInfo[], limit = 4): string[] {
         !/(_id|_at|_on|_date|_name)$/.test(c.name) &&
         /(category|channel|region|rank|method|type|reason|status)$/.test(c.name),
     )
-    const table = (s.description || s.name).split(/[（(。]/)[0].trim()
-    return measures.flatMap((m) => categories.map((c) => `${label(c)}別の${table}の${label(m)}を見たい`))
+    // 日本語の名前（説明かオントロジーのラベル）が無い列・源泉は、英語の識別子が出るので例にしない（#148）
+    if (!s.description) return []
+    const table = s.description.split(/[（(。]/)[0].trim()
+    return measures
+      .filter((m) => m.description)
+      .flatMap((m) => categories.filter((c) => c.description).map((c) => `${label(c)}別の${table}の${label(m)}を見たい`))
   })
   const out: string[] = []
   for (let round = 0; out.length < limit && perTable.some((t) => t.length > round); round++) {

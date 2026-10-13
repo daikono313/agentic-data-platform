@@ -29,7 +29,7 @@ models:
     - unique
     - not_null
   - name: moved_on
-    description: 動いた日時
+    description: 入出庫日時
     granularity: day
     dimension:
       type: time
@@ -40,7 +40,7 @@ models:
           to: ref('dim_date')
           field: date_day
   - name: moved_at
-    description: 動いた日時（日時）
+    description: 入出庫日時（日時）
   - name: store_key
     description: 店舗
     entity:
@@ -64,7 +64,7 @@ models:
           to: ref('dim_product')
           field: product_key
   - name: movement_type
-    description: 動きの種類（マスタなし）
+    description: 入出庫区分（マスタなし）
     dimension:
       type: categorical
     data_tests:

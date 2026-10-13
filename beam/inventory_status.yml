@@ -27,7 +27,7 @@ events:
   dimensions:
   - w: when
     name: moved_at
-    label: 動いた日時
+    label: 入出庫日時
     description: ''
     attributes: []
     hierarchy: []
@@ -101,11 +101,11 @@ events:
       column: product_id
   - w: how
     name: movement_type
-    label: 動きの種類
+    label: 入出庫区分
     description: receipt（入庫）/ count（棚卸）/ transfer_out（移動出庫）/ disposal（廃棄）
     attributes:
     - name: movement_type
-      label: 動きの種類
+      label: 入出庫区分
       description: ''
       examples: []
       source:

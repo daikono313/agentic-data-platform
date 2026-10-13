@@ -213,6 +213,15 @@ describe('バスマトリクス', () => {
     expect(within(screen.getByTestId('bus-fct_new')).queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('fact の列のまとまりの見出しは「縮退ディメンション」（#148）', () => {
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} />)
+    const header = screen.getByRole('columnheader', { name: /縮退ディメンション/ })
+    expect(header).toHaveAttribute('title', expect.stringContaining('日付で切るときは日付（dim_date）を使う'))
+    expect(screen.queryByText('fact 内の属性')).not.toBeInTheDocument()
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
+    expect(screen.getAllByText('縮退ディメンション（注文）').length).toBeGreaterThan(0)
+  })
+
   it('compact では dimension ごとに 1 列にする', () => {
     render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
     const row = screen.getByTestId('bus-fct_order_lines')
@@ -229,19 +238,32 @@ describe('exampleRequests', () => {
 })
 
 describe('exampleRequests の偏り', () => {
+  const t = (name: string, desc: string) => ({
+    name,
+    description: desc,
+    row_count: 1,
+    columns: [
+      { name: 'quantity', description: '数量', data_type: 'INTEGER' },
+      { name: 'channel', description: 'チャネル', data_type: 'VARCHAR' },
+      { name: 'status', description: 'ステータス', data_type: 'VARCHAR' },
+    ],
+  })
+
   it('テーブルを順に回して 1 件ずつ選ぶ', () => {
-    const t = (name: string, desc: string) => ({
-      name,
-      description: desc,
-      row_count: 1,
-      columns: [
-        { name: 'quantity', description: '数量', data_type: 'INTEGER' },
-        { name: 'channel', description: 'チャネル', data_type: 'VARCHAR' },
-        { name: 'status', description: 'ステータス', data_type: 'VARCHAR' },
-      ],
-    })
     const out = exampleRequests([t('raw.a', '注文'), t('raw.b', '返品')], 2)
     expect(out).toEqual(['チャネル別の注文の数量を見たい', 'チャネル別の返品の数量を見たい'])
+  })
+
+  it('日本語の名前が無い源泉・列は例にしない（英語の識別子を出さない。#148）', () => {
+    const noTable = { ...t('raw.inventory', ''), description: '' }
+    const noColumn = {
+      ...t('raw.c', '在庫'),
+      columns: [
+        { name: 'quantity', description: '数量', data_type: 'INTEGER' },
+        { name: 'movement_type', description: '', data_type: 'VARCHAR' },
+      ],
+    }
+    expect(exampleRequests([noTable, noColumn])).toEqual([])
   })
 })
 

@@ -222,7 +222,7 @@ concepts:
     label: 入出庫日時
     column: moved_at
   - name: movement_type
-    label: 入出庫の種類
+    label: 入出庫区分
     column: movement_type
   - name: quantity
     label: 数量

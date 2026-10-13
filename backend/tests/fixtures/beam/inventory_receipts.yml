@@ -57,12 +57,12 @@ events:
             availability: available
       - w: how
         name: movement_type
-        label: 入出庫の種類
+        label: 入出庫区分
         business_key: {table: raw.inventory, column: movement_type}
         fact_key: {table: raw.inventory, column: movement_type}
         attributes:
           - name: movement_type
-            label: 入出庫の種類
+            label: 入出庫区分
             examples: [receipt, disposal]
             source: {table: raw.inventory, column: movement_type}
             availability: available

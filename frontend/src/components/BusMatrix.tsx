@@ -4,6 +4,10 @@ import { chartUrl } from '@/api/charts'
 import { matches, type BusGroup, type BusMatrix, type ModelInfo } from '@/api/datasets'
 import { cn } from '@/lib/utils'
 
+/** 縮退ディメンションの見出しの説明（#148） */
+const DEGENERATE_NOTE =
+  'dim テーブルを持たず、fact の列にそのまま置いた切り口（区分・番号・日時）。日付で切るときは日付（dim_date）を使う'
+
 /**
  * 検索語で絞り込む。fact か列のまとまり（dim の名前・属性）が一致したら、それと結合できる相手も残す。
  */
@@ -27,7 +31,7 @@ export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): B
 
 /**
  * Kimball のバスマトリクス（#62）。行が fact、列が dimension（とその属性）。
- * fact が結合できる dimension の属性すべてに ✓ を付ける。fact 自身の属性（退化ディメンション）は最後の列。
+ * fact が結合できる dimension の属性すべてに ✓ を付ける。fact 自身の属性（縮退ディメンション）は最後の列。
  * compact（インタビュー中の狭い枠）では、属性を省いて dimension ごとに 1 列にする。
  */
 export interface BusMetric {
@@ -59,7 +63,7 @@ export function BusMatrixView({
   // 列のまとまりごとに背景を交互に変える
   const shade = (i: number) => (i % 2 === 0 ? 'bg-muted' : 'bg-background')
   const groupTitle = (g: BusGroup) =>
-    g.kind === 'dim' ? g.label : `fact 内の属性（${g.label}）`
+    g.kind === 'dim' ? g.label : `縮退ディメンション（${g.label}）`
   const columns = (g: BusGroup) => (compact ? [{ name: g.name, label: groupTitle(g) }] : g.attributes)
   return (
     <div className="overflow-x-auto">
@@ -89,10 +93,14 @@ export function BusMatrixView({
                     key={g.name}
                     colSpan={g.attributes.length}
                     scope="colgroup"
-                    title={`${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}${g.sources?.length ? `（元の源泉: ${g.sources.join(', ')}）` : ''}`}
+                    title={
+                      g.kind === 'dim'
+                        ? `${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}${g.sources?.length ? `（元の源泉: ${g.sources.join(', ')}）` : ''}`
+                        : `${g.name}: ${DEGENERATE_NOTE}`
+                    }
                     className={cn('border px-1 py-1 text-center font-semibold break-all', shade(i))}
                   >
-                    {g.kind === 'dim' ? g.label : 'fact 内の属性'}
+                    {g.kind === 'dim' ? g.label : '縮退ディメンション'}
                     {g.candidate && <span className="ml-1 text-[10px] font-normal text-primary">（候補）</span>}
                     <span className="block font-mono text-[10px] font-normal text-muted-foreground">{g.name}</span>
                   </th>
@@ -165,7 +173,7 @@ export function BusMatrixView({
                     content = <span className="block py-1">{check}</span>
                   } else if (onRequest && !r.candidate && g.kind === 'dim') {
                     // 空欄 → 「<fact>を<dim の属性>別に見たい」を要求に入れる（作れる候補として見せる）。
-                    // 別の fact 自身の属性（退化ディメンション）は、この fact とは関係が無いので出さない
+                    // 別の fact 自身の属性（縮退ディメンション）は、この fact とは関係が無いので出さない
                     const text = `「${r.label}」を${g.label}の${a.label}別に見たい`
                     content = (
                       <button

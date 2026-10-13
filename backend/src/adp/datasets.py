@@ -95,7 +95,7 @@ class BusAttribute(BaseModel):
 class BusGroup(BaseModel):
     """バスマトリクスの列のまとまり。
 
-    dimension 1 つか、fact 自身が持つ属性（退化ディメンション）。
+    dimension 1 つか、fact 自身が持つ属性（縮退ディメンション）。
     """
 
     name: str
@@ -303,38 +303,56 @@ class DatasetIndex:
             )
         return sorted(result, key=lambda m: (m.kind != "fct", m.name))
 
-    def _mapped_sources(self) -> set[str] | None:
-        """オントロジーの概念になっている源泉。オントロジーが無い・読めなければ None。"""
+    def _source_labels(self) -> dict[str, tuple[str, dict[str, str]]] | None:
+        """源泉 → (表のラベル, 列 → 属性のラベル)。オントロジーの日本語のラベル（#148）。
+
+        説明の無い源泉・列（取り込んだ直後の源泉など）を画面に出すとき、英語の識別子の代わりに使う。
+        同じ源泉に概念が複数あれば、表のラベルは最初の概念、属性はすべての概念から取る。
+        オントロジーが無い・読めなければ None。
+        """
         from adp.ontology import load
 
         try:
-            return {c.source for c in load(self.repo_root / "ontology" / "ontology.yml").concepts}
+            ontology = load(self.repo_root / "ontology" / "ontology.yml")
         except (OSError, ValueError):
             return None
+        labels: dict[str, tuple[str, dict[str, str]]] = {}
+        for c in ontology.concepts:
+            table, columns = labels.setdefault(c.source, (c.label, {}))
+            for a in c.attributes:
+                columns.setdefault(a.column, a.label)
+        return labels
 
     def sources(self, errors: list[str]) -> list[SourceInfo]:
         if self.catalog is None:
             return []
-        mapped = self._mapped_sources()
+        labels = self._source_labels()
         manifest = self._manifest()
         try:
             tables = self.catalog.list_sources()
-            return [
-                SourceInfo(
-                    name=t.qualified,
-                    description=t.description,
-                    row_count=t.row_count,
-                    columns=[
-                        ColumnInfo(name=c.name, description=c.description, data_type=c.data_type)
-                        for c in self.catalog.columns(t.qualified)
-                    ],
-                    unmapped=mapped is not None and t.qualified not in mapped,
-                    used_by=None
-                    if manifest is None
-                    else self._used_by(t.schema_name, t.name, manifest),
+            result = []
+            for t in tables:
+                table_label, column_labels = (labels or {}).get(t.qualified, ("", {}))
+                result.append(
+                    SourceInfo(
+                        name=t.qualified,
+                        description=t.description or table_label,
+                        row_count=t.row_count,
+                        columns=[
+                            ColumnInfo(
+                                name=c.name,
+                                description=c.description or column_labels.get(c.name, ""),
+                                data_type=c.data_type,
+                            )
+                            for c in self.catalog.columns(t.qualified)
+                        ],
+                        unmapped=labels is not None and t.qualified not in labels,
+                        used_by=None
+                        if manifest is None
+                        else self._used_by(t.schema_name, t.name, manifest),
+                    )
                 )
-                for t in tables
-            ]
+            return result
         except CatalogUnavailable as e:  # DB が使用中など。一覧の他の部分は返す
             errors.append(f"元データの一覧を取得できませんでした: {e}")
         except Exception as e:
@@ -369,9 +387,13 @@ class DatasetIndex:
         if self.catalog is None:
             raise CatalogUnavailable("元データのカタログが使えません")
         profile = self.catalog.profile_table(table, detail=True)
-        return SourceProfile(
-            **profile.model_dump(), used_by=self._used_by(profile.schema_name, profile.name)
-        )
+        # 開始画面（sources）と同じく、説明の無い源泉・列はオントロジーのラベルで埋める（#148）
+        table_label, column_labels = (self._source_labels() or {}).get(profile.qualified, ("", {}))
+        data = profile.model_dump()
+        data["description"] = profile.description or table_label
+        for c in data["columns"]:
+            c["description"] = c.get("description") or column_labels.get(c["name"], "")
+        return SourceProfile(**data, used_by=self._used_by(profile.schema_name, profile.name))
 
     def _manifest(self) -> dict[str, Any] | None:
         try:
