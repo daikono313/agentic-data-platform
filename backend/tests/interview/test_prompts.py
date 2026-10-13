@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from adp.interview import new_state
-from adp.interview.prompts import INTERVIEW_PATH, system_prompt
+from adp.interview.prompts import INTERVIEW_PATH, interview_body, system_prompt
 from adp.interview.state import PHASE_LABELS, Phase
 
 
@@ -34,16 +34,11 @@ def test_cannot_press_and_unresolvable_issues_apply_at_any_phase() -> None:
     assert "取り込む" in rules
 
 
-def _interview_body() -> str:
-    text = INTERVIEW_PATH.read_text(encoding="utf-8")
-    return text[text.index("## 1. ") :]
-
-
 def test_interview_phases_match_the_code() -> None:
     """段階の正本は interview.md の見出し。コード・画面の段階と同じ順・名前・表示名（#136）。"""
     from adp.llm.settings import REPO_ROOT
 
-    body = _interview_body()
+    body = interview_body()
     headings = re.findall(r"^## (\d+)\. (\w+)（(.+)）$", body, re.MULTILINE)
     expected = [(i + 1, p.value, PHASE_LABELS[p]) for i, p in enumerate(Phase)]
     assert [(int(n), name, label) for n, name, label in headings] == expected
@@ -52,12 +47,14 @@ def test_interview_phases_match_the_code() -> None:
     assert phases == [(p.value, PHASE_LABELS[p]) for p in Phase]
     # 前書き（持ち主のルール）はプロンプトに入れず、段階から後だけを入れる
     assert body in system_prompt()
-    assert "共同で持つ" not in system_prompt()
+    preamble = INTERVIEW_PATH.read_text(encoding="utf-8").split(body, 1)[0]
+    for line in preamble.splitlines()[1:]:
+        assert not line.strip() or line not in system_prompt(), line
 
 
 def test_each_phase_has_purpose_and_questions() -> None:
     """各段階は「目的:」「聞くこと:」で書く（確定の段階を除く。#136）。"""
-    sections = re.split(r"^## \d+\. ", _interview_body(), flags=re.MULTILINE)[1:]
+    sections = re.split(r"^## \d+\. ", interview_body(), flags=re.MULTILINE)[1:]
     for section in sections:
         if section.startswith(Phase.FINALIZED.value):
             continue
@@ -72,7 +69,7 @@ def test_interview_mentions_only_existing_tools() -> None:
 
     names = {t.name for t in build_tools(new_state("x"))}
     names |= {n.rsplit("__", 1)[-1] for n in allowed_tool_names()}
-    mentioned = set(re.findall(r"`([a-z]+_[a-z_]+)`", _interview_body()))
+    mentioned = set(re.findall(r"`([a-z]+_[a-z_]+)`", interview_body()))
     assert mentioned and mentioned <= names, mentioned - names
 
 

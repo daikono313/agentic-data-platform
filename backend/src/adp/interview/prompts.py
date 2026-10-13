@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 from adp.llm.settings import REPO_ROOT
 
@@ -73,12 +74,18 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 """
 
 
+def interview_body() -> str:
+    """interview.md の、最初の段階（行頭の「## 1. 」）から後。前書き（持ち主・書き方）は入れない。"""
+    text = INTERVIEW_PATH.read_text(encoding="utf-8")
+    start = re.search(r"^## 1\. ", text, re.MULTILINE)
+    if start is None:
+        raise ValueError(f"{INTERVIEW_PATH} に「## 1. 」の段階がありません")
+    return text[start.start() :]
+
+
 def system_prompt() -> str:
     knowledge = KNOWLEDGE_PATH.read_text(encoding="utf-8") if KNOWLEDGE_PATH.exists() else ""
-    text = INTERVIEW_PATH.read_text(encoding="utf-8")
-    # 前書き（持ち主のルール・書き方）は入れず、最初の段階から後だけを入れる
-    interview = text[text.index("## 1. ") :]
-    return SYSTEM_PROMPT.format(knowledge=knowledge, interview=interview)
+    return SYSTEM_PROMPT.format(knowledge=knowledge, interview=interview_body())
 
 
 def prompt_version() -> str:
