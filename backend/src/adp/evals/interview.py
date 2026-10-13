@@ -21,7 +21,16 @@ from typing import Any
 
 import yaml
 
-from adp.beam import Aggregation, Availability, BeamModel, GapKind, MetricType, W
+from adp.beam import (
+    Additivity,
+    Aggregation,
+    Availability,
+    BeamModel,
+    GapKind,
+    MetricType,
+    StoryType,
+    W,
+)
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
@@ -96,6 +105,12 @@ def _metrics_events(beam: BeamModel) -> list[tuple[Any, Any]]:
     return [(m, beam.event(m.event)) for m in beam.metrics]
 
 
+def _metric_event_list(beam: BeamModel) -> list[Any]:
+    """指標の出来事（重複なし）。"""
+    names = dict.fromkeys(m.event for m in beam.metrics)
+    return [e for n in names if (e := beam.event(n)) is not None]
+
+
 def _check(beam: BeamModel, spec: Any) -> CheckResult:
     name, raw = (spec, "") if isinstance(spec, str) else next(iter(spec.items()))
     args: list[str] = [str(a) for a in raw] if isinstance(raw, list) else []
@@ -126,10 +141,6 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             any(m.filters for m in beam.metrics),
             str([[f.model_dump(mode="json") for f in m.filters] for m in beam.metrics]),
         ),
-        "has_examples": lambda: (
-            any(e.examples for e in beam.events),
-            str([len(e.examples) for e in beam.events]),
-        ),
         "metric_type": lambda: (
             any(m.type == MetricType(arg) for m in beam.metrics),
             str([m.type.value for m in beam.metrics]),
@@ -153,9 +164,71 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         ),
         # この源泉を元にした出来事がある（fact の名前は問わない。ほかの源泉の既存の fact は除く）
         "fact_source": lambda: _fact_source(beam, arg),
+        # 以下は指標の出来事を見る（指標に使わない出来事で合格にしない。#135）
+        # 出来事か状態か（discrete / recurring / evolving）
+        "story_type": lambda: (
+            any(e is not None and e.story_type == StoryType(arg) for _, e in _metrics_events(beam)),
+            str([e.story_type.value for e in _metric_event_list(beam)]),
+        ),
+        # 粒度のキー（grain_keys）に、その W のディメンションがすべてある（縮退は W を持たない）
+        "grain_keys_w": lambda: (
+            any(
+                {d.w.value for k in e.grain_keys if (d := e.dimension(k))} >= set(args)
+                for e in _metric_event_list(beam)
+            ),
+            str([e.grain_keys for e in _metric_event_list(beam)]),
+        ),
+        "measure_additivity": lambda: (
+            any(
+                e is not None
+                and m.measure is not None
+                and (ms := e.measure(m.measure)) is not None
+                and ms.additivity == Additivity(arg)
+                for m, e in _metrics_events(beam)
+            ),
+            str(
+                [
+                    ms.additivity.value
+                    for m, e in _metrics_events(beam)
+                    if e is not None and m.measure and (ms := e.measure(m.measure))
+                ]
+            ),
+        ),
+        # 階層のあるディメンション（引数を書けば、その名前のディメンション）
+        "has_hierarchy": lambda: (
+            any(
+                d.hierarchy and (not arg or d.name == arg)
+                for e in beam.events
+                for d in e.dimensions
+            ),
+            str({d.name: d.hierarchy for e in beam.events for d in e.dimensions if d.hierarchy}),
+        ),
+        "min_examples": lambda: (
+            any(len(e.examples) >= int(arg) for e in _metric_event_list(beam)),
+            str([len(e.examples) for e in _metric_event_list(beam)]),
+        ),
+        # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
+        "shared_dimensions": lambda: _shared_dimensions(beam, args),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
+
+
+def _shared_dimensions(beam: BeamModel, ws: list[str]) -> tuple[bool, str]:
+    """その W ごとに、2 つ以上の出来事が同じディメンションを持つか（共通ディメンション）。
+
+    When は名前によらず dim_date で共通になるので、2 つ以上の出来事に When があればよい。
+    """
+    shared: dict[str, list[str]] = {}
+    for w in ws:
+        per_event = [{d.name for d in e.dimensions if d.w == W(w)} for e in beam.events]
+        if W(w) == W.WHEN:
+            shared[w] = ["dim_date"] if sum(bool(x) for x in per_event) >= 2 else []
+        else:
+            shared[w] = sorted(
+                {n for names in per_event for n in names if sum(n in x for x in per_event) >= 2}
+            )
+    return all(shared.values()), str(shared)
 
 
 class _NoForeignKeys:
@@ -261,6 +334,12 @@ _IRREGULAR = re.compile(
     r"|取消|取り消し|マイナス|二重に|除きたい(ケース|もの)"
 )
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
+_PURPOSE = re.compile(
+    r"目的|背景|何のため|使い道|何に(?:お?使|役立|活用)|どう(?:活用|役立|使い)|ご活用|活用(?:し|さ)"
+    r"|(?:どんな|どのような|何の|なにの)(?:判断|意思決定|アクション|行動|施策|改善)"
+    r"|(?:判断|意思決定|アクション|施策)に(?:使|役立|つなげ)"
+)
+"""要求の目的（指標を見て何を判断・行動するか）を聞く質問。区分のルールの「どう判断しますか」は除く。"""
 
 
 def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
@@ -351,6 +430,7 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         and _QUESTION.search(_shown(m))
         and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
     ]
+    purpose = _questions_matching(messages, _PURPOSE)
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
@@ -358,6 +438,7 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
         CheckResult("no_effort_question", not effort, " / ".join(effort[:3])),
         CheckResult("asks_irregular_cases", bool(irregular), " / ".join(irregular[:2])),
+        CheckResult("asks_purpose", bool(purpose), " / ".join(purpose[:2])),
     ]
     return {r.name: r for r in results}
 
@@ -370,7 +451,7 @@ TRANSCRIPT_CHECKS = (
     "no_effort_question",
 )
 """どのシナリオでも行う会話のチェック。"""
-OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases",)
+OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases", "asks_purpose")
 """シナリオに書いたときだけ行う会話のチェック。"""
 TRANSCRIPT_LIMITS = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
 
