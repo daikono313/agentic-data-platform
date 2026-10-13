@@ -409,20 +409,36 @@ def test_beams_skip_broken_files_and_report_them(tmp_path: Path) -> None:
 
 
 def test_sources_without_descriptions_use_ontology_labels(repo: Path) -> None:
-    """説明の無い源泉・列は、オントロジーの日本語のラベルで埋める（画面に英語を出さない。#148）。"""
+    """説明の無い源泉・列は、オントロジーの日本語のラベルで埋める（画面に英語を出さない。#148）。
+
+    開始画面（sources）とプロファイル画面（profile）で同じ。説明があればそちらを使う。
+    """
     import shutil
 
-    from tests.generation.test_dbt_codegen import ROOT
+    from adp.llm.settings import REPO_ROOT
 
     (repo / "ontology").mkdir(exist_ok=True)
-    shutil.copy(ROOT / "ontology" / "ontology.yml", repo / "ontology" / "ontology.yml")
+    shutil.copy(REPO_ROOT / "ontology" / "ontology.yml", repo / "ontology" / "ontology.yml")
     try:
-        catalog = Catalog(repo / "warehouse/data/dev.duckdb")
-        sources = {s.name: s for s in DatasetIndex(repo, catalog).all().sources}
+        manifest = repo / "warehouse/target/manifest.json"
+        catalog = Catalog(repo / "warehouse/data/dev.duckdb", manifest)
+        index = DatasetIndex(repo, catalog)
+        sources = {s.name: s for s in index.all().sources}
         inventory = sources["raw.inventory"]
-        assert inventory.description == "在庫の入出庫"
+        assert inventory.description == "在庫の入出庫" and not inventory.unmapped
         columns = {c.name: c.description for c in inventory.columns}
         assert columns["movement_type"] == "入出庫区分" and columns["quantity"] == "数量"
-        assert not inventory.unmapped
+        profile = index.profile("raw.inventory")
+        assert profile.description == "在庫の入出庫"
+        assert {c.name: c.description for c in profile.columns}["movement_type"] == "入出庫区分"
+        # 源泉の説明（dbt の source）があれば、そちらを使う
+        orders = sources["raw.orders"]
+        assert orders.description and orders.description != "注文"
     finally:
         shutil.rmtree(repo / "ontology")
+    # オントロジーが無ければ埋めない（落ちない）
+    plain = {
+        s.name: s
+        for s in DatasetIndex(repo, Catalog(repo / "warehouse/data/dev.duckdb")).all().sources
+    }
+    assert plain["raw.inventory"].description == ""

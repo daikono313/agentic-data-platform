@@ -213,6 +213,15 @@ describe('バスマトリクス', () => {
     expect(within(screen.getByTestId('bus-fct_new')).queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('fact の列のまとまりの見出しは「縮退ディメンション」（#148）', () => {
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} />)
+    const header = screen.getByRole('columnheader', { name: /縮退ディメンション/ })
+    expect(header).toHaveAttribute('title', expect.stringContaining('日付で切るときは日付（dim_date）を使う'))
+    expect(screen.queryByText('fact 内の属性')).not.toBeInTheDocument()
+    render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
+    expect(screen.getAllByText('縮退ディメンション（注文）').length).toBeGreaterThan(0)
+  })
+
   it('compact では dimension ごとに 1 列にする', () => {
     render(<DatasetsPanel datasets={{ ...datasets, bus }} compact />)
     const row = screen.getByTestId('bus-fct_order_lines')

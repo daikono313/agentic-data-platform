@@ -4,13 +4,13 @@ import { chartUrl } from '@/api/charts'
 import { matches, type BusGroup, type BusMatrix, type ModelInfo } from '@/api/datasets'
 import { cn } from '@/lib/utils'
 
-/**
- * 検索語で絞り込む。fact か列のまとまり（dim の名前・属性）が一致したら、それと結合できる相手も残す。
- */
 /** 縮退ディメンションの見出しの説明（#148） */
 const DEGENERATE_NOTE =
   'dim テーブルを持たず、fact の列にそのまま置いた切り口（区分・番号・日時）。日付で切るときは日付（dim_date）を使う'
 
+/**
+ * 検索語で絞り込む。fact か列のまとまり（dim の名前・属性）が一致したら、それと結合できる相手も残す。
+ */
 export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): BusMatrix {
   if (!query.trim()) return bus
   const description = new Map(models.map((m) => [m.name, m.description]))
@@ -31,7 +31,7 @@ export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): B
 
 /**
  * Kimball のバスマトリクス（#62）。行が fact、列が dimension（とその属性）。
- * fact が結合できる dimension の属性すべてに ✓ を付ける。fact 自身の属性（退化ディメンション）は最後の列。
+ * fact が結合できる dimension の属性すべてに ✓ を付ける。fact 自身の属性（縮退ディメンション）は最後の列。
  * compact（インタビュー中の狭い枠）では、属性を省いて dimension ごとに 1 列にする。
  */
 export interface BusMetric {
@@ -173,7 +173,7 @@ export function BusMatrixView({
                     content = <span className="block py-1">{check}</span>
                   } else if (onRequest && !r.candidate && g.kind === 'dim') {
                     // 空欄 → 「<fact>を<dim の属性>別に見たい」を要求に入れる（作れる候補として見せる）。
-                    // 別の fact 自身の属性（退化ディメンション）は、この fact とは関係が無いので出さない
+                    // 別の fact 自身の属性（縮退ディメンション）は、この fact とは関係が無いので出さない
                     const text = `「${r.label}」を${g.label}の${a.label}別に見たい`
                     content = (
                       <button
