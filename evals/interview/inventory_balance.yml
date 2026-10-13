@@ -1,4 +1,5 @@
 # #135: 状態（periodic snapshot）の要求。v5 の看板（#138）の基準を取る。会話は合成。
+# 定期スナップショットは #138 まで生成できないため、それまでは finalizable が落ちる想定。
 name: inventory_balance
 request: 店舗ごと・商品ごとの月末の在庫数を見たい
 persona: |
@@ -15,6 +16,6 @@ checks:
   - measure_additivity: semi_additive
   - grain_keys_w: [what, where, when]
   - has_w: [what, where, when]
-  - has_hierarchy
+  - has_hierarchy: product
   - min_examples: 2
-  - asks_why_how
+  - asks_purpose

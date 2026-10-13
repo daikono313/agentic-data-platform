@@ -17,4 +17,4 @@ checks:
   - metric_group_by_w: where
   - has_gap: data_unavailable
   - metric_has_filter
-  - has_examples
+  - min_examples: 1

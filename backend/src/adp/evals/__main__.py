@@ -84,6 +84,12 @@ async def _interview(args: argparse.Namespace) -> int:
                 print(f"  error: {result.error}")
             failed += not result.passed
     print(f"{total - failed}/{total} passed")
+    from adp.evals.compare import check_table
+
+    # チェックごとの合格率（基準として issue や PR に貼る。#135）
+    table = "\n".join(check_table(None, out_dir))
+    (out_dir / "summary.md").write_text(table + "\n", encoding="utf-8")
+    print(table)
     return 1 if failed else 0
 
 

@@ -389,7 +389,8 @@ def test_modeling_checks() -> None:
         return _check(beam, spec).passed
 
     assert passed({"story_type": "discrete"}) and not passed({"story_type": "recurring"})
-    assert passed("has_hierarchy")
+    assert passed("has_hierarchy") and passed({"has_hierarchy": "customer"})
+    assert not passed({"has_hierarchy": "store"})
     assert not passed({"grain_keys_w": ["what", "when"]})  # 粒度は注文明細番号
     event.grain_keys = ["store", "product", "date"]
     assert passed({"grain_keys_w": ["what", "where", "when"]})
@@ -409,20 +410,56 @@ def test_modeling_checks() -> None:
     data = beam.model_dump(mode="json")
     second = data["events"][0] | {"name": "customer_returns_product", "table_name": "returns"}
     second["dimensions"] = [d for d in second["dimensions"] if d["w"] in ("what", "when")]
+    # When は名前が違っても dim_date で共通
+    when = next(d for d in second["dimensions"] if d["w"] == "when")
+    when["name"] = "returned_at"
+    second["grain_keys"] = ["product", "returned_at"]
+    second["agg_time_dimension"] = None
+    second["examples"] = []
     data["events"].append(second)
     two = BeamModel.model_validate(data)
     assert _check(two, {"shared_dimensions": ["what", "when"]}).passed
     assert not _check(two, {"shared_dimensions": ["what", "where"]}).passed
+    # 指標に使わない出来事の種類・具体例では合格にしない
+    assert not _check(two, {"story_type": "evolving"}).passed
+    two.events[1].story_type = StoryType.EVOLVING
+    assert not _check(two, {"story_type": "evolving"}).passed
 
 
-def test_why_how_question_check() -> None:
-    """Why（何の判断に使うか）と How（どうやって起きたか）の両方を聞いたか（#135）。"""
+def test_purpose_question_check() -> None:
+    """要求の目的（何の判断・行動に使うか）を聞いたか（#135）。区分のルールの質問では通らない。"""
     from adp.evals.interview import _transcript_check_map
 
-    both = [
-        _msg("この数字を見て、どんな判断に使いますか？"),
-        _msg("", question="注文はどの方法（店舗・アプリなど）で受けますか？"),
-    ]
-    assert _transcript_check_map(both)["asks_why_how"].passed
-    assert not _transcript_check_map(both[:1])["asks_why_how"].passed
-    assert "asks_why_how" not in _checks(both)  # シナリオに書いたときだけ
+    for text in [
+        "この数字を見て、どんな判断に使いますか？",
+        "このデータは何に使いますか？",
+        "どう活用したいですか？",
+        "何に役立てたいですか？",
+        "見たいと思った背景を教えていただけますか？",
+        "この指標を見てどのようなアクションを取りますか？",
+    ]:
+        assert _transcript_check_map([_msg(text)])["asks_purpose"].passed, text
+    for text in [
+        "キャンセルかどうかはどう判断しますか？",
+        "どのように並べて見たいですか？",
+        "集計方法は合計ですか？",
+        "チャネル別にも見ますか？",
+        "「目的地」別にも見ますか？",
+    ]:
+        assert not _transcript_check_map([_msg(text)])["asks_purpose"].passed, text
+    assert "asks_purpose" not in _checks([_msg("何に使いますか？")])  # シナリオに書いたときだけ
+
+
+def test_check_rates_per_scenario(tmp_path: Path) -> None:
+    """チェックごとの合格率（基準と前後比較の表。#135）。"""
+    from adp.evals.compare import check_table
+
+    for i, ok in enumerate([True, False]):
+        data = {"scenario": "x", "passed": ok, "checks": [{"name": "finalizable", "passed": ok}]}
+        (tmp_path / "b").mkdir(exist_ok=True)
+        (tmp_path / "b" / f"x.{i}.json").write_text(json.dumps(data), encoding="utf-8")
+    (tmp_path / "a").mkdir()
+    data = {"scenario": "x", "passed": False, "checks": [{"name": "finalizable", "passed": False}]}
+    (tmp_path / "a" / "x.json").write_text(json.dumps(data), encoding="utf-8")
+    assert "| x / finalizable | 1/2 |" in check_table(None, tmp_path / "b")
+    assert "| x / finalizable | 1/2 → 0/1 ⚠ |" in check_table(tmp_path / "b", tmp_path / "a")

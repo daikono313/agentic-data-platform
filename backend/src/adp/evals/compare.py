@@ -30,6 +30,39 @@ METRICS: list[tuple[str, str, int]] = [
 ]
 
 
+def check_rates(path: Path) -> dict[str, tuple[int, int]]:
+    """チェックごとの (合格した回数, 行った回数)。キーは「シナリオ / チェック」（#135）。"""
+    rates: dict[str, tuple[int, int]] = {}
+    for file in sorted(path.glob("*.json")):
+        if file.name == "meta.json":
+            continue
+        data = json.loads(file.read_text(encoding="utf-8"))
+        for c in data.get("checks") or []:
+            key = f"{data['scenario']} / {c['name']}"
+            ok, n = rates.get(key, (0, 0))
+            rates[key] = (ok + bool(c.get("passed")), n + 1)
+    return rates
+
+
+def check_table(before: Path | None, after: Path) -> list[str]:
+    """チェックごとの合格率の表（前が無ければ後だけ。基準を取るときに使う）。"""
+    rb = check_rates(before) if before else {}
+    ra = check_rates(after)
+
+    def cell(r: tuple[int, int] | None) -> str:
+        return f"{r[0]}/{r[1]}" if r else "-"
+
+    lines = ["| シナリオ / チェック | " + ("前 → 後 |" if before else "合格 |"), "|---|---|"]
+    for key in sorted(set(rb) | set(ra)):
+        b, a = rb.get(key), ra.get(key)
+        if before:
+            worse = b and a and a[0] / a[1] < b[0] / b[1]
+            lines.append(f"| {key} | {cell(b)} → {cell(a)}{' ⚠' if worse else ''} |")
+        else:
+            lines.append(f"| {key} | {cell(a)} |")
+    return lines
+
+
 def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float]]]]:
     """1 回の eval（ディレクトリ）を読み、シナリオごとの数値の一覧にする。"""
     if not path.is_dir():
@@ -97,6 +130,7 @@ def compare(before: Path, after: Path) -> str:
         mark = "" if va == vb else ("✅" if (va - vb) * better > 0 else "⚠")
         cells.append(f"**{_fmt(key, vb)} → {_fmt(key, va)}** {mark}".strip())
     lines.append("| **全体（前後の両方にあるシナリオ）** | | " + " | ".join(cells) + " |")
+    lines += ["", "### チェックごとの合格率", "", *check_table(before, after)]
     lines += [
         "",
         "✅ はよくなった、⚠ は悪くなった数値。前と後は同じ eval のコードで実行すること"
