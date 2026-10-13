@@ -55,13 +55,13 @@ def test_interview_phases_match_the_code() -> None:
     assert "共同で持つ" not in system_prompt()
 
 
-def test_each_phase_has_purpose_questions_and_exit() -> None:
-    """各段階は「目的:」「聞くこと:」「終わる条件:」で書く（確定の段階を除く。#136）。"""
+def test_each_phase_has_purpose_and_questions() -> None:
+    """各段階は「目的:」「聞くこと:」で書く（確定の段階を除く。#136）。"""
     sections = re.split(r"^## \d+\. ", _interview_body(), flags=re.MULTILINE)[1:]
     for section in sections:
         if section.startswith(Phase.FINALIZED.value):
             continue
-        for label in ("目的:", "聞くこと:", "終わる条件:"):
+        for label in ("目的:", "聞くこと:"):
             assert f"\n{label}" in section, (section.split("（")[0], label)
 
 

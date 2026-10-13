@@ -13,7 +13,7 @@ from adp.beam import BeamModel
 class Phase(StrEnum):
     """BEAM インタビューの段階。
 
-    各段階の目的・聞くこと・終わる条件の正本は docs/knowledge/interview.md（見出しと同じ順・
+    各段階の目的・聞くことの正本は docs/knowledge/interview.md（見出しと同じ順・
     同じ名前。表示名は PHASE_LABELS と frontend の PHASES。テストで一致を確かめる）。
     """
 

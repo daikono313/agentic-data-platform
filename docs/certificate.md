@@ -26,7 +26,7 @@
 |---|---|---|
 | T1 | このリポジトリ内で完結する変更（T2・T3 に当たるものを除く） | certificate を得たら Claude が squash merge してよい |
 | T2 | **このディレクトリの外**での操作が必要なもの（グローバル設定、他のリポジトリ、システムへのインストールなど） | 実行前にオーナーに確認する |
-| T3 | **人間が持ち主のドキュメント**の中身の変更: design-doc の Goals・Non-goals・Resolved issues・原則、この certificate、guardrails の制限を緩める・外す変更、ADR を Accepted にする、規約（modeling-conventions）・知識（`docs/knowledge/`。ただし `interview.md` は除く）の変更 | オーナーの承認を得てからマージする（[design-doc の「ファイルの持ち主」](design-doc.md#ファイルの持ち主)）。PR 本文に「T3」と書く。コードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直すこと、guardrails に制限を足すことは T1。`docs/knowledge/interview.md`（人間と AI の共同）は、C10 を満たせば人間も AI も事前の承認なしで直してよい（段階ごとの目的・聞くこと・終わる条件に限る。安全・権限・規約・design-doc の決定と食い違う変更は T3） |
+| T3 | **人間が持ち主のドキュメント**の中身の変更: design-doc の Goals・Non-goals・Resolved issues・原則、この certificate、guardrails の制限を緩める・外す変更、ADR を Accepted にする、規約（modeling-conventions）・知識（`docs/knowledge/`。ただし `interview.md` は除く）の変更 | オーナーの承認を得てからマージする（[design-doc の「ファイルの持ち主」](design-doc.md#ファイルの持ち主)）。PR 本文に「T3」と書く。コードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直すこと、guardrails に制限を足すことは T1。`docs/knowledge/interview.md`（人間と AI の共同）は、C10 を満たせば人間も AI も事前の承認なしで直してよい（段階ごとの目的・聞くことに限る。安全・権限・規約・design-doc の決定と食い違う変更は T3） |
 | — | システム（このディレクトリの外）に対する変更・削除 | **行わない** |
 
 ## 失敗時の扱い
