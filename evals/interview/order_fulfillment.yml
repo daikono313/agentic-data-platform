@@ -1,0 +1,18 @@
+# #135: 状態が進んでいく出来事（evolving → accumulating snapshot）の要求。会話は合成。
+name: order_fulfillment
+request: 注文から出荷・お届けまでに何日かかっているかを、配送方法ごとに月別で見たい
+persona: |
+  あなたは EC 企業の物流の担当です。データの専門家ではありません。
+  知っていること・望んでいること:
+  - 1 つの注文が、注文 → 出荷 → お届け と進む。注文ごとに、注文から出荷までの日数と、出荷からお届けまでの日数を見たい。
+  - 配送方法ごと・注文月ごとに平均の日数を見たい。
+  - まだ出荷・お届けされていない注文もある（聞かれたら「途中の注文も、その時点の状態で見たい」と答える）。
+  - お届けが遅い配送方法を見直す判断に使いたい（目的を聞かれたら答える）。
+  - 優先度は中くらい。
+checks:
+  - finalizable
+  - story_type: evolving
+  - has_w: [when, how]
+  - metric_aggregation: average
+  - min_examples: 2
+  - asks_why_how

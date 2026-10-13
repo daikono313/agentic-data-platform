@@ -21,7 +21,16 @@ from typing import Any
 
 import yaml
 
-from adp.beam import Aggregation, Availability, BeamModel, GapKind, MetricType, W
+from adp.beam import (
+    Additivity,
+    Aggregation,
+    Availability,
+    BeamModel,
+    GapKind,
+    MetricType,
+    StoryType,
+    W,
+)
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
@@ -153,9 +162,52 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         ),
         # この源泉を元にした出来事がある（fact の名前は問わない。ほかの源泉の既存の fact は除く）
         "fact_source": lambda: _fact_source(beam, arg),
+        # 出来事か状態か（discrete / recurring / evolving。#135）
+        "story_type": lambda: (
+            any(e.story_type == StoryType(arg) for e in beam.events),
+            str([e.story_type.value for e in beam.events]),
+        ),
+        # 指標の出来事の粒度のキーに、その W のディメンションがすべてある
+        "grain_keys_w": lambda: (
+            any(
+                e is not None
+                and {d.w.value for k in e.grain_keys if (d := e.dimension(k))} >= set(args)
+                for _, e in _metrics_events(beam)
+            ),
+            str([e.grain_keys for e in beam.events]),
+        ),
+        "measure_additivity": lambda: (
+            any(
+                e is not None
+                and m.measure is not None
+                and (ms := e.measure(m.measure)) is not None
+                and ms.additivity == Additivity(arg)
+                for m, e in _metrics_events(beam)
+            ),
+            str([ms.additivity.value for e in beam.events for ms in e.measures]),
+        ),
+        "has_hierarchy": lambda: (
+            any(d.hierarchy for e in beam.events for d in e.dimensions),
+            str([d.hierarchy for e in beam.events for d in e.dimensions if d.hierarchy]),
+        ),
+        "min_examples": lambda: (
+            any(len(e.examples) >= int(arg) for e in beam.events),
+            str([len(e.examples) for e in beam.events]),
+        ),
+        # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
+        "shared_dimensions": lambda: _shared_dimensions(beam, args),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
+
+
+def _shared_dimensions(beam: BeamModel, ws: list[str]) -> tuple[bool, str]:
+    """その W ごとに、2 つ以上の出来事が同じ名前のディメンションを持つか（共通ディメンション）。"""
+    shared: dict[str, set[str]] = {}
+    for w in ws:
+        per_event = [{d.name for d in e.dimensions if d.w == W(w)} for e in beam.events]
+        shared[w] = {n for names in per_event for n in names if sum(n in x for x in per_event) >= 2}
+    return all(shared.values()), str({w: sorted(n) for w, n in shared.items()})
 
 
 class _NoForeignKeys:
@@ -261,6 +313,10 @@ _IRREGULAR = re.compile(
     r"|取消|取り消し|マイナス|二重に|除きたい(ケース|もの)"
 )
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
+_WHY = re.compile(r"なぜ|理由|目的|きっかけ|何のため|判断|意思決定|使い(道|方)")
+"""Why（指標で何を判断するか・なぜ起きたか）を聞く質問。"""
+_HOW = re.compile(r"どのように|どうやって|方法|手段|経路|チャネル|支払|配送方法")
+"""How（どうやって起きたか）を聞く質問。"""
 
 
 def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
@@ -351,6 +407,8 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         and _QUESTION.search(_shown(m))
         and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
     ]
+    why = _questions_matching(messages, _WHY)
+    how = _questions_matching(messages, _HOW)
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
@@ -358,6 +416,11 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
         CheckResult("no_effort_question", not effort, " / ".join(effort[:3])),
         CheckResult("asks_irregular_cases", bool(irregular), " / ".join(irregular[:2])),
+        CheckResult(
+            "asks_why_how",
+            bool(why and how),
+            f"why: {' / '.join(why[:1]) or 'なし'}、how: {' / '.join(how[:1]) or 'なし'}",
+        ),
     ]
     return {r.name: r for r in results}
 
@@ -370,7 +433,7 @@ TRANSCRIPT_CHECKS = (
     "no_effort_question",
 )
 """どのシナリオでも行う会話のチェック。"""
-OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases",)
+OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases", "asks_why_how")
 """シナリオに書いたときだけ行う会話のチェック。"""
 TRANSCRIPT_LIMITS = {"max_assistant_turns": "assistant_turns", "max_assistant_chars": "max_chars"}
 

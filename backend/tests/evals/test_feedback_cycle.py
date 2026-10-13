@@ -374,3 +374,55 @@ def test_onboarded_ontology_for_scenarios_with_a_new_source(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="make sample-data"):
         asyncio.run(onboarded_ontology(Catalog(db), "raw.no_such_table", tmp_path / "x"))
     assert existing_facts(path.parent.parent / "beam")  # 既存の BEAM も読める
+
+
+def test_modeling_checks() -> None:
+    """出来事か状態か・粒度・加法性・階層・具体例・共通ディメンションのチェック（#135）。"""
+    from adp.beam import Additivity, BeamModel, EventExample, StoryType
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    assert passed({"story_type": "discrete"}) and not passed({"story_type": "recurring"})
+    assert passed("has_hierarchy")
+    assert not passed({"grain_keys_w": ["what", "when"]})  # 粒度は注文明細番号
+    event.grain_keys = ["store", "product", "date"]
+    assert passed({"grain_keys_w": ["what", "where", "when"]})
+    assert not passed({"grain_keys_w": ["what", "who"]})
+    assert passed({"measure_additivity": "additive"})
+    measure = event.measure(beam.metrics[0].measure or "")
+    assert measure is not None
+    measure.additivity = Additivity.SEMI_ADDITIVE
+    assert passed({"measure_additivity": "semi_additive"})
+    event.story_type = StoryType.RECURRING
+    assert passed({"story_type": "recurring"})
+    event.examples = [EventExample(values={}), EventExample(values={})]
+    assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
+
+    # 共通ディメンション: 2 つ目の出来事が同じ名前の What・When を持つときだけ
+    assert not passed({"shared_dimensions": ["what"]})
+    data = beam.model_dump(mode="json")
+    second = data["events"][0] | {"name": "customer_returns_product", "table_name": "returns"}
+    second["dimensions"] = [d for d in second["dimensions"] if d["w"] in ("what", "when")]
+    data["events"].append(second)
+    two = BeamModel.model_validate(data)
+    assert _check(two, {"shared_dimensions": ["what", "when"]}).passed
+    assert not _check(two, {"shared_dimensions": ["what", "where"]}).passed
+
+
+def test_why_how_question_check() -> None:
+    """Why（何の判断に使うか）と How（どうやって起きたか）の両方を聞いたか（#135）。"""
+    from adp.evals.interview import _transcript_check_map
+
+    both = [
+        _msg("この数字を見て、どんな判断に使いますか？"),
+        _msg("", question="注文はどの方法（店舗・アプリなど）で受けますか？"),
+    ]
+    assert _transcript_check_map(both)["asks_why_how"].passed
+    assert not _transcript_check_map(both[:1])["asks_why_how"].passed
+    assert "asks_why_how" not in _checks(both)  # シナリオに書いたときだけ

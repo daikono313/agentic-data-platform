@@ -1,0 +1,20 @@
+# #135: 状態（periodic snapshot）の要求。v5 の看板（#138）の基準を取る。会話は合成。
+name: inventory_balance
+request: 店舗ごと・商品ごとの月末の在庫数を見たい
+persona: |
+  あなたは小売企業の在庫管理の担当です。データの専門家ではありません。
+  知っていること・望んでいること:
+  - 店舗ごと・商品ごと（商品カテゴリでもまとめたい）に、月末時点の在庫数を月別に並べて見たい。
+  - 在庫数は「ある時点で棚にある数」で、月ごとに足し合わせるものではない（聞かれたら答える）。3 か月分を足すと意味がない。
+  - 在庫の記録には、入荷・他店への移動・廃棄（数量の増減）と、棚卸（数え直した在庫数）がある。
+  - 欠品しそうな店舗・商品を見つけて、発注を早めるために使いたい（目的を聞かれたら答える）。
+  - 優先度とインパクトは高い。
+checks:
+  - finalizable
+  - story_type: recurring
+  - measure_additivity: semi_additive
+  - grain_keys_w: [what, where, when]
+  - has_w: [what, where, when]
+  - has_hierarchy
+  - min_examples: 2
+  - asks_why_how
