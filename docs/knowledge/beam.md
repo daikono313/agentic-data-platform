@@ -34,8 +34,6 @@
 
 ## イベントの種類 → ファクトの種類
 
-インタビューでの決め方は [interview.md](interview.md) の event_discovery。
-
 | イベント | 説明 | fct の種類 |
 |---|---|---|
 | discrete | 一瞬で完了する（注文など） | transaction fact |
