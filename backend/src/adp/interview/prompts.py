@@ -78,7 +78,9 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 
 def system_prompt() -> str:
     knowledge = KNOWLEDGE_PATH.read_text(encoding="utf-8") if KNOWLEDGE_PATH.exists() else ""
-    interview = INTERVIEW_PATH.read_text(encoding="utf-8")
+    text = INTERVIEW_PATH.read_text(encoding="utf-8")
+    # 前書き（持ち主のルール・書き方）は入れず、最初の段階から後だけを入れる
+    interview = text[text.index("## 1. ") :]
     return SYSTEM_PROMPT.format(knowledge=knowledge, interview=interview)
 
 

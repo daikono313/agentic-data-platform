@@ -11,22 +11,19 @@ from adp.beam import BeamModel
 
 
 class Phase(StrEnum):
-    """BEAM インタビューの段階。docs/knowledge/interview.md の見出しと同じ順・同じ名前。"""
+    """BEAM インタビューの段階。
+
+    各段階の目的・聞くこと・終わる条件の正本は docs/knowledge/interview.md（見出しと同じ順・
+    同じ名前。表示名は PHASE_LABELS と frontend の PHASES。テストで一致を確かめる）。
+    """
 
     FRAMING = "framing"
-    """要求を「How many」の問いに言い換えて確認する。"""
     EVENT_DISCOVERY = "event_discovery"
-    """指標の元になるビジネスイベント（誰が・何をする）を特定する。"""
     SEVEN_WS = "seven_ws"
-    """7W を順に聞き、具体例を集める。"""
     GRAIN = "grain"
-    """粒度と measure の集計方法・加法性を確定する。"""
     CONFORMANCE = "conformance"
-    """既存ディメンションとの共通化を確認する。"""
     PRIORITIZATION = "prioritization"
-    """優先度とインパクトを聞く（工数はモデラーが見積もる）。"""
     REVIEW = "review"
-    """要約を示して確認する。"""
     FINALIZED = "finalized"
 
 

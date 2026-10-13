@@ -30,9 +30,11 @@
 - **粒度（grain）**: fct の 1 行が何を表すか。
 - **Event Matrix**: 行がイベント、列がディメンションの表。共有されるディメンション（conformed dimension）を見つけ、優先度・インパクト・工数を付ける。
 
-インタビューでの段階・聞き方・注意点は [interview.md](interview.md) にまとめている。
+インタビューの段階と、段階ごとに聞くこと（深掘りの観点）は [interview.md](interview.md)、話し方の注意点はインタビューのプロンプト（`backend/src/adp/interview/prompts.py`）にある。
 
 ## イベントの種類 → ファクトの種類
+
+インタビューでの決め方は [interview.md](interview.md) の event_discovery。
 
 | イベント | 説明 | fct の種類 |
 |---|---|---|

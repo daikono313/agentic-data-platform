@@ -34,25 +34,45 @@ def test_cannot_press_and_unresolvable_issues_apply_at_any_phase() -> None:
     assert "取り込む" in rules
 
 
-def test_interview_phases_match_the_code() -> None:
-    """段階の正本は interview.md の見出し。コードの段階と同じ順・名前・表示名（#136）。"""
+def _interview_body() -> str:
     text = INTERVIEW_PATH.read_text(encoding="utf-8")
-    headings = re.findall(r"^## (\d+)\. (\w+)（(.+)）$", text, re.MULTILINE)
-    assert [(int(n), name, label) for n, name, label in headings] == [
-        (i + 1, p.value, PHASE_LABELS[p]) for i, p in enumerate(Phase)
-    ]
-    assert text in system_prompt()
+    return text[text.index("## 1. ") :]
+
+
+def test_interview_phases_match_the_code() -> None:
+    """段階の正本は interview.md の見出し。コード・画面の段階と同じ順・名前・表示名（#136）。"""
+    from adp.llm.settings import REPO_ROOT
+
+    body = _interview_body()
+    headings = re.findall(r"^## (\d+)\. (\w+)（(.+)）$", body, re.MULTILINE)
+    expected = [(i + 1, p.value, PHASE_LABELS[p]) for i, p in enumerate(Phase)]
+    assert [(int(n), name, label) for n, name, label in headings] == expected
+    frontend = (REPO_ROOT / "frontend" / "src" / "api" / "types.ts").read_text(encoding="utf-8")
+    phases = re.findall(r"\{ id: '(\w+)', label: '([^']+)' \}", frontend)
+    assert phases == [(p.value, PHASE_LABELS[p]) for p in Phase]
+    # 前書き（持ち主のルール）はプロンプトに入れず、段階から後だけを入れる
+    assert body in system_prompt()
+    assert "共同で持つ" not in system_prompt()
+
+
+def test_each_phase_has_purpose_questions_and_exit() -> None:
+    """各段階は「目的:」「聞くこと:」「終わる条件:」で書く（確定の段階を除く。#136）。"""
+    sections = re.split(r"^## \d+\. ", _interview_body(), flags=re.MULTILINE)[1:]
+    for section in sections:
+        if section.startswith(Phase.FINALIZED.value):
+            continue
+        for label in ("目的:", "聞くこと:", "終わる条件:"):
+            assert f"\n{label}" in section, (section.split("（")[0], label)
 
 
 def test_interview_mentions_only_existing_tools() -> None:
-    """interview.md の文中の tool の名前は、インタビューの tool に実在する（#136）。"""
+    """interview.md のバッククォートの snake_case は、実在する tool の名前（#136）。"""
     from adp.catalog.tools import allowed_tool_names
     from adp.interview.tools import build_tools
 
     names = {t.name for t in build_tools(new_state("x"))}
     names |= {n.rsplit("__", 1)[-1] for n in allowed_tool_names()}
-    text = INTERVIEW_PATH.read_text(encoding="utf-8")
-    mentioned = set(re.findall(r"`([a-z]+_[a-z_]+)`", text))
+    mentioned = set(re.findall(r"`([a-z]+_[a-z_]+)`", _interview_body()))
     assert mentioned and mentioned <= names, mentioned - names
 
 
@@ -60,4 +80,9 @@ def test_prompt_has_no_phase_policy_of_its_own() -> None:
     """プロンプト本体は段階の方針を持たない（interview.md の 1 か所だけ。#136）。"""
     from adp.interview.prompts import SYSTEM_PROMPT
 
-    assert not re.search(r"^\d\. (framing|seven_ws|grain|review)", SYSTEM_PROMPT, re.MULTILINE)
+    for phase in Phase:
+        if phase == Phase.FINALIZED:
+            continue
+        assert not re.search(
+            rf"^\W*(\d+\.\s*)?{phase.value}\s*[:：（(]", SYSTEM_PROMPT, re.MULTILINE
+        ), phase
