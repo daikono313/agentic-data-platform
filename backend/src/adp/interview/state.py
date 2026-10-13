@@ -11,7 +11,7 @@ from adp.beam import BeamModel
 
 
 class Phase(StrEnum):
-    """BEAM インタビューの段階。docs/knowledge/beam.md の進め方に対応する。"""
+    """BEAM インタビューの段階。docs/knowledge/interview.md の見出しと同じ順・同じ名前。"""
 
     FRAMING = "framing"
     """要求を「How many」の問いに言い換えて確認する。"""

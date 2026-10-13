@@ -24,6 +24,7 @@
 - [docs/certificate.md](certificate.md) — 完了条件（certificate）と自己マージ可否（promotion policy）
 - [docs/modeling-conventions.md](modeling-conventions.md) — dbt モデリング規約（BEAM との対応、キー、テスト）
 - [docs/knowledge/beam.md](knowledge/beam.md) — BEAM✲ の手法リファレンス（インタビューエージェントの知識源）
+- [docs/knowledge/interview.md](knowledge/interview.md) — インタビューの段階と深掘りの観点（インタビューエージェントの進め方の正本。人間と AI の共同）
 - [docs/adr/](adr/) — この設計書の確定後に生じた設計変更の記録
 - [docs/guardrails.md](guardrails.md) — 生成コードとエージェントの安全な実行のための制限の一覧
 - [docs/feedback-loop.md](feedback-loop.md) — フィードバックからプロンプトを直す一周の手順
@@ -162,7 +163,8 @@ flowchart TB
 
 | 種類 | 持ち主 | ファイル | 直し方 |
 |---|---|---|---|
-| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。それ以外の変更（方針・規約・知識の中身）は人間の承認が要る（[certificate](certificate.md) の T3） |
+| 方針・規約・知識（ドキュメント） | **人間** | `docs/design-doc.md`・`docs/certificate.md`・`docs/guardrails.md`・`docs/adr/`・`docs/modeling-conventions.md`・`docs/knowledge/`（`interview.md` を除く）・`docs/feedback-loop.md`・`README.md`・各 `CLAUDE.md`・`*/README.md` | 人間が書く。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよい。それ以外の変更（方針・規約・知識の中身）は人間の承認が要る（[certificate](certificate.md) の T3） |
+| インタビューの進め方（段階と深掘りの観点） | **人間と AI の共同** | `docs/knowledge/interview.md` | 人間も AI も中身を直してよい。どちらも直す PR に eval の前後比較（[certificate](certificate.md) の C10）を貼り、合格率が下がらないこと。事前の承認（T3）は要らない |
 | 要求の定義 | AI が案 → **人間**が確定 | `beam/*.yml` | インタビューで直す（画面のチャット）。確定は人間が押す |
 | オントロジー | AI（使えなければプロファイルの規則）が案 → **人間**が確定。生成ジョブが作った fct / dim を書き足す | `ontology/ontology.yml` | 取り込み画面で直す。手で直してもよい（`make ontology` で検査） |
 | クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
