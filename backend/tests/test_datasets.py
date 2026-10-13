@@ -406,3 +406,23 @@ def test_beams_skip_broken_files_and_report_them(tmp_path: Path) -> None:
     beams = DatasetIndex(tmp_path, None).beams(errors)
     assert [(b.name, b.metrics) for b in beams] == [("a", ["m"])]
     assert errors == [f"{n}.yml を読めませんでした" for n in "bcd"]
+
+
+def test_sources_without_descriptions_use_ontology_labels(repo: Path) -> None:
+    """説明の無い源泉・列は、オントロジーの日本語のラベルで埋める（画面に英語を出さない。#148）。"""
+    import shutil
+
+    from tests.generation.test_dbt_codegen import ROOT
+
+    (repo / "ontology").mkdir(exist_ok=True)
+    shutil.copy(ROOT / "ontology" / "ontology.yml", repo / "ontology" / "ontology.yml")
+    try:
+        catalog = Catalog(repo / "warehouse/data/dev.duckdb")
+        sources = {s.name: s for s in DatasetIndex(repo, catalog).all().sources}
+        inventory = sources["raw.inventory"]
+        assert inventory.description == "在庫の入出庫"
+        columns = {c.name: c.description for c in inventory.columns}
+        assert columns["movement_type"] == "入出庫区分" and columns["quantity"] == "数量"
+        assert not inventory.unmapped
+    finally:
+        shutil.rmtree(repo / "ontology")

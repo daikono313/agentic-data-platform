@@ -303,32 +303,43 @@ class DatasetIndex:
             )
         return sorted(result, key=lambda m: (m.kind != "fct", m.name))
 
-    def _mapped_sources(self) -> set[str] | None:
-        """オントロジーの概念になっている源泉。オントロジーが無い・読めなければ None。"""
+    def _concepts(self) -> dict[str, Any] | None:
+        """源泉 → オントロジーの概念。オントロジーが無い・読めなければ None。"""
         from adp.ontology import load
 
         try:
-            return {c.source for c in load(self.repo_root / "ontology" / "ontology.yml").concepts}
+            ontology = load(self.repo_root / "ontology" / "ontology.yml")
+            return {c.source: c for c in ontology.concepts}
         except (OSError, ValueError):
             return None
 
     def sources(self, errors: list[str]) -> list[SourceInfo]:
         if self.catalog is None:
             return []
-        mapped = self._mapped_sources()
+        concepts = self._concepts()
         manifest = self._manifest()
+
+        def labels(table: str) -> tuple[str, dict[str, str]]:
+            """説明の無い源泉・列に使う、オントロジーの日本語のラベル（#148）。"""
+            c = (concepts or {}).get(table)
+            return (c.label, {a.column: a.label for a in c.attributes}) if c else ("", {})
+
         try:
             tables = self.catalog.list_sources()
             return [
                 SourceInfo(
                     name=t.qualified,
-                    description=t.description,
+                    description=t.description or labels(t.qualified)[0],
                     row_count=t.row_count,
                     columns=[
-                        ColumnInfo(name=c.name, description=c.description, data_type=c.data_type)
+                        ColumnInfo(
+                            name=c.name,
+                            description=c.description or labels(t.qualified)[1].get(c.name, ""),
+                            data_type=c.data_type,
+                        )
                         for c in self.catalog.columns(t.qualified)
                     ],
-                    unmapped=mapped is not None and t.qualified not in mapped,
+                    unmapped=concepts is not None and t.qualified not in concepts,
                     used_by=None
                     if manifest is None
                     else self._used_by(t.schema_name, t.name, manifest),

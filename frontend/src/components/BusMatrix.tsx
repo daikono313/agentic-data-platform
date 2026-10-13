@@ -7,6 +7,10 @@ import { cn } from '@/lib/utils'
 /**
  * 検索語で絞り込む。fact か列のまとまり（dim の名前・属性）が一致したら、それと結合できる相手も残す。
  */
+/** 縮退ディメンションの見出しの説明（#148） */
+const DEGENERATE_NOTE =
+  'dim テーブルを持たず、fact の列にそのまま置いた切り口（区分・番号・日時）。日付で切るときは日付（dim_date）を使う'
+
 export function filterBus(bus: BusMatrix, query: string, models: ModelInfo[]): BusMatrix {
   if (!query.trim()) return bus
   const description = new Map(models.map((m) => [m.name, m.description]))
@@ -59,7 +63,7 @@ export function BusMatrixView({
   // 列のまとまりごとに背景を交互に変える
   const shade = (i: number) => (i % 2 === 0 ? 'bg-muted' : 'bg-background')
   const groupTitle = (g: BusGroup) =>
-    g.kind === 'dim' ? g.label : `fact 内の属性（${g.label}）`
+    g.kind === 'dim' ? g.label : `縮退ディメンション（${g.label}）`
   const columns = (g: BusGroup) => (compact ? [{ name: g.name, label: groupTitle(g) }] : g.attributes)
   return (
     <div className="overflow-x-auto">
@@ -89,10 +93,14 @@ export function BusMatrixView({
                     key={g.name}
                     colSpan={g.attributes.length}
                     scope="colgroup"
-                    title={`${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}${g.sources?.length ? `（元の源泉: ${g.sources.join(', ')}）` : ''}`}
+                    title={
+                      g.kind === 'dim'
+                        ? `${g.name}${description.get(g.name) ? `: ${description.get(g.name)}` : ''}${g.sources?.length ? `（元の源泉: ${g.sources.join(', ')}）` : ''}`
+                        : `${g.name}: ${DEGENERATE_NOTE}`
+                    }
                     className={cn('border px-1 py-1 text-center font-semibold break-all', shade(i))}
                   >
-                    {g.kind === 'dim' ? g.label : 'fact 内の属性'}
+                    {g.kind === 'dim' ? g.label : '縮退ディメンション'}
                     {g.candidate && <span className="ml-1 text-[10px] font-normal text-primary">（候補）</span>}
                     <span className="block font-mono text-[10px] font-normal text-muted-foreground">{g.name}</span>
                   </th>

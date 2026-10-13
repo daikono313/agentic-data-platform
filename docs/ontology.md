@@ -38,7 +38,7 @@ flowchart LR
   end
   subgraph d_inventory["在庫"]
     c_inventory_movement(["在庫の入出庫"])
-    a_inventory_movement["入出庫日時<br/>入出庫の種類<br/>数量"]:::attr
+    a_inventory_movement["入出庫日時<br/>入出庫区分<br/>数量"]:::attr
   end
   c_customer -.- a_customer
   c_product -.- a_product
@@ -91,7 +91,7 @@ flowchart LR
 | 支払 `payment` | 出来事 | 決済・配送・返品 | `raw.payments`（`payment_id`） | 未整備 | 支払方法（`payment_method`）、支払金額（`amount`）、支払日時（`paid_at`） |
 | 配送 `shipment` | 出来事 | 決済・配送・返品 | `raw.shipments`（`shipment_id`） | 未整備 | 配送方法（`shipping_method`）、出荷日時（`shipped_at`）、配達日時（`delivered_at`） |
 | 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | 未整備 | 返品日時（`returned_at`）、返品数量（`quantity`）、返品理由（`return_reason`） |
-| 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`）、入出庫の種類（`movement_type`）、数量（`quantity`） |
+| 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`）、入出庫区分（`movement_type`）、数量（`quantity`） |
 
 ## 関係
 
