@@ -118,6 +118,10 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 
 - simple はその fct の model YAML 内に書く（`agg` / `expr` / `filter`）。ratio / derived / cumulative は、その fct の YAML ファイルのトップレベル `metrics:` に書く。
 - cumulative は `window`（例: `7 days`）か `grain_to_date` を使い、必ず `period_agg: last` を付ける。
+- 足し上げてよいか（BEAM の measure の `additivity`）を指標に反映する。
+  - `semi_additive`（残高・在庫数のような時点の値）は、定期的な状態の記録（story_type: recurring → periodic snapshot）のイベントにだけ置く。足せない When は指標の時間軸（agg_time）と同じにする。
+  - simple に `non_additive_dimension: {name: <agg_time の日付列>, window_agg: max, group_by: [<粒度の entity>]}` を付け、区間（日・月など）ごとに、entity ごとの最新の時点の値を集計する。累計（cumulative）にはしない。
+  - `non_additive`（単価・率など）: `sum` で集計しない（`average` などにする。BEAM の確定時に検査する）。
 - 業務上の除外条件（キャンセルを除くなど）は `filter` に書き、description にも日本語で書く。ratio の分子と分母で条件をそろえる。
 - BEAM の `MetricRequest.filters`（ref・演算子・値）を `{{ Dimension('<参照名>') }} <演算子> <値>` に変換する（すべて AND）。ratio / derived の filter は、その指標自体に付ける。
 - 累計（cumulative）の元になる simple metric は `<name>_input` という名前で自動で作る（この名前は予約）。

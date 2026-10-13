@@ -311,6 +311,69 @@ def test_generated_revenue_matches_reference_metric(tmp_path: Path) -> None:
     assert expected is not None and total == float(expected[0])
 
 
+def test_semi_additive_metric_sums_only_the_latest_date(tmp_path: Path) -> None:
+    """semi_additive の指標は、MetricFlow で区間ごとに最新の日付の値だけを足す（#134）。
+
+    定期スナップショットの fct は #138 まで生成できないため、注文の fct で集計の仕組みを確かめる。
+    """
+    from adp.beam import Additivity, MetricRequest
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+    quantity = event.measure("quantity")
+    assert quantity is not None
+    quantity.additivity = Additivity.SEMI_ADDITIVE
+    quantity.non_additive_dimension = "date"
+    beam.metrics.append(
+        MetricRequest(
+            name="latest_quantity",
+            label="最新日の数量",
+            question="q",
+            framed_question="q",
+            event=event.name,
+            measure="quantity",
+        )
+    )
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+
+    def query(*group_by: str) -> list[tuple[str, ...]]:
+        csv = tmp_path / "q.csv"
+        args = ["query", "--metrics", "latest_quantity", "--csv", str(csv)]
+        if group_by:
+            args += ["--group-by", ",".join(group_by), "--order", ",".join(group_by)]
+        out = subprocess.run(
+            [str(DBT.parent / "mf"), *args],
+            cwd=warehouse,
+            capture_output=True,
+            text=True,
+            env=os.environ | {"DBT_PROFILES_DIR": str(warehouse)},
+            check=False,
+        )
+        assert out.returncode == 0, out.stdout[-2000:]
+        return [tuple(line.split(",")) for line in csv.read_text().splitlines()[1:]]
+
+    total, monthly = query(), query("metric_time__month")
+    fact = design.facts[0]
+    t, d = fact.name, fact.agg_time_column
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    latest = con.sql(
+        f"select sum(quantity) from main.{t} where {d} = (select max({d}) from main.{t})"
+    ).fetchone()
+    assert latest is not None and float(total[0][0]) == float(latest[0])
+    by_month = con.sql(
+        f"select sum(quantity) from main.{t} where {d} in"
+        f" (select max({d}) from main.{t} group by date_trunc('month', {d}))"
+        f" group by date_trunc('month', {d}) order by date_trunc('month', {d})"
+    ).fetchall()
+    assert len(by_month) > 1, "月が 1 つだけだと区間ごとの最新を確かめられない"
+    assert [float(r[-1]) for r in monthly] == [float(r[0]) for r in by_month]
+
+
 def test_generated_tests_catch_broken_sql(tmp_path: Path) -> None:
     """生成 SQL の計算や結合を壊すと、生成したテストが失敗する（変異テスト）。"""
     warehouse = _warehouse_copy(tmp_path)
