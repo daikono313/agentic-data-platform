@@ -43,6 +43,19 @@ export function ChatPanel({ messages, draft, question, choices, busy, disabled, 
           const showQuestion = m.role === 'assistant' && m.question && !activeQuestion
           // 本文も質問も無い発言（tool だけを呼んだ応答）は出さない。添字は backend とそろえたまま
           if (!m.text && !m.question) return null
+          // 本文が無く、質問がボタンの上に出ている発言（#158）は、吹き出しを出さずに評価だけを出す
+          if (!m.text && !showQuestion) {
+            return feedback && m.role === 'assistant' ? (
+              <div key={i} className="flex justify-start px-1">
+                <MessageFeedback
+                  index={i}
+                  current={findFeedback(feedback.items, 'message', i)}
+                  categories={feedback.categories}
+                  send={feedback.send}
+                />
+              </div>
+            ) : null
+          }
           return (
             <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div

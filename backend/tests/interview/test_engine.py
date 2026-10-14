@@ -231,3 +231,24 @@ async def test_position_sentences_are_removed_and_recorded() -> None:
 
     checks = {r.name: r.passed for r in _transcript_checks(state.messages)}
     assert not checks["no_choice_position_words"]  # モデルの振る舞いとしては数える
+
+
+async def test_closing_sentences_are_removed_when_a_question_is_shown() -> None:
+    """質問を出した発言の締めの一言は取り除く。本文が空になってもよい（#158）。"""
+    runner = ScriptedRunner(
+        [
+            [
+                ("present_choices", {"question": "優先度はどのくらいですか？", "options": ["a"]}),
+                "優先度について、ご回答をお待ちしています。",
+            ],
+            ["ご回答をお待ちしています。"],
+        ]
+    )
+    state = new_state("売上")
+    await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    message = state.messages[-1]
+    assert message.text == ""
+    assert message.removed == ["優先度について、ご回答をお待ちしています。"]
+    # 質問が無い発言では残す
+    await collect(Interviewer(runner, LLMSettings()), state, "高い")
+    assert state.messages[-1].text == "ご回答をお待ちしています。"

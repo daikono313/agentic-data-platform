@@ -3,7 +3,7 @@
     uv run python -m adp.evals compare .adp/evals/<前> .adp/evals/<後>
 
 シナリオごとに、合格率と会話の質の数値（ターン数・質問の数・発言の長さ・説明なしの専門用語・
-重複した質問・選択肢の位置を指す言葉）を平均して比べる。LLM の応答はぶれるので、
+重複した質問・選択肢の位置を指す言葉・締めの一言）を平均して比べる。LLM の応答はぶれるので、
 `make eval REPEAT=3` のように繰り返した結果を比べる。
 """
 
@@ -26,6 +26,7 @@ METRICS: list[tuple[str, str, int]] = [
     ("unexplained_jargon", "説明なしの専門用語", -1),
     ("repeated_questions", "重複した質問", -1),
     ("position_words", "選択肢の位置を指す言葉", -1),
+    ("closing_phrases", "締めの一言", -1),
     ("effort_questions", "工数を聞いた質問", -1),
 ]
 

@@ -44,7 +44,7 @@ from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import design_issues, load_ontology
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
-from adp.interview.wording import is_position_sentence
+from adp.interview.wording import is_closing_sentence, is_position_sentence
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 from adp.warehouse import warehouse_db
@@ -350,10 +350,19 @@ def _fact_source(beam: BeamModel, table: str) -> tuple[bool, str]:
     return passed, str(bases)
 
 
+def _sentences(m: Any) -> list[str]:
+    """発言の文と、本文から取り除いた文（モデルの振る舞いとして数える）。"""
+    return re.split(r"(?<=[。！？!?\n])", m.text) + list(getattr(m, "removed", None) or [])
+
+
 def _position_words(m: Any) -> bool:
-    """画面の位置を指す言い方があったか（本文から取り除いた文も、モデルの振る舞いとして数える）。"""
-    sentences = re.split(r"(?<=[。！？!?\n])", m.text)
-    return bool(getattr(m, "removed", None)) or any(is_position_sentence(x) for x in sentences)
+    """画面の位置を指す言い方があったか。"""
+    return any(is_position_sentence(x) for x in _sentences(m))
+
+
+def _closing_phrase(m: Any) -> bool:
+    """質問を出した発言に、回答を促すだけの締めの一言があったか（#158）。"""
+    return bool(getattr(m, "question", None)) and any(is_closing_sentence(x) for x in _sentences(m))
 
 
 _PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()]")
@@ -494,6 +503,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "unexplained_jargon": len(_unexplained_jargon(messages)),
         "repeated_questions": len(_repeated_questions(messages)),
         "position_words": sum(1 for m in assistant if _position_words(m)),
+        "closing_phrases": sum(1 for m in assistant if _closing_phrase(m)),
         "effort_questions": len(_questions_matching(messages, _EFFORT)),
     }
 
@@ -501,7 +511,9 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
 def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
     position = [
-        " / ".join(getattr(m, "removed", None) or [m.text])[:60]
+        " / ".join(
+            [x for x in getattr(m, "removed", None) or [] if is_position_sentence(x)] or [m.text]
+        )[:60]
         for m in assistant
         if _position_words(m)
     ]

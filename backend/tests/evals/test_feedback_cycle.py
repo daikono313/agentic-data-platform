@@ -287,6 +287,16 @@ def test_position_words() -> None:
         assert _checks([_msg(text)])["no_choice_position_words"], text
 
 
+def test_closing_phrases_are_counted() -> None:
+    """質問を出した発言の締めの一言を、取り除いた文も含めて数える（#158）。"""
+    removed = ChatMessage(
+        role="assistant", text="", question="Q？", removed=["回答をお待ちしています。"]
+    )
+    shown = _msg("店舗は 20 か所です。回答をお待ちしています。", "Q？")
+    no_question = _msg("回答をお待ちしています。")
+    assert transcript_metrics([removed, shown, no_question])["closing_phrases"] == 2
+
+
 def test_effort_and_irregular_case_questions() -> None:
     """工数を聞く質問は数え、イレギュラーなケースを聞いたかを確かめる（#76 のフィードバック）。"""
     from adp.evals.interview import _transcript_check_map, transcript_metrics
