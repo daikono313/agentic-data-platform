@@ -450,17 +450,20 @@ _PURPOSE = re.compile(
 def _examples_not_shown(messages: list[Any]) -> list[str]:
     """具体例を記録してよいかを、値（日付・数量など）を示さずに確かめた発言（#163）。
     tool の結果はユーザーに見えないので、確かめてもらう行の値は発言に書く。
-    直前のアシスタントの発言で値を示していれば、その確認とみなす。"""
-    assistant = [m for m in messages if m.role == "assistant"]
+    直前のアシスタントの発言か、その後のユーザーの発言に値があれば、その確認とみなす
+    （present_choices のエラーと同じ範囲）。"""
     found = []
-    for i, m in enumerate(assistant):
-        if not is_example_confirmation(m.question or "") and not (
-            not m.question and is_example_confirmation(m.text)
-        ):
+    seen = ""  # 直前のアシスタントの発言から、この発言までにユーザーに見えた文
+    for m in messages:
+        if m.role != "assistant":
+            seen += "\n" + _shown(m)
             continue
-        shown = _shown(m) + ("\n" + _shown(assistant[i - 1]) if i else "")
-        if not has_example_values(shown):
+        confirms = is_example_confirmation(m.question or "") or (
+            not m.question and is_example_confirmation(m.text)
+        )
+        if confirms and not has_example_values(seen + "\n" + _shown(m)):
             found.append(_shown(m).strip()[:60])
+        seen = _shown(m)
     return found
 
 

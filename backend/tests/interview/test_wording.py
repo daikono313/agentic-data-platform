@@ -2,7 +2,7 @@
 
 import pytest
 
-from adp.interview.wording import clean_reply
+from adp.interview.wording import clean_reply, has_example_values, is_example_confirmation
 
 
 @pytest.mark.parametrize(
@@ -119,3 +119,36 @@ def test_strips_closing_sentences_with_question(text: str, kept: str, removed: l
 )
 def test_keeps_sentences_that_are_not_just_closing(text: str) -> None:
     assert clean_reply(text, question=True) == (text, [])
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("この 2 件を具体例として記録してよいですか？", True),
+        ("この2件を具体例にしてよいですか？", True),
+        ("この 2 件を例として残してよいですか？", True),
+        ("この2件の例で合っていますか？", True),
+        # 具体例の確認ではない（#166 のレビュー）
+        ("キャンセルは例外として除外でよいですか？", False),
+        ("例えば月単位の集計でよいですか？", False),
+        ("事例として使ってよいですか？", False),
+    ],
+)
+def test_is_example_confirmation(text: str, expected: bool) -> None:
+    assert is_example_confirmation(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2024-11-24 に福岡店で", True),
+        ("11 月 24 日の注文", True),
+        ("07:45 に入荷", True),
+        ("返品率 12.5%", True),
+        ("3 個、17,100 円", True),
+        ("注文ID 12", True),
+        ("この 2 件", False),  # 件数は値ではない
+    ],
+)
+def test_has_example_values(text: str, expected: bool) -> None:
+    assert has_example_values(text) is expected

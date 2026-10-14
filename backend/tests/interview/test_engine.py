@@ -174,6 +174,8 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
                 ("present_choices", confirm),
             ],
             [("present_choices", confirm)],
+            [("present_choices", {"question": "質問?", "options": ["a", "b"]})],
+            [("present_choices", confirm)],
         ]
     )
     interviewer = Interviewer(runner, LLMSettings())
@@ -182,6 +184,7 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
     assert runner.tool_results[0].get("is_error") is True
     done = first[-1]
     assert isinstance(done, TurnDone) and done.message.question is None
+    assert not any(isinstance(e, ChoicesPresented) for e in first)
     # 本文で値を示していれば出せる
     second = await collect(interviewer, state, "はい")
     assert "is_error" not in runner.tool_results[1]
@@ -190,6 +193,10 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
     # 直前の発言で値を示していても出せる
     await collect(interviewer, state, "もう一度")
     assert "is_error" not in runner.tool_results[2]
+    # ユーザーが自分で書いた例を確かめるときも出せる
+    await collect(interviewer, state, "ほか")
+    await collect(interviewer, state, "例: 2024-05-01 に 3 個入荷")
+    assert "is_error" not in runner.tool_results[4]
 
 
 def test_transcript_checks_detect_position_words_and_repeats() -> None:

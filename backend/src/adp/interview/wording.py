@@ -62,14 +62,16 @@ _ASKING_MAX = 50
 _DATA = re.compile(r"[0-9０-９]|\*\*|\|")
 _SENTENCE = re.compile(r"[^。！？!?]*(?:[。！？!?]|$)")
 _SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
+_EXAMPLE = r"(?<!事)例(?!外|え)[^。？?]{0,20}"
 _EXAMPLE_CONFIRM = re.compile(
-    r"例[^。？?]{0,20}(記録して|使って|で)(よい|良い|いい|よろしい)|例[^。？?]{0,20}合って"
+    _EXAMPLE + r"((記録して|使って|残して|にして|で)(よい|良い|いい|よろしい)|合って)"
 )
+"""具体例を記録してよいかの確認。「例外」「例えば」「事例」は除く。"""
 _EXAMPLE_VALUE = re.compile(
-    r"\d{4}\s*[-/年]\s*\d{1,2}|\d+\s*月\s*\d+\s*日|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)"
-    r"|ID\s*[:：]?\s*\d"
+    r"\d{4}\s*[-/年]\s*\d{1,2}|\d+\s*月\s*\d+\s*日|\d{1,2}:\d{2}|\d[\d,.]*\s*%"
+    r"|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)|ID\s*[:：]?\s*\d"
 )
-"""具体例の値（日付・数量・金額・ID）。「2 件」のような件数は値に数えない。"""
+"""具体例の値（日時・数量・金額・比率・ID）。「2 件」のような件数は値に数えない。"""
 
 
 def is_position_sentence(sentence: str) -> bool:
@@ -99,7 +101,7 @@ def is_example_confirmation(text: str) -> bool:
 
 
 def has_example_values(text: str) -> bool:
-    """具体例の値（日付・数量・金額・ID）が書かれているか。"""
+    """具体例の値（日時・数量・金額・比率・ID）が書かれているか。"""
     return bool(_EXAMPLE_VALUE.search(text))
 
 

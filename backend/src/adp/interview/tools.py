@@ -50,8 +50,9 @@ def build_tools(
     shown: Callable[[], str] | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """issues: 確定までに残っている課題（既定は BEAM の条件だけ。設計の課題も含められる）。
-    shown: ユーザーに見えている直近の文（直前の発言と、今の発言の本文）。具体例の確認で、
-    値が見えているかを確かめるのに使う（#163）。"""
+    shown: ユーザーに見えている直近の文（直前のアシスタントの発言・ユーザーの発言・今の発言の
+    本文）。具体例の確認で、値が見えているかを確かめるのに使う（#163。eval の examples_shown と
+    同じ範囲）。"""
 
     def apply(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
         data = state.beam.model_dump(mode="json")
@@ -182,7 +183,7 @@ def build_tools(
         ):
             return tool_text(
                 "具体例の値がユーザーに見えていません。tool の結果はユーザーには見えないため、"
-                "確かめてもらう行の値（日時・場所・商品・数量など）を question に書いて、"
+                "確かめてもらう行の値（日時・場所・商品・数量など）を本文に書いてから、"
                 "もう一度 present_choices を呼んでください。",
                 error=True,
             )
