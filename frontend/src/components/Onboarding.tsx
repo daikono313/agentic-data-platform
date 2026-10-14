@@ -1,5 +1,5 @@
 import { ArrowLeft, Bot, Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { api, errorText, trackJob } from '@/api/client'
 import {
@@ -32,8 +32,11 @@ export function OnboardingScreen({ table }: { table: string }) {
   const [cleansing, setCleansing] = useState('')
   /** フォームで直す定義。既存の定義が読めなければ null で、YAML（cleansing）を直す */
   const [spec, setSpec] = useState<CleansingSpec | null>(null)
-  /** 利用者が直したクレンジングの定義は、案を作り直しても上書きしない */
-  const [cleansingEdited, setCleansingEdited] = useState(false)
+  /**
+   * 利用者が直したクレンジングの定義は、案を作り直しても上書きしない。ref にして load の依存から外す
+   * （state だと、直した時点で load が作り直され、下書きを読み直して直した表示名を消してしまう）
+   */
+  const cleansingEdited = useRef(false)
   const [redo, setRedo] = useState(false)
   const [loading, setLoading] = useState<'profile' | 'agent' | null>('profile')
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +51,7 @@ export function OnboardingScreen({ table }: { table: string }) {
         const d = await api.onboardingDraft(table, agent)
         setDraft(d)
         setPatch(d.patch)
-        if (!cleansingEdited) {
+        if (!cleansingEdited.current) {
           setCleansing(d.cleansing)
           setSpec(d.cleansing_spec ?? null)
         }
@@ -58,7 +61,7 @@ export function OnboardingScreen({ table }: { table: string }) {
         setLoading(null)
       }
     },
-    [table, cleansingEdited],
+    [table],
   )
 
   const follow = useCallback((initial: JobView) => trackJob(initial, setJob), [])
@@ -84,7 +87,7 @@ export function OnboardingScreen({ table }: { table: string }) {
     setSubmitting(true)
     setError(null)
     try {
-      await follow(await api.startOnboarding(table, patch, spec ?? cleansing, redo))
+      await follow(await api.startOnboarding(table, withFallbackLabels(patch), spec ?? cleansing, redo))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -155,12 +158,18 @@ export function OnboardingScreen({ table }: { table: string }) {
               cleansing={cleansing}
               onCleansing={(s) => {
                 setCleansing(s)
-                setCleansingEdited(true)
+                cleansingEdited.current = true
               }}
               spec={spec}
               onSpec={(s) => {
                 setSpec(s)
-                setCleansingEdited(true)
+                cleansingEdited.current = true
+              }}
+              onYaml={() => {
+                // フォームで直した内容は捨て、案の YAML から直す
+                setSpec(null)
+                setCleansing(draft.cleansing)
+                cleansingEdited.current = true
               }}
               onAgent={() => load(true)}
               busy={loading !== null}
@@ -188,6 +197,7 @@ function DraftBody({
   onCleansing,
   spec,
   onSpec,
+  onYaml,
   onAgent,
   busy,
 }: {
@@ -198,6 +208,7 @@ function DraftBody({
   onCleansing: (s: string) => void
   spec: CleansingSpec | null
   onSpec: (s: CleansingSpec) => void
+  onYaml: () => void
   onAgent: () => void
   busy: boolean
 }) {
@@ -206,7 +217,13 @@ function DraftBody({
   const profiles = new Map((draft.columns ?? []).map((p) => [p.column, p]))
   /** 源泉の列 → 属性の表示名（クレンジングのフォームで、列を日本語で示す） */
   const columnLabels = new Map(
-    patch.concepts.flatMap((c) => c.attributes.filter((a) => a.label).map((a) => [a.column, a.label] as const)),
+    patch.concepts.flatMap((c) =>
+      c.attributes.filter((a) => japanese(a.label)).map((a) => [a.column, a.label] as const),
+    ),
+  )
+  const untranslated = patch.concepts.reduce(
+    (n, c) => n + [c.label, ...c.attributes.map((a) => a.label)].filter((l) => !japanese(l)).length,
+    0,
   )
   const conceptLabel = (name: string) =>
     patch.concepts.find((c) => c.name === name)?.label || draft.concept_labels?.[name] || name
@@ -234,7 +251,8 @@ function DraftBody({
                   <Input
                     aria-label="概念の名前（表示名）"
                     className="h-8 w-56 text-sm"
-                    value={c.label}
+                    placeholder={UNTRANSLATED}
+                    value={japanese(c.label)}
                     onChange={(e) => update(i, { label: e.target.value })}
                   />
                   <Code title="内部の名前">{c.name}</Code>
@@ -253,7 +271,9 @@ function DraftBody({
                 </dd>
                 <dt className="font-semibold">1 件を見分けるキー</dt>
                 <dd data-testid={`concept-key-${c.name}`}>
-                  {c.attributes.find((a) => a.column === c.key)?.label || columnLabels.get(c.key)}{' '}
+                  {japanese(c.attributes.find((a) => a.column === c.key)?.label ?? columnLabels.get(c.key) ?? '') || (
+                    <span className="text-muted-foreground">（表示名なし）</span>
+                  )}{' '}
                   <Code title="列の名前">{c.key}</Code>
                 </dd>
               </dl>
@@ -270,7 +290,8 @@ function DraftBody({
                         <Input
                           aria-label={`属性 ${a.column} の表示名`}
                           className="h-7 text-xs"
-                          value={a.label}
+                          placeholder={UNTRANSLATED}
+                          value={japanese(a.label)}
                           onChange={(e) =>
                             update(i, {
                               attributes: c.attributes.map((x, j) => (j === k ? { ...x, label: e.target.value } : x)),
@@ -279,13 +300,18 @@ function DraftBody({
                         />
                         <Code title="列の名前">{a.column}</Code>
                       </div>
-                      <ValueHint profile={profiles.get(a.column)} />
+                      <ValueHint profile={profiles.get(a.column)} kind={draft.column_kinds?.[a.column]} />
                     </li>
                   ))}
                 </ul>
               </div>
             </div>
           ))}
+          {untranslated > 0 && (
+            <p className="text-xs text-amber-600" data-testid="untranslated">
+              日本語の表示名が未入力の項目が {untranslated} 件あります。未入力のまま確定すると、英語の名前で登録します。
+            </p>
+          )}
           {patch.relations.length > 0 && (
             <div className="space-y-1">
               <p className="text-xs font-semibold">既存の概念との関係</p>
@@ -334,10 +360,24 @@ function DraftBody({
         </CardHeader>
         <CardContent className="px-4">
           {spec ? (
-            <CleansingForm spec={spec} onSpec={onSpec} profiles={profiles} labels={columnLabels} />
+            <div className="space-y-3">
+              <CleansingForm
+                spec={spec}
+                onSpec={onSpec}
+                profiles={profiles}
+                kinds={draft.column_kinds ?? {}}
+                dateNames={draft.date_derives ?? {}}
+                labels={columnLabels}
+              />
+              <Button variant="ghost" size="sm" className="text-xs" onClick={onYaml}>
+                ほかの設定（名前の変更・除外する行など）を YAML で直す（フォームで直した内容は捨てます）
+              </Button>
+            </div>
           ) : (
             <div className="space-y-1">
-              <p className="text-xs text-amber-600">今の定義をフォームで読めなかったため、YAML で直してください。</p>
+              {!draft.cleansing_spec && (
+                <p className="text-xs text-amber-600">今の定義をフォームで読めなかったため、YAML で直してください。</p>
+              )}
               <textarea
                 aria-label="クレンジングの定義（YAML）"
                 className="h-56 w-full rounded-md border bg-muted p-3 font-mono text-xs"
@@ -375,26 +415,42 @@ function Code({ children, title }: { children: ReactNode; title?: string }) {
   )
 }
 
-const TYPE_LABELS: [RegExp, string][] = [
-  [/^TIMESTAMP/, '日時'],
-  [/^DATE$/, '日付'],
-  [/^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|DOUBLE|FLOAT|REAL|DECIMAL)/, '数値'],
-  [/^BOOLEAN$/, '真偽'],
-  [/^VARCHAR/, '文字'],
-]
+const UNTRANSLATED = '日本語の表示名（未入力）'
 
-function typeLabel(dataType: string): string {
-  return TYPE_LABELS.find(([re]) => re.test(dataType.toUpperCase()))?.[1] ?? dataType
+/** 英語（ASCII）だけの表示名は、まだ日本語になっていないものとして空で出す（#150） */
+function japanese(label: string): string {
+  return /^[\x20-\x7e]*$/.test(label) ? '' : label
+}
+
+/** 確定のとき、空にした表示名は内部の名前で埋める（表示名は必須のため） */
+function withFallbackLabels(patch: OntologyPatch): OntologyPatch {
+  return {
+    ...patch,
+    concepts: patch.concepts.map((c) => ({
+      ...c,
+      label: c.label.trim() || c.name,
+      attributes: c.attributes.map((a) => ({ ...a, label: a.label.trim() || a.column })),
+    })),
+  }
+}
+
+/** backend の adp.cleansing.check.column_kind の種類 → 表示 */
+const KIND_LABELS: Record<string, string> = {
+  text: '文字',
+  timestamp: '日時',
+  date: '日付',
+  number: '数値',
+  boolean: '真偽',
 }
 
 /** 属性の判断材料: 型と、範囲（数値・日付）かよく出る値（#150） */
-function ValueHint({ profile: p }: { profile?: ColumnProfile }) {
+function ValueHint({ profile: p, kind }: { profile?: ColumnProfile; kind?: string }) {
   if (!p) return <span className="text-muted-foreground">-</span>
   // 値の種類が多い数値・日付は範囲を、少ないもの（評価の 1〜5 など）はよく出る値を出す
   const ranged = !p.masked && p.min !== null && (p.histogram || p.monthly) && p.distinct_count > 10
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Badge variant="secondary">{typeLabel(p.data_type)}</Badge>
+      <Badge variant="secondary">{KIND_LABELS[kind ?? ''] ?? 'その他'}</Badge>
       {ranged ? (
         <span>
           {p.min} 〜 {p.max}
@@ -410,10 +466,6 @@ function outputName(rule: CleansingRule): string {
   return rule.rename ?? rule.name
 }
 
-function dateColumnName(column: string): string {
-  return column.endsWith('_at') ? `${column.slice(0, -3)}_date` : `${column}_date`
-}
-
 /**
  * クレンジングの定義をフォームで直す（#150）。確かめるのは、1 件を見分けるキー・区分の列に許す値・
  * 日時から日付を作るか。それ以外の項目（型の変換・除外など）は、そのまま残す。
@@ -422,11 +474,15 @@ function CleansingForm({
   spec,
   onSpec,
   profiles,
+  kinds,
+  dateNames,
   labels,
 }: {
   spec: CleansingSpec
   onSpec: (s: CleansingSpec) => void
   profiles: Map<string, ColumnProfile>
+  kinds: Record<string, string>
+  dateNames: Record<string, string | null>
   labels: Map<string, string>
 }) {
   const rules = spec.columns ?? []
@@ -437,12 +493,13 @@ function CleansingForm({
   }
   const label = (column: string) => labels.get(column) ?? column
   const dropped = new Set(rules.filter((r) => r.drop).map((r) => r.name))
-  const columns = [...profiles.keys()].filter((c) => !dropped.has(c))
-  const keyOptions = columns.map((c) => outputName(ruleOf(c)))
-  const enums = rules.filter((r) => r.accepted_values !== undefined)
-  const datetimes = columns.filter(
-    (c) => ruleOf(c).cast === 'timestamp' || /^TIMESTAMP/i.test(profiles.get(c)?.data_type ?? ''),
-  )
+  // 定義に書ける列名（英小文字の snake_case）だけを選ばせる
+  const columns = [...profiles.keys()].filter((c) => !dropped.has(c) && /^[a-z_][a-z0-9_]*$/.test(c))
+  const keyOptions = columns.map((c) => [outputName(ruleOf(c)), c] as const)
+  // 今のキーが選択肢に無くても（日付から作った列など）、表示と値を食い違わせない
+  if (spec.key && !keyOptions.some(([out]) => out === spec.key)) keyOptions.push([spec.key, spec.key])
+  const enums = rules.filter((r) => r.accepted_values !== undefined && !r.drop)
+  const datetimes = Object.keys(dateNames)
   return (
     <div className="space-y-4 text-xs">
       <section className="space-y-1">
@@ -455,9 +512,9 @@ function CleansingForm({
           onChange={(e) => onSpec({ ...spec, key: e.target.value || null })}
         >
           <option value="">（なし）</option>
-          {keyOptions.map((c, i) => (
-            <option key={c} value={c}>
-              {label(columns[i])}（{c}）
+          {keyOptions.map(([out, column]) => (
+            <option key={out} value={out}>
+              {labels.has(column) ? `${label(column)}（${out}）` : out}
             </option>
           ))}
         </select>
@@ -474,6 +531,8 @@ function CleansingForm({
             (profiles.get(r.name)?.top_values ?? []).filter(([v]) => v !== null).map(([v, n]) => [v as string, n]),
           )
           const values = [...new Set([...accepted.map(String), ...counts.keys()])]
+          // 数値の列は数値のまま書く（文字列と混ぜない）
+          const typed = (v: string) => (kinds[r.name] === 'number' && !Number.isNaN(Number(v)) ? Number(v) : v)
           return (
             <div key={r.name} className="flex flex-wrap items-center gap-3" data-testid={`accepted-${r.name}`}>
               <span className="w-40 shrink-0">
@@ -490,7 +549,7 @@ function CleansingForm({
                       onChange={() =>
                         setRule({
                           ...r,
-                          accepted_values: on ? accepted.filter((x) => String(x) !== v) : [...accepted, v],
+                          accepted_values: on ? accepted.filter((x) => String(x) !== v) : [...accepted, typed(v)],
                         })
                       }
                     />
@@ -499,6 +558,9 @@ function CleansingForm({
                   </label>
                 )
               })}
+              {accepted.length === 0 && (
+                <span className="text-amber-600">どれも選ばないと、値を確かめるテストを作りません</span>
+              )}
             </div>
           )
         })}
@@ -511,7 +573,14 @@ function CleansingForm({
           const rule = ruleOf(c)
           const derive = rule.derive ?? []
           const on = derive.some((d) => d.as === 'date')
-          const name = dateColumnName(outputName(rule))
+          const name = dateNames[c]
+          if (!name) {
+            return (
+              <p key={c} className="text-muted-foreground" data-testid={`derive-${c}`}>
+                {label(c)} <Code>{c}</Code>: 同じ名前の列があるため、日付の列を作れません（YAML で名前を付けてください）
+              </p>
+            )
+          }
           return (
             <label key={c} className="flex items-center gap-2" data-testid={`derive-${c}`}>
               <input

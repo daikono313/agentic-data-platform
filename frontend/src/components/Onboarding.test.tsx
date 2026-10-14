@@ -93,6 +93,8 @@ const formDraft: OnboardingDraft = {
     column('quantity', 'INTEGER', { distinct_count: 20, min: '1', max: '50', histogram: [[1, 50, 30]] }),
     column('moved_at', 'VARCHAR'),
   ],
+  column_kinds: { inventory_id: 'number', movement_type: 'text', quantity: 'number', moved_at: 'text' },
+  date_derives: { moved_at: 'moved_on' },
   concept_labels: { store: '店舗', inventory: '在庫の入出庫' },
 }
 
@@ -202,7 +204,13 @@ describe('OnboardingScreen', () => {
     expect(screen.getByLabelText('movement_type に許す値 receipt')).toBeChecked()
     fireEvent.click(screen.getByLabelText('movement_type に許す値 adjustment'))
     fireEvent.click(screen.getByLabelText('moved_at から日付の列を作る'))
-    expect(screen.getByTestId('derive-moved_at')).toHaveTextContent('moved_date')
+    expect(screen.getByTestId('derive-moved_at')).toHaveTextContent('moved_on')
+    // 表示名を直してからフォームを触っても、下書きを読み直して表示名を消さない
+    fireEvent.change(screen.getByLabelText('概念の名前（表示名）'), { target: { value: '入出庫' } })
+    fireEvent.click(screen.getByLabelText('movement_type に許す値 shipment'))
+    fireEvent.click(screen.getByLabelText('movement_type に許す値 shipment'))
+    expect(api.onboardingDraft).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('概念の名前（表示名）')).toHaveValue('入出庫')
     // 直した定義は、エージェントの案に作り直しても残す
     fireEvent.click(screen.getByRole('button', { name: /エージェントに案を作らせる/ }))
     expect(await screen.findByText('エージェントの案')).toBeInTheDocument()
@@ -212,9 +220,63 @@ describe('OnboardingScreen', () => {
     const spec = start.mock.calls[0][2] as CleansingSpec
     expect(spec.key).toBe('inventory_id')
     const rules = Object.fromEntries((spec.columns ?? []).map((r) => [r.name, r]))
-    expect(rules.movement_type.accepted_values).toEqual(['receipt', 'shipment', 'adjustment'])
+    expect(rules.movement_type.accepted_values).toEqual(['receipt', 'adjustment', 'shipment'])
     expect(rules.moved_at.cast).toBe('timestamp')
-    expect(rules.moved_at.derive).toEqual([{ name: 'moved_date', as: 'date', description: '入出庫日時の日付' }])
+    expect(rules.moved_at.derive).toEqual([{ name: 'moved_on', as: 'date', description: '入出庫日時の日付' }])
+  })
+
+  it('英語のままの表示名は未入力として出し、未入力のまま確定すると内部の名前で登録する', async () => {
+    // プロファイルからの案: 表示名が英語の名前のまま、キーの列は属性に無い
+    const profileDraft: OnboardingDraft = {
+      ...formDraft,
+      patch: {
+        ...formDraft.patch,
+        concepts: [
+          {
+            ...formDraft.patch.concepts[0],
+            label: 'inventory',
+            attributes: [{ name: 'quantity', label: 'quantity', column: 'quantity' }],
+          },
+        ],
+      },
+      date_derives: { moved_at: null },
+    }
+    vi.spyOn(api, 'onboardingStatus').mockResolvedValue({ job: null })
+    vi.spyOn(api, 'onboardingDraft').mockResolvedValue(profileDraft)
+    const start = vi.spyOn(api, 'startOnboarding').mockResolvedValue({ id: 'j1', status: 'running', steps: [] })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {})
+    render(<OnboardingScreen table="raw.inventory" />)
+    const name = await screen.findByLabelText('概念の名前（表示名）')
+    expect(name).toHaveValue('')
+    expect(name).toHaveAttribute('placeholder', '日本語の表示名（未入力）')
+    expect(screen.getByLabelText('属性 quantity の表示名')).toHaveValue('')
+    expect(screen.getByTestId('concept-key-inventory')).toHaveTextContent('（表示名なし）')
+    expect(screen.getByTestId('untranslated')).toHaveTextContent('2 件')
+    // 日付の名前がほかの列と重なるときは、作れないと出す
+    expect(screen.getByTestId('derive-moved_at')).toHaveTextContent('作れません')
+    expect(screen.getByLabelText('1 件を見分けるキー')).toHaveValue('inventory_id')
+    fireEvent.change(screen.getByLabelText('属性 quantity の表示名'), { target: { value: '数量' } })
+    expect(screen.getByTestId('untranslated')).toHaveTextContent('1 件')
+    fireEvent.click(screen.getByRole('button', { name: '確定して PR を作る' }))
+    await waitFor(() => expect(start).toHaveBeenCalled())
+    const patch = start.mock.calls[0][1]
+    expect(patch.concepts[0].label).toBe('inventory')
+    expect(patch.concepts[0].attributes[0].label).toBe('数量')
+  })
+
+  it('ほかの設定は YAML に切り替えて直せる', async () => {
+    vi.spyOn(api, 'onboardingStatus').mockResolvedValue({ job: null })
+    vi.spyOn(api, 'onboardingDraft').mockResolvedValue(formDraft)
+    const start = vi.spyOn(api, 'startOnboarding').mockResolvedValue({ id: 'j1', status: 'running', steps: [] })
+    vi.spyOn(api, 'jobEvents').mockImplementation(async function* () {})
+    render(<OnboardingScreen table="raw.inventory" />)
+    fireEvent.click(await screen.findByRole('button', { name: /YAML で直す/ }))
+    const yaml = screen.getByLabelText('クレンジングの定義（YAML）')
+    expect(yaml).toHaveValue(formDraft.cleansing)
+    fireEvent.change(yaml, { target: { value: 'source: raw.inventory\nkey: inventory_id\n' } })
+    fireEvent.click(screen.getByRole('button', { name: '確定して PR を作る' }))
+    await waitFor(() => expect(start).toHaveBeenCalled())
+    expect(start.mock.calls[0][2]).toBe('source: raw.inventory\nkey: inventory_id\n')
   })
 
   it('取り込み済みならその結果を出し、PR を閉じた場合はやり直せる', async () => {

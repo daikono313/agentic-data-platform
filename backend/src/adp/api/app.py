@@ -24,7 +24,12 @@ from adp.chart_view import ChartRequest, ChartView, ChartViews
 from adp.charts import ChartError
 from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
-from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline, cleansing_text
+from adp.onboarding.pipeline import (
+    CLEANSING_MAX,
+    AlreadyOnboarded,
+    OnboardingPipeline,
+    cleansing_text,
+)
 from adp.onboarding.proposal import OntologyPatch
 from adp.sync import INTERVIEW_IDLE_S, AutoSync, Sync, auto_interval
 from adp.warehouse import warehouse_db, warehouse_kind
@@ -45,7 +50,7 @@ class OnboardingDraftIn(BaseModel):
 
 class OnboardingIn(BaseModel):
     patch: dict[str, Any]
-    cleansing: Annotated[str, Field(min_length=1, max_length=20000)] | dict[str, Any]
+    cleansing: Annotated[str, Field(min_length=1, max_length=CLEANSING_MAX)] | dict[str, Any]
     """クレンジングの定義。YAML か、画面のフォームで直した JSON（#150）。"""
     redo: bool = False
     """前の取り込みの PR を閉じた（マージしなかった）ので、もう一度作る。"""

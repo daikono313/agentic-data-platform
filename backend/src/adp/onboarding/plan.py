@@ -25,6 +25,10 @@ class OnboardingDraft(BaseModel):
     """cleansing を読んだもの（画面のフォームで直す。#150）。既存の定義が読めなければ None。"""
     columns: list[ColumnProfile] = Field(default_factory=list)
     """源泉の列のプロファイル（画面で、属性やクレンジングの判断材料として値の例を出す。#150）。"""
+    column_kinds: dict[str, str] = Field(default_factory=dict)
+    """源泉の列 → 型の種類（text / timestamp / date / number / boolean / other。#150）。"""
+    date_derives: dict[str, str | None] = Field(default_factory=dict)
+    """日時の列 → 日付の列として作る名前（ほかの列と重なれば None。#150）。"""
     concept_labels: dict[str, str] = Field(default_factory=dict)
     """追加後のオントロジーの概念の名前 → 表示名（関係を日本語で出すため。#150）。"""
     cleansing_exists: bool

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from adp.catalog.types import is_text_type
-from adp.cleansing.check import _kind
+from adp.cleansing.check import column_kind
 from adp.cleansing.models import Defaults
 from adp.cleansing.render import SourceColumn, column_expr
 from adp.design import Column, ColumnRole
@@ -55,7 +55,7 @@ def test_generation_and_cleansing_agree_on_text(data_type: str) -> None:
     """実データの TEXT / VARCHAR(255) でも、dim の不明行は「不明」になり、stg は trim する。"""
     column = Column(name="status", role=ColumnRole.ATTRIBUTE, expr="o.status")
     assert _is_text(_Info(data_type), "raw.orders", column, {"o": "raw.orders"})  # type: ignore[arg-type]
-    assert _kind(data_type) == "text"
+    assert column_kind(data_type) == "text"
     expr = column_expr(SourceColumn("status", data_type), None, TRIM)
     assert "trim(status)" in expr
 
@@ -64,5 +64,5 @@ def test_generation_and_cleansing_agree_on_text(data_type: str) -> None:
 def test_generation_and_cleansing_agree_on_non_text(data_type: str) -> None:
     column = Column(name="status", role=ColumnRole.ATTRIBUTE, expr="o.status")
     assert not _is_text(_Info(data_type), "raw.orders", column, {"o": "raw.orders"})  # type: ignore[arg-type]
-    assert _kind(data_type) != "text"
+    assert column_kind(data_type) != "text"
     assert column_expr(SourceColumn("status", data_type), None, TRIM) == "status"

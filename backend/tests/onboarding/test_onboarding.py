@@ -340,31 +340,89 @@ async def test_onboarding_is_not_repeated_without_redo(tmp_path: Path) -> None:
 
 
 def test_cleansing_spec_round_trips_through_the_form() -> None:
-    """画面のフォームは定義を JSON で受け取って直し、確定のときは YAML にそろえる（#150）。"""
-    from adp.cleansing.models import CleansingSpec
-    from adp.onboarding.pipeline import _spec_json, cleansing_text, parse_cleansing
+    """画面のフォームは定義を JSON で受け取って直し、確定のときは YAML にそろえる（#150）。
+
+    フォームに出ない項目（rename・values・timezone・dedupe・exclude）も、そのまま残る。
+    """
+    from adp.onboarding.pipeline import _spec_or_none, cleansing_text, parse_cleansing
 
     text = (
         "source: raw.inventory\nkey: inventory_id\ncolumns:\n"
-        "- name: movement_type\n  accepted_values: [receipt, shipment]\n"
-        "- name: moved_at\n  cast: timestamp\n"
+        "- name: movement_type\n  rename: kind\n  values: {RCV: receipt}\n"
+        "  accepted_values: [receipt, shipment]\n"
+        "- name: moved_at\n  cast: timestamp\n  timezone: [UTC, Asia/Tokyo]\n"
+        "dedupe:\n  key: [inventory_id]\n  order_by: [{column: updated_at, desc: true}]\n"
+        "exclude:\n- column: quantity\n  is_null: true\n"
     )
-    spec = _spec_json(text, "raw.inventory")
+    spec = _spec_or_none(text, "raw.inventory")
     assert spec is not None
-    assert spec["key"] == "inventory_id"
+    form = spec.model_dump(mode="json", by_alias=True, exclude_defaults=True)
     # フォームで直す: 許す値を足し、日時から日付を作る
-    spec["columns"][0]["accepted_values"].append("adjustment")
-    spec["columns"][1]["derive"] = [{"name": "moved_date", "as": "date"}]
-    back = parse_cleansing(cleansing_text(spec), "raw.inventory")
-    assert back.rule("movement_type").accepted_values == ["receipt", "shipment", "adjustment"]  # type: ignore[union-attr]
-    assert back.rule("moved_at").derive[0].as_ == "date"  # type: ignore[union-attr]
+    form["columns"][0]["accepted_values"].append("adjustment")
+    form["columns"][1]["derive"] = [{"name": "moved_on", "as": "date"}]
+    back = parse_cleansing(cleansing_text(form), "raw.inventory")
+    kind, moved = back.rule("movement_type"), back.rule("moved_at")
+    assert kind is not None and moved is not None
+    assert kind.accepted_values == ["receipt", "shipment", "adjustment"]
+    assert (kind.rename, kind.values) == ("kind", {"RCV": "receipt"})
+    assert moved.timezone == ("UTC", "Asia/Tokyo")
+    assert moved.derive[0].as_ == "date"
+    assert back.dedupe == spec.dedupe and back.exclude == spec.exclude
     # 読めない定義はフォームに出さない（YAML で直す）。YAML はそのまま通す
-    assert _spec_json("source: [", "raw.inventory") is None
-    assert _spec_json("source: raw.orders\n", "raw.inventory") is None
+    assert _spec_or_none("source: [", "raw.inventory") is None
+    assert _spec_or_none("source: raw.orders\n", "raw.inventory") is None
     assert cleansing_text("source: raw.inventory\n") == "source: raw.inventory\n"
     with pytest.raises(ValueError):
         cleansing_text({"source": "raw.inventory", "columns": [{"name": "x", "cast": "nope"}]})
-    assert isinstance(CleansingSpec.model_validate(spec), CleansingSpec)
+    with pytest.raises(ValueError, match="長すぎ"):
+        cleansing_text({"source": "raw.inventory", "description": "あ" * 20001})
+
+
+def test_date_derives_follow_the_naming_convention() -> None:
+    """日時から作る日付の列は _on（規約）。ほかの出力の列と重なる名前は出さない（#150）。"""
+    from adp.cleansing.check import column_kind, date_derives
+    from adp.cleansing.models import CleansingSpec
+    from adp.cleansing.render import SourceColumn
+
+    columns = [
+        SourceColumn("ordered_at", "TIMESTAMP"),
+        SourceColumn("shipped_at", "VARCHAR"),
+        SourceColumn("shipped_on", "DATE"),
+        SourceColumn("loaded_at", "TIMESTAMP"),
+        SourceColumn("note", "VARCHAR"),
+    ]
+    spec = CleansingSpec.model_validate(
+        {
+            "source": "raw.orders",
+            "columns": [
+                {"name": "shipped_at", "cast": "timestamp"},
+                {"name": "loaded_at", "drop": True},
+                {"name": "ordered_at", "derive": [{"name": "order_day", "as": "date"}]},
+            ],
+        }
+    )
+    # 作ってある日付はその名前、型変換で日時になる列も対象、重なる名前は None、落とす列は出さない
+    assert date_derives(spec, columns) == {"ordered_at": "order_day", "shipped_at": None}
+    assert [
+        column_kind(t)
+        for t in (
+            "VARCHAR",
+            "TIMESTAMP WITH TIME ZONE",
+            "DATE",
+            "BIGINT",
+            "DECIMAL(10,2)",
+            "BOOLEAN",
+            "BLOB",
+        )
+    ] == [
+        "text",
+        "timestamp",
+        "date",
+        "number",
+        "number",
+        "boolean",
+        "other",
+    ]
 
 
 def test_onboarding_api_rejects_invalid_cleansing_json(tmp_path: Path) -> None:
@@ -406,3 +464,8 @@ def test_onboarding_api_rejects_invalid_cleansing_json(tmp_path: Path) -> None:
     res = client.post("/sources/raw.reviews/onboarding", json=body)
     assert res.status_code == 422, res.text
     assert "cast" in res.text
+    # 別の源泉の定義も 422
+    body["cleansing"] = {"source": "raw.orders"}
+    res = client.post("/sources/raw.reviews/onboarding", json=body)
+    assert res.status_code == 422, res.text
+    assert "raw.orders" in res.text

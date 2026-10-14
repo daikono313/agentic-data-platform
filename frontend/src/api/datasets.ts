@@ -122,6 +122,10 @@ export interface OnboardingDraft {
   cleansing_spec?: CleansingSpec | null
   /** 源泉の列のプロファイル（値の例を出す。#150） */
   columns?: ColumnProfile[]
+  /** 源泉の列 → 型の種類（backend の column_kind。text / timestamp / date / number / boolean / other。#150） */
+  column_kinds?: Record<string, string>
+  /** 日時の列 → 日付の列として作る名前（ほかの列と重なれば null。#150） */
+  date_derives?: Record<string, string | null>
   /** 追加後のオントロジーの概念の名前 → 表示名（#150） */
   concept_labels?: Record<string, string>
   mermaid: string
