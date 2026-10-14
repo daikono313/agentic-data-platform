@@ -1,5 +1,13 @@
 import type { ChartOptions, ChartRequest, ChartResult } from './charts'
-import type { CleansingView, Datasets, OnboardingDraft, OntologyPatch, OntologyView, SourceProfile } from './datasets'
+import type {
+  CleansingSpec,
+  CleansingView,
+  Datasets,
+  OnboardingDraft,
+  OntologyPatch,
+  OntologyView,
+  SourceProfile,
+} from './datasets'
 import type { FeedbackCategories, FeedbackIn, FeedbackView } from './feedback'
 import type { InterviewEvent, JobEvent, JobView, SessionSummary, SessionView, SyncView } from './types'
 
@@ -87,7 +95,12 @@ export const api = {
       }),
     )
   },
-  async startOnboarding(table: string, patch: OntologyPatch, cleansing: string, redo = false): Promise<JobView> {
+  async startOnboarding(
+    table: string,
+    patch: OntologyPatch,
+    cleansing: string | CleansingSpec,
+    redo = false,
+  ): Promise<JobView> {
     return json(
       await fetch(`${BASE}/sources/${encodeURIComponent(table)}/onboarding`, {
         method: 'POST',

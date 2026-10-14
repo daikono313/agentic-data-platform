@@ -15,13 +15,15 @@ import re
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
+from typing import Any
 
 import yaml
 
 from adp.catalog.catalog import Catalog
+from adp.cleansing.check import column_kinds, date_derives, source_columns, validate
 from adp.cleansing.check import draft as cleansing_draft
-from adp.cleansing.check import source_columns, validate
 from adp.cleansing.models import CleansingSpec, dump_spec, spec_path
+from adp.cleansing.render import SourceColumn
 from adp.datasets import DatasetIndex
 from adp.generation.dbt import staging_files
 from adp.generation.project import ProjectInfo
@@ -84,6 +86,31 @@ def parse_cleansing(text: str, source: str) -> CleansingSpec:
     return spec
 
 
+def _spec_or_none(text: str, source: str) -> CleansingSpec | None:
+    """画面のフォームで直せる定義。読めなければ None（画面では YAML で直す）。"""
+    try:
+        return parse_cleansing(text, source)
+    except ValueError:
+        return None
+
+
+CLEANSING_MAX = 20000
+"""画面から受け取るクレンジングの定義（YAML）の長さの上限。"""
+
+
+def cleansing_text(cleansing: str | dict[str, Any]) -> str:
+    """画面から受け取ったクレンジングの定義（YAML か、フォームで直した JSON）を YAML にそろえる。
+
+    JSON は CleansingSpec で検証してから書き出す（形式の誤りは ValueError）。
+    """
+    if isinstance(cleansing, str):
+        return cleansing
+    text = dump_spec(CleansingSpec.model_validate(cleansing))
+    if len(text) > CLEANSING_MAX:
+        raise ValueError(f"クレンジングの定義が長すぎます（{CLEANSING_MAX} 文字まで）")
+    return text
+
+
 class OnboardingPipeline:
     def __init__(
         self,
@@ -132,6 +159,9 @@ class OnboardingPipeline:
             path.read_text(encoding="utf-8") if exists else dump_spec(cleansing_draft(profile))
         )
         bus = await asyncio.to_thread(DatasetIndex(repo, catalog).bus_matrix)
+        merged = apply(ontology, patch)
+        columns = [SourceColumn(c.name, c.data_type) for c in profile.columns]
+        spec = _spec_or_none(cleansing, source)
         return OnboardingDraft(
             source=source,
             patch=patch,
@@ -139,7 +169,16 @@ class OnboardingPipeline:
             note=note,
             cleansing=cleansing,
             cleansing_exists=exists,
-            mermaid=mermaid(apply(ontology, patch)),
+            cleansing_spec=(
+                None
+                if spec is None
+                else spec.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+            ),
+            column_kinds=column_kinds(spec, columns),
+            date_derives={} if spec is None else date_derives(spec, columns),
+            columns=profile.profiles,
+            concept_labels={c.name: c.label for c in merged.concepts},
+            mermaid=mermaid(merged),
             bus=bus_with_candidates(bus, ontology, patch),
         )
 
