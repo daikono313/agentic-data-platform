@@ -2,7 +2,7 @@
 
 import pytest
 
-from adp.interview.wording import strip_position_sentences
+from adp.interview.wording import clean_reply
 
 
 @pytest.mark.parametrize(
@@ -27,7 +27,7 @@ from adp.interview.wording import strip_position_sentences
     ],
 )
 def test_strips_position_sentences(text: str, kept: str, removed: list[str]) -> None:
-    assert strip_position_sentences(text) == (kept, removed)
+    assert clean_reply(text) == (kept, removed)
 
 
 @pytest.mark.parametrize(
@@ -52,7 +52,7 @@ def test_strips_position_sentences(text: str, kept: str, removed: list[str]) -> 
     ],
 )
 def test_keeps_other_sentences(text: str) -> None:
-    assert strip_position_sentences(text) == (text, [])
+    assert clean_reply(text) == (text, [])
 
 
 @pytest.mark.parametrize(
@@ -69,6 +69,13 @@ def test_keeps_other_sentences(text: str) -> None:
             ["「なぜ」の切り口について、お返事をお待ちしています。"],
         ),
         ("ユーザーの回答待ちです。", "", ["ユーザーの回答待ちです。"]),
+        ("この例でよいか、お選びください。", "", ["この例でよいか、お選びください。"]),
+        (
+            "ほかに見たい切り口があるかを、ボタンでお答えください。",
+            "",
+            ["ほかに見たい切り口があるかを、ボタンでお答えください。"],
+        ),
+        ("お選びください。", "", ["お選びください。"]),
         ("質問と選択肢を表示しました。", "", ["質問と選択肢を表示しました。"]),
         (
             "目的を伺います。近いものを選ぶか、自由に入力してください（複数選択も可です）。",
@@ -83,9 +90,9 @@ def test_keeps_other_sentences(text: str) -> None:
     ],
 )
 def test_strips_closing_sentences_with_question(text: str, kept: str, removed: list[str]) -> None:
-    assert strip_position_sentences(text, question=True) == (kept, removed)
+    assert clean_reply(text, question=True) == (kept, removed)
     # 質問が無ければ締めの一言は残す
-    assert strip_position_sentences(text) == (text, [])
+    assert clean_reply(text) == (text, [])
 
 
 @pytest.mark.parametrize(
@@ -99,7 +106,16 @@ def test_strips_closing_sentences_with_question(text: str, kept: str, removed: l
         "- 店舗名（20 店舗）\n- 回答をお待ちしています。",  # リストの行
         "」という問いで合っているか、確認をお待ちしています。",  # 「」の中で切れた後ろ半分
         "在庫の確認を待ってから出荷する運用です。",
+        # 業務の説明（#160 レビュー）
+        "出荷は倉庫の確認待ちです。",
+        "返品は、顧客からの返事を待っています。",
+        "承認されるまで、注文は確認を待ちます。",
+        "顧客からの回答を待っています。",
+        # 本文の別の依頼（#160 レビュー）
+        "あわせて、集計に使う日付の列名も書いてください。",
+        "なお、担当部署の名前もご記入ください。",
+        "違う場合は正しい定義を書いてください。",
     ],
 )
 def test_keeps_sentences_that_are_not_just_closing(text: str) -> None:
-    assert strip_position_sentences(text, question=True) == (text, [])
+    assert clean_reply(text, question=True) == (text, [])

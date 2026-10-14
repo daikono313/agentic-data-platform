@@ -46,4 +46,18 @@ describe('ChatPanel', () => {
     expect(screen.getAllByText('優先度はどのくらいですか？')).toHaveLength(1)
     expect(container.querySelector('[role="log"] .bg-muted')).toBeNull()
   })
+
+  it('本文が無い過去の発言は、質問を吹き出しに表示する', () => {
+    render(
+      <ChatPanel
+        {...base}
+        messages={[
+          { role: 'assistant', text: '', question: '優先度はどのくらいですか？' },
+          { role: 'user', text: '高い' },
+        ]}
+        choices={[]}
+      />,
+    )
+    expect(screen.getAllByText('優先度はどのくらいですか？')).toHaveLength(1)
+  })
 })

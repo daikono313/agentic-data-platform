@@ -14,7 +14,7 @@ from adp.beam import BeamModel, EventMatrix, build_event_matrix
 from adp.interview import tools as beam_tools
 from adp.interview.prompts import prompt_version, system_prompt
 from adp.interview.state import ChatMessage, InterviewState, Phase
-from adp.interview.wording import strip_position_sentences
+from adp.interview.wording import clean_reply
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 
 
@@ -129,7 +129,7 @@ class Interviewer:
                     result = event
         except asyncio.CancelledError:
             # クライアントの切断など。途中までの応答を残してから中断する
-            partial, removed = strip_position_sentences("".join(reply))
+            partial, removed = clean_reply("".join(reply))
             state.messages.append(
                 ChatMessage(
                     role="assistant",
@@ -166,7 +166,7 @@ class Interviewer:
             text = "（応答を作れませんでした。もう一度送ってください）"
         # 画面の位置を指す文（「上の質問にお答えください」など。#77）と、質問を出したときの
         # 締めの一言（「回答をお待ちしています」など。#158）は取り除く
-        text, removed = strip_position_sentences(text, question=state.question is not None)
+        text, removed = clean_reply(text, question=state.question is not None)
         # 質問文は本文に混ぜずに別に持つ（画面ではボタンの上に 1 回だけ出す。#36）
         message = ChatMessage(
             role="assistant",

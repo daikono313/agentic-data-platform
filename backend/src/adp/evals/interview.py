@@ -511,7 +511,9 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
 def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     assistant = [m for m in messages if m.role == "assistant"]
     position = [
-        " / ".join(getattr(m, "removed", None) or [m.text])[:60]
+        " / ".join(
+            [x for x in getattr(m, "removed", None) or [] if is_position_sentence(x)] or [m.text]
+        )[:60]
         for m in assistant
         if _position_words(m)
     ]
