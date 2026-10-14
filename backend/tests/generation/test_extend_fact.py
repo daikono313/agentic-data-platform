@@ -22,6 +22,24 @@ from tests.generation.test_dbt_codegen import FIXTURES, _dbt, _warehouse_copy, m
 RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "evals" / "return_rate_by_category.json"
 
 
+def _return_rate() -> BeamModel:
+    """記録した返品率の成果物。販売数量の measure を既存の列（quantity）と別の名前にする
+    （同じ式の既存の列を使い、列を足さないことを確かめる。#113）。"""
+    data = json.loads(RETURN_RATE.read_text())["beam"]
+    event = next(e for e in data["events"] if e["name"] == "customer_orders_product")
+    for m in event["measures"]:
+        if m["name"] == "quantity":
+            m["name"] = "quantity_sold"
+    for x in event["examples"]:
+        x["values"] = {
+            ("quantity_sold" if k == "quantity" else k): v for k, v in x["values"].items()
+        }
+    for metric in data["metrics"]:
+        if metric["event"] == event["name"] and metric["measure"] == "quantity":
+            metric["measure"] = "quantity_sold"
+    return BeamModel.model_validate(data)
+
+
 def _generate(wh: Path, beam: BeamModel):  # type: ignore[no-untyped-def]
     catalog = Catalog(wh / "data" / "dev.duckdb")
     info = ProjectInfo(wh, catalog)
@@ -40,7 +58,7 @@ def after_s1(tmp_path: Path) -> Path:
 def test_existing_fact_gets_missing_measure_and_metrics(after_s1: Path) -> None:
     wh = after_s1
     sql_before = (wh / "models/marts/fct_order_lines.sql").read_text(encoding="utf-8")
-    beam = BeamModel.model_validate(json.loads(RETURN_RATE.read_text())["beam"])
+    beam = _return_rate()
     info, generation = _generate(wh, beam)
     assert [t.kind for t in generation.tasks if t.kind == "fact_exists"] == []
     updated = {f.path for f in generation.files if f.replaces is not None}
@@ -69,7 +87,7 @@ def test_hand_written_fact_is_left_to_the_agent(after_s1: Path) -> None:
     wh = after_s1
     path = wh / "models/marts/fct_order_lines.sql"
     path.write_text(path.read_text(encoding="utf-8").replace("-- adp により生成\n", ""))
-    beam = BeamModel.model_validate(json.loads(RETURN_RATE.read_text())["beam"])
+    beam = _return_rate()
     _, generation = _generate(wh, beam)
     [task] = [t for t in generation.tasks if t.kind == "fact_exists"]
     assert "既存の列と指標は変更・削除しない" in task.instruction

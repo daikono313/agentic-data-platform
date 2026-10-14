@@ -16,3 +16,4 @@ checks:
   - metric_aggregation: average
   - min_examples: 2
   - asks_purpose
+  - metric_group_by_columns: [raw.shipments.shipping_method, raw.shipments.shipped_at]

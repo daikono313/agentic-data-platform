@@ -9,8 +9,12 @@ persona: |
   - 在庫の記録には、入荷・他店への移動・廃棄・棚卸がある。棚卸は「数え直した在庫数」なので増減には含めない。
   - 例外として、他店への移動と廃棄は減る（聞かれたら答える）。移動を受け取った店の記録がデータに無ければ、出した店の減少だけでよい（受け取り側は後で考える）。
   - 作る手間はデータの担当者が見積もればよく、自分には分からない（聞かれたら「分からないので任せたい」と答える）。
+  - 廃棄や他店への移動が多い店舗を見つけて、発注の量を見直すのに使いたい（目的を聞かれたら答える）。
   - 優先度とインパクトは高い。
 checks:
   - finalizable
   - has_w: [what, when, where]
   - asks_irregular_cases
+  - metric_filter: {column: raw.inventory.movement_type, includes: [receipt, transfer_out, disposal], excludes: [count]}
+  - metric_group_by_columns: [[raw.stores.store_name, raw.stores.store_id, raw.inventory.store_id], raw.products.category, raw.inventory.moved_at]
+  - asks_purpose

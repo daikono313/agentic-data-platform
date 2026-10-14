@@ -9,8 +9,11 @@ persona: |
   知っていること・望んでいること:
   - 購入した商品に付けられたレビューの点数（1〜5 の 5 段階）の平均を、商品カテゴリごと・レビューが書かれた月ごとに見たい。
   - 1 件のレビューが 1 行。レビューの文章は見なくてよい（点数だけ）。
+  - 評価の低いカテゴリを見つけて、商品の見直しに使いたい（目的を聞かれたら答える）。
   - 優先度は高い。
 checks:
   - finalizable
   - fact_source: raw.reviews
   - has_w: [what, when]
+  - metric_group_by_columns: [raw.products.category, raw.reviews.reviewed_at]
+  - asks_purpose

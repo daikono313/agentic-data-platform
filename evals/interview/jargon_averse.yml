@@ -9,8 +9,11 @@ persona: |
   見たいものは次のとおりです:
   - 月ごとに、商品カテゴリ別の売上金額（税抜）を見たい。注文した時点で数え、キャンセルは除く。
   - 1 行は「注文の中の 1 商品」でよい。
+  - どのカテゴリの品ぞろえを増やすかを決めるのに使いたい（目的を聞かれたら答える）。
   - 優先度は高い。
 checks:
   - finalizable
-  - metric_group_by_w: what
   - max_assistant_turns: 15
+  - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
+  - metric_group_by_columns: [raw.products.category, raw.orders.ordered_at]
+  - asks_purpose

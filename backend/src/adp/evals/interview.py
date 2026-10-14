@@ -26,11 +26,15 @@ from adp.beam import (
     Aggregation,
     Availability,
     BeamModel,
+    BusinessEvent,
+    FilterOperator,
     GapKind,
     MetricType,
+    SourceRef,
     StoryType,
     W,
 )
+from adp.beam.validation import resolve_ref
 from adp.catalog.catalog import Catalog
 from adp.catalog.tools import SERVER_NAME as CATALOG_SERVER
 from adp.catalog.tools import build_tools as catalog_tools
@@ -114,7 +118,8 @@ def _metric_event_list(beam: BeamModel) -> list[Any]:
 def _check(beam: BeamModel, spec: Any) -> CheckResult:
     name, raw = (spec, "") if isinstance(spec, str) else next(iter(spec.items()))
     args: list[str] = [str(a) for a in raw] if isinstance(raw, list) else []
-    arg = "" if isinstance(raw, list) else str(raw)
+    arg = "" if isinstance(raw, list | dict) else str(raw)
+    opts: dict[str, Any] = raw if isinstance(raw, dict) else {}
     label = f"{name}: {raw}" if raw else name
     checks: dict[str, Callable[[], tuple[bool, str]]] = {
         "finalizable": lambda: (beam.finalized_at is not None, "; ".join(beam.finalize_issues())),
@@ -122,24 +127,9 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             all(any(d.w == W(w) for e in beam.events for d in e.dimensions) for w in args),
             str(sorted({d.w.value for e in beam.events for d in e.dimensions})),
         ),
-        "metric_group_by_w": lambda: (
-            any(
-                e is not None
-                and any(
-                    (d := e.dimension(ref.partition(".")[0])) is not None and d.w == W(arg)
-                    for ref in m.group_by
-                )
-                for m, e in _metrics_events(beam)
-            ),
-            str([m.group_by for m in beam.metrics]),
-        ),
         "has_gap": lambda: (
             any(g.kind == GapKind(arg) for g in beam.gaps),
             str([g.kind.value for g in beam.gaps]),
-        ),
-        "metric_has_filter": lambda: (
-            any(m.filters for m in beam.metrics),
-            str([[f.model_dump(mode="json") for f in m.filters] for m in beam.metrics]),
         ),
         "metric_type": lambda: (
             any(m.type == MetricType(arg) for m in beam.metrics),
@@ -209,6 +199,15 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         ),
         # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
         "shared_dimensions": lambda: _shared_dimensions(beam, args),
+        # 以下は名前の揺れによらず、元の列（raw.orders.ordered_at）で採点する（#155）
+        # 指標の切り口に、その列がすべてある（When はイベント側の日時の列。列のリストはどれか 1 つ）
+        "metric_group_by_columns": lambda: _group_by_columns(
+            beam, raw if isinstance(raw, list) else [raw]
+        ),
+        # 指標の絞り込みで、その列の値を除く・残す（例: キャンセルを除く）
+        "metric_filter": lambda: _metric_filter(beam, opts),
+        # 比率の指標の分子・分母が、その列の集計になっている
+        "ratio_of": lambda: _ratio_of(beam, opts),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -229,6 +228,98 @@ def _shared_dimensions(beam: BeamModel, ws: list[str]) -> tuple[bool, str]:
                 {n for names in per_event for n in names if sum(n in x for x in per_event) >= 2}
             )
     return all(shared.values()), str(shared)
+
+
+def _column(source: SourceRef | None) -> str | None:
+    if source is None:
+        return None
+    return f"{source.table}.{source.column}" if source.column else f"{source.table}:{source.expr}"
+
+
+def _ref_column(event: BusinessEvent, ref: str) -> str | None:
+    """指標の切り口・条件の参照（`<dim ref>.<属性>` など）を、元の列に解決する。"""
+    kind = resolve_ref(event, ref)
+    dim = event.dimension(ref.partition(".")[0])
+    if kind == "degenerate" and (deg := event.degenerate(ref)) is not None:
+        return _column(deg.source)
+    if kind == "measure" and (measure := event.measure(ref)) is not None:
+        return _column(measure.source)
+    if kind == "time" and dim is not None:
+        return _column(dim.fact_key)
+    if kind == "attribute" and dim is not None:
+        attr = ref.partition(".")[2]
+        return _column(next(a.source for a in dim.attributes if a.name == attr))
+    return None
+
+
+def _group_by_columns(beam: BeamModel, columns: list[Any]) -> tuple[bool, str]:
+    """columns の各要素が切り口にある。要素がリストなら、そのどれか 1 つ（店舗名か店舗 ID）。"""
+    found = {
+        c
+        for m, e in _metrics_events(beam)
+        if e is not None
+        for ref in m.group_by
+        if (c := _ref_column(e, ref))
+    }
+    wanted = [{str(c) for c in (x if isinstance(x, list) else [x])} for x in columns]
+    return all(w & found for w in wanted), str(sorted(found))
+
+
+def _allows(operator: FilterOperator, values: list[str], value: str) -> bool:
+    if operator == FilterOperator.EQUALS:
+        return value == values[0]
+    if operator == FilterOperator.NOT_EQUALS:
+        return value != values[0]
+    if operator == FilterOperator.IN:
+        return value in values
+    return value not in values
+
+
+def _metric_filter(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """ある指標が、column の excludes の値をすべて除き、includes の値をすべて残すか。
+
+    どれか 1 つの指標が満たせばよい（比率なら分母の指標だけに条件があることもある）。
+    """
+    if not opts.get("column") or not opts.get("excludes"):
+        raise ValueError(f"metric_filter には column と excludes（1 つ以上）が必要です: {opts}")
+    column = str(opts["column"])
+    excludes = [str(v) for v in opts["excludes"]]
+    includes = [str(v) for v in opts.get("includes", [])]
+    seen: list[str] = []
+    for m, e in _metrics_events(beam):
+        if e is None:
+            continue
+        filters = [f for f in m.filters if _ref_column(e, f.ref) == column]
+        seen += [f"{m.name}: {f.ref} {f.operator.value} {f.values}" for f in filters]
+
+        def allowed(value: str, filters: list[Any] = filters) -> bool:
+            return all(_allows(f.operator, [str(v) for v in f.values], value) for f in filters)
+
+        if not any(allowed(v) for v in excludes) and all(allowed(v) for v in includes):
+            return True, "; ".join(seen)
+    return False, "; ".join(seen) or "条件なし"
+
+
+def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か。"""
+
+    def measure_column(name: str | None) -> str | None:
+        metric = next((m for m in beam.metrics if m.name == name), None)
+        event = beam.event(metric.event) if metric else None
+        if metric is None or event is None or metric.measure is None:
+            return None
+        measure = event.measure(metric.measure)
+        return _column(measure.source) if measure else None
+
+    pairs = [
+        (measure_column(m.numerator), measure_column(m.denominator))
+        for m in beam.metrics
+        if m.type == MetricType.RATIO
+    ]
+    if not opts.get("numerator") or not opts.get("denominator"):
+        raise ValueError(f"ratio_of には numerator と denominator が必要です: {opts}")
+    want = (str(opts["numerator"]), str(opts["denominator"]))
+    return want in pairs, str(pairs)
 
 
 class _NoForeignKeys:

@@ -8,9 +8,14 @@ persona: |
   - 返品率は「返品された数量 ÷ 販売した数量」で考えている（聞かれたら答える）。
   - 返品理由別にも見たい。
   - 販売はキャンセルされた注文を除く。
+  - 返品率の高いカテゴリを見つけて、仕入れ先と品質の改善を話し合うのに使いたい（目的を聞かれたら答える）。
   - 優先度は中くらい。
 checks:
   - finalizable
   - has_w: [what, when]
   - metric_type: ratio
   - min_events: 1
+  - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
+  - ratio_of: {numerator: raw.returns.quantity, denominator: raw.order_items.quantity}
+  - metric_group_by_columns: [raw.products.category, raw.returns.return_reason]
+  - asks_purpose
