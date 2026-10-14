@@ -118,8 +118,36 @@ export interface OnboardingDraft {
   note: string | null
   cleansing: string
   cleansing_exists: boolean
+  /** cleansing を読んだもの（フォームで直す。#150）。既存の定義が読めなければ null（YAML で直す） */
+  cleansing_spec?: CleansingSpec | null
+  /** 源泉の列のプロファイル（値の例を出す。#150） */
+  columns?: ColumnProfile[]
+  /** 追加後のオントロジーの概念の名前 → 表示名（#150） */
+  concept_labels?: Record<string, string>
   mermaid: string
   bus: BusMatrix
+}
+
+/** クレンジングの定義（backend の adp.cleansing.models.CleansingSpec。画面で直す項目だけ型を付ける） */
+export interface CleansingDerive {
+  name: string
+  as: 'date' | 'month' | 'year'
+  description?: string
+}
+export interface CleansingRule {
+  name: string
+  rename?: string
+  drop?: boolean
+  cast?: string
+  accepted_values?: (string | number)[]
+  derive?: CleansingDerive[]
+  [other: string]: unknown
+}
+export interface CleansingSpec {
+  source: string
+  key?: string | null
+  columns?: CleansingRule[]
+  [other: string]: unknown
 }
 
 export function onboardUrl(table: string): string {

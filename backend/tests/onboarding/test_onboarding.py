@@ -337,3 +337,72 @@ async def test_onboarding_is_not_repeated_without_redo(tmp_path: Path) -> None:
 
     await asyncio.gather(*service._tasks)
     assert calls == ["raw.inventory"]
+
+
+def test_cleansing_spec_round_trips_through_the_form() -> None:
+    """画面のフォームは定義を JSON で受け取って直し、確定のときは YAML にそろえる（#150）。"""
+    from adp.cleansing.models import CleansingSpec
+    from adp.onboarding.pipeline import _spec_json, cleansing_text, parse_cleansing
+
+    text = (
+        "source: raw.inventory\nkey: inventory_id\ncolumns:\n"
+        "- name: movement_type\n  accepted_values: [receipt, shipment]\n"
+        "- name: moved_at\n  cast: timestamp\n"
+    )
+    spec = _spec_json(text, "raw.inventory")
+    assert spec is not None
+    assert spec["key"] == "inventory_id"
+    # フォームで直す: 許す値を足し、日時から日付を作る
+    spec["columns"][0]["accepted_values"].append("adjustment")
+    spec["columns"][1]["derive"] = [{"name": "moved_date", "as": "date"}]
+    back = parse_cleansing(cleansing_text(spec), "raw.inventory")
+    assert back.rule("movement_type").accepted_values == ["receipt", "shipment", "adjustment"]  # type: ignore[union-attr]
+    assert back.rule("moved_at").derive[0].as_ == "date"  # type: ignore[union-attr]
+    # 読めない定義はフォームに出さない（YAML で直す）。YAML はそのまま通す
+    assert _spec_json("source: [", "raw.inventory") is None
+    assert _spec_json("source: raw.orders\n", "raw.inventory") is None
+    assert cleansing_text("source: raw.inventory\n") == "source: raw.inventory\n"
+    with pytest.raises(ValueError):
+        cleansing_text({"source": "raw.inventory", "columns": [{"name": "x", "cast": "nope"}]})
+    assert isinstance(CleansingSpec.model_validate(spec), CleansingSpec)
+
+
+def test_onboarding_api_rejects_invalid_cleansing_json(tmp_path: Path) -> None:
+    """フォームから送った定義（JSON）が形式に合わなければ 422 で返す（#150）。"""
+    from fastapi.testclient import TestClient
+
+    from adp.api.app import create_app
+    from adp.api.service import SessionService
+    from adp.api.store import Store
+    from adp.interview import Interviewer
+    from adp.onboarding.pipeline import OnboardingPipeline
+    from adp.pipeline import PipelineConfig
+
+    db = REPO / "warehouse/data/dev.duckdb"
+    if not db.exists():
+        pytest.skip("make setup が必要")
+
+    async def pipeline(beam, on_step):  # type: ignore[no-untyped-def]
+        raise AssertionError
+
+    onboarding = OnboardingPipeline(PipelineConfig(REPO, Path("."), db, None), None, LLMSettings())
+    service = SessionService(Store(tmp_path / "app.db"), Interviewer(None, LLMSettings()), pipeline)  # type: ignore[arg-type]
+    client = TestClient(create_app(service, onboarding=onboarding))
+    body = {
+        "patch": {
+            "concepts": [
+                {
+                    "name": "review",
+                    "label": "レビュー",
+                    "domain": "channel",
+                    "kind": "event",
+                    "source": "raw.reviews",
+                    "key": "review_id",
+                }
+            ]
+        },
+        "cleansing": {"source": "raw.reviews", "columns": [{"name": "rating", "cast": "nope"}]},
+    }
+    res = client.post("/sources/raw.reviews/onboarding", json=body)
+    assert res.status_code == 422, res.text
+    assert "cast" in res.text

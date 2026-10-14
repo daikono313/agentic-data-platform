@@ -9,7 +9,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import duckdb
 from fastapi import FastAPI, HTTPException
@@ -24,7 +24,7 @@ from adp.chart_view import ChartRequest, ChartView, ChartViews
 from adp.charts import ChartError
 from adp.datasets import DatasetIndex
 from adp.feedback import CATEGORIES, RETENTION_DAYS, FeedbackIn
-from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline
+from adp.onboarding.pipeline import AlreadyOnboarded, OnboardingPipeline, cleansing_text
 from adp.onboarding.proposal import OntologyPatch
 from adp.sync import INTERVIEW_IDLE_S, AutoSync, Sync, auto_interval
 from adp.warehouse import warehouse_db, warehouse_kind
@@ -45,7 +45,8 @@ class OnboardingDraftIn(BaseModel):
 
 class OnboardingIn(BaseModel):
     patch: dict[str, Any]
-    cleansing: str = Field(min_length=1, max_length=20000)
+    cleansing: Annotated[str, Field(min_length=1, max_length=20000)] | dict[str, Any]
+    """クレンジングの定義。YAML か、画面のフォームで直した JSON（#150）。"""
     redo: bool = False
     """前の取り込みの PR を閉じた（マージしなかった）ので、もう一度作る。"""
 
@@ -128,7 +129,8 @@ def create_app(
             raise HTTPException(503, "源泉の取り込みは使えません")
         try:
             patch = OntologyPatch.model_validate(body.patch)
-            errors = await asyncio.to_thread(onboarding.check_request, table, patch, body.cleansing)
+            cleansing = cleansing_text(body.cleansing)
+            errors = await asyncio.to_thread(onboarding.check_request, table, patch, cleansing)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         except CatalogUnavailable as e:
@@ -140,7 +142,7 @@ def create_app(
         if errors:
             raise HTTPException(422, " / ".join(errors))
         try:
-            return service.start_onboarding(table, patch, body.cleansing, redo=body.redo)
+            return service.start_onboarding(table, patch, cleansing, redo=body.redo)
         except Conflict as e:
             raise HTTPException(409, str(e)) from e
 

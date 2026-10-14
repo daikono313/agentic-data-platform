@@ -160,13 +160,6 @@ function ColumnRow({
       </TableRow>
     )
   }
-  // NULL 以外の値がすべて違う列（ID・メールアドレスなど）は、上位の値を出しても意味がない
-  const nonNull = p.row_count - p.null_count
-  const allDistinct = p.distinct_count > 0 && p.distinct_count === nonNull
-  // 値の種類が多く、最頻値でも 1% 未満の列（日時など）は、ほぼすべて違う値として扱う
-  const topShare = nonNull > 0 ? (p.top_values.find(([v]) => v !== null)?.[1] ?? 0) / nonNull : 0
-  const mostlyDistinct = p.distinct_count > 100 && topShare < 0.01
-  const showTop = p.distinct_count > 0 && !allDistinct && !mostlyDistinct
   return (
     <TableRow data-testid={`column-${p.column}`} className="align-top">
       {nameCell}
@@ -180,20 +173,40 @@ function ColumnRow({
         <Distribution profile={p} />
       </TableCell>
       <TableCell className="whitespace-normal text-xs">
-        {showTop ? (
-          <div className="flex flex-wrap gap-1">
-            {p.top_values.map(([v, n], i) => (
-              <Badge key={i} variant="outline" title={`${n.toLocaleString()} 行`}>
-                {v ?? 'NULL'}
-                <span className="ml-1 text-muted-foreground">{pct(n, p.row_count)}</span>
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <span className="text-muted-foreground">{p.distinct_count === 0 ? 'すべて NULL' : allDistinct ? 'すべて異なる値' : 'ほとんど異なる値'}</span>
-        )}
+        <TopValues profile={p} />
       </TableCell>
     </TableRow>
+  )
+}
+
+/**
+ * よく出る値（割合つき）。値がすべて・ほとんど違う列（ID・日時など）は、値の代わりにそう書く。
+ * 個人情報の列は値を出さない。プロファイルと取り込みの画面で使う（#150）。
+ */
+export function TopValues({ profile: p, limit }: { profile: ColumnProfile; limit?: number }) {
+  if (p.masked) return <span className="text-muted-foreground">個人情報のため、値は表示しません</span>
+  // NULL 以外の値がすべて違う列（ID・メールアドレスなど）は、上位の値を出しても意味がない
+  const nonNull = p.row_count - p.null_count
+  const allDistinct = p.distinct_count > 0 && p.distinct_count === nonNull
+  // 値の種類が多く、最頻値でも 1% 未満の列（日時など）は、ほぼすべて違う値として扱う
+  const topShare = nonNull > 0 ? (p.top_values.find(([v]) => v !== null)?.[1] ?? 0) / nonNull : 0
+  const mostlyDistinct = p.distinct_count > 100 && topShare < 0.01
+  if (p.distinct_count === 0 || allDistinct || mostlyDistinct) {
+    return (
+      <span className="text-muted-foreground">
+        {p.distinct_count === 0 ? 'すべて NULL' : allDistinct ? 'すべて異なる値' : 'ほとんど異なる値'}
+      </span>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {p.top_values.slice(0, limit).map(([v, n], i) => (
+        <Badge key={i} variant="outline" title={`${n.toLocaleString()} 行`}>
+          {v ?? 'NULL'}
+          <span className="ml-1 text-muted-foreground">{pct(n, p.row_count)}</span>
+        </Badge>
+      ))}
+    </div>
   )
 }
 

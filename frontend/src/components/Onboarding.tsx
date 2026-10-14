@@ -1,12 +1,20 @@
 import { ArrowLeft, Bot, Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { api, errorText, trackJob } from '@/api/client'
-import { sourceUrl, type OnboardingDraft, type OntologyPatch } from '@/api/datasets'
+import {
+  sourceUrl,
+  type CleansingRule,
+  type CleansingSpec,
+  type ColumnProfile,
+  type OnboardingDraft,
+  type OntologyPatch,
+} from '@/api/datasets'
 import type { JobView } from '@/api/types'
 import { BusMatrixView } from '@/components/BusMatrix'
 import { JobProgress } from '@/components/JobProgress'
 import { MermaidDiagram } from '@/components/Ontology'
+import { TopValues } from '@/components/SourceProfile'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +30,8 @@ export function OnboardingScreen({ table }: { table: string }) {
   const [draft, setDraft] = useState<OnboardingDraft | null>(null)
   const [patch, setPatch] = useState<OntologyPatch | null>(null)
   const [cleansing, setCleansing] = useState('')
+  /** フォームで直す定義。既存の定義が読めなければ null で、YAML（cleansing）を直す */
+  const [spec, setSpec] = useState<CleansingSpec | null>(null)
   /** 利用者が直したクレンジングの定義は、案を作り直しても上書きしない */
   const [cleansingEdited, setCleansingEdited] = useState(false)
   const [redo, setRedo] = useState(false)
@@ -38,7 +48,10 @@ export function OnboardingScreen({ table }: { table: string }) {
         const d = await api.onboardingDraft(table, agent)
         setDraft(d)
         setPatch(d.patch)
-        setCleansing((current) => (cleansingEdited ? current : d.cleansing))
+        if (!cleansingEdited) {
+          setCleansing(d.cleansing)
+          setSpec(d.cleansing_spec ?? null)
+        }
       } catch (e) {
         setError(errorText(e))
       } finally {
@@ -71,7 +84,7 @@ export function OnboardingScreen({ table }: { table: string }) {
     setSubmitting(true)
     setError(null)
     try {
-      await follow(await api.startOnboarding(table, patch, cleansing, redo))
+      await follow(await api.startOnboarding(table, patch, spec ?? cleansing, redo))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -144,6 +157,11 @@ export function OnboardingScreen({ table }: { table: string }) {
                 setCleansing(s)
                 setCleansingEdited(true)
               }}
+              spec={spec}
+              onSpec={(s) => {
+                setSpec(s)
+                setCleansingEdited(true)
+              }}
               onAgent={() => load(true)}
               busy={loading !== null}
             />
@@ -168,6 +186,8 @@ function DraftBody({
   onPatch,
   cleansing,
   onCleansing,
+  spec,
+  onSpec,
   onAgent,
   busy,
 }: {
@@ -176,11 +196,20 @@ function DraftBody({
   onPatch: (p: OntologyPatch) => void
   cleansing: string
   onCleansing: (s: string) => void
+  spec: CleansingSpec | null
+  onSpec: (s: CleansingSpec) => void
   onAgent: () => void
   busy: boolean
 }) {
   const update = (i: number, change: Partial<OntologyPatch['concepts'][number]>) =>
     onPatch({ ...patch, concepts: patch.concepts.map((c, j) => (j === i ? { ...c, ...change } : c)) })
+  const profiles = new Map((draft.columns ?? []).map((p) => [p.column, p]))
+  /** 源泉の列 → 属性の表示名（クレンジングのフォームで、列を日本語で示す） */
+  const columnLabels = new Map(
+    patch.concepts.flatMap((c) => c.attributes.filter((a) => a.label).map((a) => [a.column, a.label] as const)),
+  )
+  const conceptLabel = (name: string) =>
+    patch.concepts.find((c) => c.name === name)?.label || draft.concept_labels?.[name] || name
   return (
     <>
       <Card className="gap-2 py-3" aria-label="オントロジーへの追加案">
@@ -198,45 +227,63 @@ function DraftBody({
         </CardHeader>
         <CardContent className="space-y-3 px-4">
           {patch.concepts.map((c, i) => (
-            <div key={i} className="space-y-2 rounded-md border p-3" data-testid={`concept-${c.name}`}>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-mono">{c.name}</span>
-                <Input
-                  aria-label="概念の名前（表示名）"
-                  className="h-8 w-48 text-sm"
-                  value={c.label}
-                  onChange={(e) => update(i, { label: e.target.value })}
-                />
-                <select
-                  aria-label="種類"
-                  className={SELECT}
-                  value={c.kind}
-                  onChange={(e) => update(i, { kind: e.target.value as 'entity' | 'event' })}
-                >
-                  <option value="event">出来事（fact の候補）</option>
-                  <option value="entity">もの・人・場所（dim の候補）</option>
-                </select>
-                <span className="text-muted-foreground">
-                  キー <span className="font-mono">{c.key}</span>
-                </span>
+            <div key={i} className="space-y-3 rounded-md border p-3" data-testid={`concept-${c.name}`}>
+              <dl className="grid items-center gap-x-3 gap-y-2 text-xs sm:grid-cols-[9rem_1fr]">
+                <dt className="font-semibold">概念</dt>
+                <dd className="flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="概念の名前（表示名）"
+                    className="h-8 w-56 text-sm"
+                    value={c.label}
+                    onChange={(e) => update(i, { label: e.target.value })}
+                  />
+                  <Code title="内部の名前">{c.name}</Code>
+                </dd>
+                <dt className="font-semibold">種類</dt>
+                <dd>
+                  <select
+                    aria-label="種類"
+                    className={SELECT}
+                    value={c.kind}
+                    onChange={(e) => update(i, { kind: e.target.value as 'entity' | 'event' })}
+                  >
+                    <option value="event">出来事（fact の候補）</option>
+                    <option value="entity">もの・人・場所（dim の候補）</option>
+                  </select>
+                </dd>
+                <dt className="font-semibold">1 件を見分けるキー</dt>
+                <dd data-testid={`concept-key-${c.name}`}>
+                  {c.attributes.find((a) => a.column === c.key)?.label || columnLabels.get(c.key)}{' '}
+                  <Code title="列の名前">{c.key}</Code>
+                </dd>
+              </dl>
+              <div className="space-y-1">
+                <p className="text-xs font-semibold">属性（表示名を直せます。右は実際の値の例）</p>
+                <ul className="divide-y">
+                  {c.attributes.map((a, k) => (
+                    <li
+                      key={a.name}
+                      className="grid gap-2 py-1.5 text-xs sm:grid-cols-[14rem_1fr]"
+                      data-testid={`attribute-${a.column}`}
+                    >
+                      <div className="space-y-0.5">
+                        <Input
+                          aria-label={`属性 ${a.column} の表示名`}
+                          className="h-7 text-xs"
+                          value={a.label}
+                          onChange={(e) =>
+                            update(i, {
+                              attributes: c.attributes.map((x, j) => (j === k ? { ...x, label: e.target.value } : x)),
+                            })
+                          }
+                        />
+                        <Code title="列の名前">{a.column}</Code>
+                      </div>
+                      <ValueHint profile={profiles.get(a.column)} />
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <ul className="grid gap-1 sm:grid-cols-2">
-                {c.attributes.map((a, k) => (
-                  <li key={a.name} className="flex items-center gap-2 text-xs">
-                    <span className="w-32 shrink-0 font-mono text-muted-foreground">{a.column}</span>
-                    <Input
-                      aria-label={`属性 ${a.column} の表示名`}
-                      className="h-7 text-xs"
-                      value={a.label}
-                      onChange={(e) =>
-                        update(i, {
-                          attributes: c.attributes.map((x, j) => (j === k ? { ...x, label: e.target.value } : x)),
-                        })
-                      }
-                    />
-                  </li>
-                ))}
-              </ul>
             </div>
           ))}
           {patch.relations.length > 0 && (
@@ -245,7 +292,7 @@ function DraftBody({
               <ul className="space-y-1">
                 {patch.relations.map((r, i) => (
                   <li key={i} className="flex flex-wrap items-center gap-2 text-xs">
-                    <span>{r.from}</span>→
+                    <span>{conceptLabel(r.from)}</span>→
                     <Input
                       aria-label={`関係 ${r.from} → ${r.to} の動詞`}
                       className="h-7 w-32 text-xs"
@@ -257,8 +304,8 @@ function DraftBody({
                         })
                       }
                     />
-                    →<span>{r.to}</span>
-                    <span className="font-mono text-muted-foreground">{r.via}</span>
+                    →<span>{conceptLabel(r.to)}</span>
+                    <Code title="つなぐ列">{r.via}</Code>
                   </li>
                 ))}
               </ul>
@@ -280,19 +327,26 @@ function DraftBody({
         <CardHeader className="px-4">
           <CardTitle className="text-sm">2. クレンジングの定義</CardTitle>
           <p className="text-xs text-muted-foreground">
-            {draft.cleansing_exists ? '今の定義です。' : 'プロファイルから作った雛形です。'}
-            確定すると <code className="font-mono">warehouse/cleansing/{draft.source}.yml</code>{' '}
-            に置き、クレンジング層（stg）を生成します。
+            {draft.cleansing_exists ? '今の定義です。' : 'プロファイルから作った案です。'}
+            次の 3 つを確かめてください（文字の列の前後の空白を除くことと、空文字を NULL にすることは、いつも行います）。確定すると{' '}
+            <Code>warehouse/cleansing/{draft.source}.yml</Code> に置き、クレンジング層（stg）を生成します。
           </p>
         </CardHeader>
         <CardContent className="px-4">
-          <textarea
-            aria-label="クレンジングの定義（YAML）"
-            className="h-56 w-full rounded-md border bg-muted p-3 font-mono text-xs"
-            value={cleansing}
-            onChange={(e) => onCleansing(e.target.value)}
-            spellCheck={false}
-          />
+          {spec ? (
+            <CleansingForm spec={spec} onSpec={onSpec} profiles={profiles} labels={columnLabels} />
+          ) : (
+            <div className="space-y-1">
+              <p className="text-xs text-amber-600">今の定義をフォームで読めなかったため、YAML で直してください。</p>
+              <textarea
+                aria-label="クレンジングの定義（YAML）"
+                className="h-56 w-full rounded-md border bg-muted p-3 font-mono text-xs"
+                value={cleansing}
+                onChange={(e) => onCleansing(e.target.value)}
+                spellCheck={false}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -309,5 +363,174 @@ function DraftBody({
         </CardContent>
       </Card>
     </>
+  )
+}
+
+/** 英語の内部名（列名など）は、小さな補足として出す（#150） */
+function Code({ children, title }: { children: ReactNode; title?: string }) {
+  return (
+    <code className="font-mono text-[11px] text-muted-foreground" title={title}>
+      {children}
+    </code>
+  )
+}
+
+const TYPE_LABELS: [RegExp, string][] = [
+  [/^TIMESTAMP/, '日時'],
+  [/^DATE$/, '日付'],
+  [/^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|DOUBLE|FLOAT|REAL|DECIMAL)/, '数値'],
+  [/^BOOLEAN$/, '真偽'],
+  [/^VARCHAR/, '文字'],
+]
+
+function typeLabel(dataType: string): string {
+  return TYPE_LABELS.find(([re]) => re.test(dataType.toUpperCase()))?.[1] ?? dataType
+}
+
+/** 属性の判断材料: 型と、範囲（数値・日付）かよく出る値（#150） */
+function ValueHint({ profile: p }: { profile?: ColumnProfile }) {
+  if (!p) return <span className="text-muted-foreground">-</span>
+  // 値の種類が多い数値・日付は範囲を、少ないもの（評価の 1〜5 など）はよく出る値を出す
+  const ranged = !p.masked && p.min !== null && (p.histogram || p.monthly) && p.distinct_count > 10
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="secondary">{typeLabel(p.data_type)}</Badge>
+      {ranged ? (
+        <span>
+          {p.min} 〜 {p.max}
+        </span>
+      ) : (
+        <TopValues profile={p} limit={4} />
+      )}
+    </div>
+  )
+}
+
+function outputName(rule: CleansingRule): string {
+  return rule.rename ?? rule.name
+}
+
+function dateColumnName(column: string): string {
+  return column.endsWith('_at') ? `${column.slice(0, -3)}_date` : `${column}_date`
+}
+
+/**
+ * クレンジングの定義をフォームで直す（#150）。確かめるのは、1 件を見分けるキー・区分の列に許す値・
+ * 日時から日付を作るか。それ以外の項目（型の変換・除外など）は、そのまま残す。
+ */
+function CleansingForm({
+  spec,
+  onSpec,
+  profiles,
+  labels,
+}: {
+  spec: CleansingSpec
+  onSpec: (s: CleansingSpec) => void
+  profiles: Map<string, ColumnProfile>
+  labels: Map<string, string>
+}) {
+  const rules = spec.columns ?? []
+  const ruleOf = (column: string): CleansingRule => rules.find((r) => r.name === column) ?? { name: column }
+  const setRule = (rule: CleansingRule) => {
+    const exists = rules.some((r) => r.name === rule.name)
+    onSpec({ ...spec, columns: exists ? rules.map((r) => (r.name === rule.name ? rule : r)) : [...rules, rule] })
+  }
+  const label = (column: string) => labels.get(column) ?? column
+  const dropped = new Set(rules.filter((r) => r.drop).map((r) => r.name))
+  const columns = [...profiles.keys()].filter((c) => !dropped.has(c))
+  const keyOptions = columns.map((c) => outputName(ruleOf(c)))
+  const enums = rules.filter((r) => r.accepted_values !== undefined)
+  const datetimes = columns.filter(
+    (c) => ruleOf(c).cast === 'timestamp' || /^TIMESTAMP/i.test(profiles.get(c)?.data_type ?? ''),
+  )
+  return (
+    <div className="space-y-4 text-xs">
+      <section className="space-y-1">
+        <h3 className="font-semibold">1 件を見分けるキー</h3>
+        <p className="text-muted-foreground">この列の値が重複・空になっていないかを、テストで確かめます。</p>
+        <select
+          aria-label="1 件を見分けるキー"
+          className={SELECT}
+          value={spec.key ?? ''}
+          onChange={(e) => onSpec({ ...spec, key: e.target.value || null })}
+        >
+          <option value="">（なし）</option>
+          {keyOptions.map((c, i) => (
+            <option key={c} value={c}>
+              {label(columns[i])}（{c}）
+            </option>
+          ))}
+        </select>
+      </section>
+      <section className="space-y-1">
+        <h3 className="font-semibold">区分の列に許す値</h3>
+        <p className="text-muted-foreground">
+          チェックした値以外が入っていたら、テストで止めます。数字は今のデータの行数です。
+        </p>
+        {enums.length === 0 && <p className="text-muted-foreground">区分の列はありません。</p>}
+        {enums.map((r) => {
+          const accepted = r.accepted_values ?? []
+          const counts = new Map(
+            (profiles.get(r.name)?.top_values ?? []).filter(([v]) => v !== null).map(([v, n]) => [v as string, n]),
+          )
+          const values = [...new Set([...accepted.map(String), ...counts.keys()])]
+          return (
+            <div key={r.name} className="flex flex-wrap items-center gap-3" data-testid={`accepted-${r.name}`}>
+              <span className="w-40 shrink-0">
+                {label(r.name)} <Code>{r.name}</Code>
+              </span>
+              {values.map((v) => {
+                const on = accepted.map(String).includes(v)
+                return (
+                  <label key={v} className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      aria-label={`${r.name} に許す値 ${v}`}
+                      checked={on}
+                      onChange={() =>
+                        setRule({
+                          ...r,
+                          accepted_values: on ? accepted.filter((x) => String(x) !== v) : [...accepted, v],
+                        })
+                      }
+                    />
+                    {v}
+                    {counts.has(v) && <span className="text-muted-foreground">{counts.get(v)?.toLocaleString()}</span>}
+                  </label>
+                )
+              })}
+            </div>
+          )
+        })}
+      </section>
+      <section className="space-y-1">
+        <h3 className="font-semibold">日時から日付を作るか</h3>
+        <p className="text-muted-foreground">日付の列を作ると、日別・月別に集計しやすくなります。</p>
+        {datetimes.length === 0 && <p className="text-muted-foreground">日時の列はありません。</p>}
+        {datetimes.map((c) => {
+          const rule = ruleOf(c)
+          const derive = rule.derive ?? []
+          const on = derive.some((d) => d.as === 'date')
+          const name = dateColumnName(outputName(rule))
+          return (
+            <label key={c} className="flex items-center gap-2" data-testid={`derive-${c}`}>
+              <input
+                type="checkbox"
+                aria-label={`${c} から日付の列を作る`}
+                checked={on}
+                onChange={() => {
+                  const rest = derive.filter((d) => d.as !== 'date')
+                  const next = on ? rest : [...rest, { name, as: 'date' as const, description: `${label(c)}の日付` }]
+                  const base: CleansingRule = { ...rule, derive: next }
+                  if (!next.length) delete base.derive
+                  setRule(base)
+                }}
+              />
+              {label(c)} <Code>{c}</Code> から日付の列 <Code>{name}</Code> を作る
+            </label>
+          )
+        })}
+      </section>
+    </div>
   )
 }

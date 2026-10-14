@@ -313,8 +313,8 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | GET | `/jobs/{id}/events` | 生成ジョブの進捗を SSE で返す |
 | GET | `/datasets`（v2） | 取得可能な指標（と切り口）・モデル・元データ・BEAM 成果物の一覧（#38）と、fact × dimension のバスマトリクス（#62）。元データごとに、使っている fact / dim（空なら未活用。#72）とオントロジーに無いか（未整理。#69）。説明の無い元データ・列はオントロジーのラベルで埋める（#148） |
 | GET | `/ontology` | オントロジーの図（Mermaid）と、源泉・dbt のモデルとの食い違い、未整理の源泉（#67） |
-| POST | `/sources/{table}/onboarding/draft` | 源泉の取り込みの下書き（`{"agent": bool}`。追加案・クレンジングの定義・追加後の図・バスマトリクスの候補。#69） |
-| POST | `/sources/{table}/onboarding` | 確定した追加案とクレンジングの定義で、取り込みの PR を作るジョブを始める（進捗は `/jobs/{id}/events`） |
+| POST | `/sources/{table}/onboarding/draft` | 源泉の取り込みの下書き（`{"agent": bool}`。追加案・クレンジングの定義（YAML と、フォームで直す JSON）・列のプロファイル・概念の表示名・追加後の図・バスマトリクスの候補。#69, #150） |
+| POST | `/sources/{table}/onboarding` | 確定した追加案とクレンジングの定義（YAML か JSON）で、取り込みの PR を作るジョブを始める（進捗は `/jobs/{id}/events`） |
 | GET | `/sources/{table}/onboarding` | その源泉の最新の取り込みジョブ |
 | GET | `/sources/{table}/cleansing` | 源泉のクレンジングの定義と、プロファイルから作った雛形（#68） |
 | GET | `/sources/{table}/profile` | 源泉 1 つのデータプロファイル（列ごとの型・NULL 率・ユニーク数・最小/最大・上位の値、主キー/外部キーの候補、使っている整備済みモデル。#62）。日付・日時の列は月ごとの件数（欠けた月も 0 で）、数値の列は等幅 10 区間の分布（#71）。説明の無い源泉・列は `/datasets` と同じくオントロジーのラベルで埋める（#148）。読み取り専用の Catalog 経由で、対象スキーマ外は 404 |
