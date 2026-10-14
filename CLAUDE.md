@@ -27,7 +27,7 @@
 **コードは AI が書き、ドキュメント（方針・規約・知識）は人間が書いて直す。** 全体のフローは [design-doc の「全体のフローと担当」](docs/design-doc.md#全体のフローと担当)、ファイルごとの持ち主は [「ファイルの持ち主」](docs/design-doc.md#ファイルの持ち主) を参照。
 
 - アプリのコード・プロンプト（`backend/`・`frontend/` など）は Claude Code が書く。
-- ドキュメントは人間が持ち主。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよいが、中身（方針・規約・知識。guardrails の制限を緩めること、ADR の採否を含む）を変えるときはオーナーの承認を得る（certificate の T3）。
+- ドキュメントは人間が持ち主（`docs/knowledge/interview.md` だけは人間と AI の共同で、certificate の C10 を満たせば AI も中身を直してよい。書けるのは段階ごとの目的・聞くことだけ）。AI はコードの変更に合わせて事実の記述（API の表・コマンド・ファイルの場所）を直してよいが、中身（方針・規約・知識。guardrails の制限を緩めること、ADR の採否を含む）を変えるときはオーナーの承認を得る（certificate の T3）。
 - 生成物（stg・生成した fct と Semantic Layer・`warehouse/charts/`・`docs/ontology.md`・`frontend/src/generated/` など。一覧は「ファイルの持ち主」）は手で直さない。元の定義（`beam/`・`ontology/`・`warehouse/cleansing/`）か、規約・生成器を直して作り直す。
 
 ## コマンド
