@@ -6,7 +6,11 @@ persona: |
   知っていること・望んでいること:
   - 注文の支払方法（クレジットカード・コンビニ払いなど）ごとに、売上金額（税抜・値引後）を月別に見たい。
   - 売上は注文した時点で数え、キャンセルされた注文は除く。
+  - 売上の多い支払方法を知って、支払方法ごとのキャンペーンを決めるのに使いたい（目的を聞かれたら答える）。
   - 優先度は中くらい。
 checks:
   - finalizable
   - fact: fct_order_lines
+  - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
+  - metric_group_by_columns: [raw.orders.payment_method, raw.orders.ordered_at]
+  - asks_purpose

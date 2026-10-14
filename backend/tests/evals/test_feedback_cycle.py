@@ -426,6 +426,58 @@ def test_modeling_checks() -> None:
     assert not _check(two, {"story_type": "evolving"}).passed
 
 
+def test_column_checks() -> None:
+    """切り口・絞り込み・比率を、名前の揺れによらず元の列で採点する（#155）。"""
+    from adp.beam import FilterOperator, MetricFilter, MetricRequest, MetricType, SourceRef
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
+    metric = beam.metrics[0]
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    # When は日時の列、属性は属性の元の列に解決する
+    assert passed({"metric_group_by_columns": ["raw.stores.channel", "raw.orders.ordered_at"]})
+    assert not passed({"metric_group_by_columns": ["raw.stores.channel", "raw.products.category"]})
+
+    cancel = {"column": "raw.orders.order_status", "excludes": ["cancelled"]}
+    assert passed({"metric_filter": cancel})
+    assert not passed({"metric_filter": cancel | {"includes": ["cancelled"]}})
+    # 別の列の条件では通らない。in で残す値に入っていなければ除いたことになる
+    assert not passed({"metric_filter": {"column": "raw.stores.channel", "excludes": ["app"]}})
+    metric.filters = [
+        MetricFilter(
+            ref="order_status.order_status", operator=FilterOperator.IN, values=["completed"]
+        )
+    ]
+    assert passed({"metric_filter": cancel | {"includes": ["completed"]}})
+    assert not passed({"metric_filter": cancel | {"includes": ["returned"]}})
+    metric.filters = []
+    assert not passed({"metric_filter": cancel})
+
+    # 比率: 分子・分母の指標の measure の元の列
+    ratio = {"numerator": "raw.order_items.quantity", "denominator": "raw.order_items.quantity"}
+    assert not passed({"ratio_of": ratio})
+    measure = beam.events[0].measure(metric.measure or "")
+    assert measure is not None
+    measure.source = SourceRef(table="raw.order_items", column="quantity")
+    beam.metrics.append(
+        MetricRequest(
+            name="rate",
+            label="率",
+            question="率",
+            framed_question="率",
+            type=MetricType.RATIO,
+            event=metric.event,
+            numerator=metric.name,
+            denominator=metric.name,
+        )
+    )
+    assert passed({"ratio_of": ratio})
+
+
 def test_purpose_question_check() -> None:
     """要求の目的（何の判断・行動に使うか）を聞いたか（#135）。区分のルールの質問では通らない。"""
     from adp.evals.interview import _transcript_check_map

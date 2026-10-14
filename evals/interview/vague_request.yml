@@ -7,8 +7,11 @@ persona: |
   - 本当に知りたいのは「月ごとに、何人のお客さんが買ってくれたか」。
   - 会員ランク別と地方別に見たい。
   - 注文した時点で数える。キャンセルは除く。
+  - 買ってくれるお客さんが減っている会員ランク・地方を見つけて、キャンペーンの対象を決めるのに使いたい（目的を聞かれたら答える）。
   - 優先度は高い。
 checks:
   - finalizable
   - metric_aggregation: count_distinct
-  - metric_group_by_w: who
+  - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
+  - metric_group_by_columns: [raw.customers.membership_rank, raw.customers.region, raw.orders.ordered_at]
+  - asks_purpose

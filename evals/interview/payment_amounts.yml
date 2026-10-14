@@ -7,7 +7,10 @@ persona: |
   知っていること・望んでいること:
   - 注文の金額ではなく、決済の記録（支払）で実際に支払われた金額を、支払方法ごと・支払った月ごとに見たい。
   - 1 件の支払が 1 行。返金はまだ考えなくてよい。
+  - 支払方法ごとの入金額を確かめて、決済サービスの手数料の見直しに使いたい（目的を聞かれたら答える）。
   - 優先度は高い。
 checks:
   - finalizable
   - fact_source: raw.payments
+  - metric_group_by_columns: [raw.payments.payment_method, raw.payments.paid_at]
+  - asks_purpose

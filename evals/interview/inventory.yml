@@ -6,8 +6,12 @@ persona: |
   知っていること・望んでいること:
   - 実店舗ごと・商品カテゴリごとに、商品がどれだけ入荷したか（入荷数量）を月別に見たい。
   - 在庫の入出庫の記録には、入荷のほかに他店への移動・廃棄と、棚卸（数えた在庫数）があるが、見たいのは入荷だけ（聞かれたら答える）。
+  - 入荷の多い店舗・カテゴリをつかんで、品出しの人員の配置を決めるのに使いたい（目的を聞かれたら答える）。
   - 優先度は高い。
 checks:
   - finalizable
   - has_w: [what, when, where]
   - min_events: 1
+  - metric_filter: {column: raw.inventory.movement_type, includes: [receipt], excludes: [transfer_out, disposal, count]}
+  - metric_group_by_columns: [raw.stores.store_name, raw.products.category, raw.inventory.moved_at]
+  - asks_purpose
