@@ -287,6 +287,24 @@ def test_position_words() -> None:
         assert _checks([_msg(text)])["no_choice_position_words"], text
 
 
+def test_examples_shown() -> None:
+    """具体例の確認では、値を発言に書く（tool で見た行はユーザーに見えない。#163）。"""
+    hidden = [_msg("", "この 2 件を具体例として記録してよいですか？")]
+    assert not _checks(hidden)["examples_shown"]
+    shown = [
+        _msg(
+            "- 2024-01-01 07:45、愛知県03号店で 54 個入荷\n- 2024-01-01 08:15 に 20 個入荷",
+            "この 2 件を具体例として記録してよいですか？",
+        )
+    ]
+    assert _checks(shown)["examples_shown"]
+    # 直前の発言で値を示していればよい
+    before = [_msg("1 件目は注文 ID 1 の 17,100 円です。"), hidden[0]]
+    assert _checks(before)["examples_shown"]
+    # 具体例の確認でない質問は見ない
+    assert _checks([_msg("", "この 2 つの切り口でよいですか？")])["examples_shown"]
+
+
 def test_closing_phrases_are_counted() -> None:
     """質問を出した発言の締めの一言を、取り除いた文も含めて数える（#158）。"""
     removed = ChatMessage(

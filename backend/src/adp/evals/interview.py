@@ -442,6 +442,34 @@ _PURPOSE = re.compile(
 """要求の目的（指標を見て何を判断・行動するか）を聞く質問。区分のルールの「どう判断しますか」は除く。"""
 
 
+_EXAMPLE_CONFIRM = re.compile(
+    r"例[^。？?]{0,20}(記録して|使って|で)(よい|良い|いい|よろしい)|例[^。？?]{0,20}合って"
+)
+"""具体例を記録してよいかの確認。"""
+_VALUE = re.compile(
+    r"\d{4}\s*[-/年]\s*\d{1,2}|\d+\s*月\s*\d+\s*日|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)"
+    r"|ID\s*[:：]?\s*\d"
+)
+"""具体例の値（日付・数量・金額・ID）。「2 件」のような件数は値に数えない。"""
+
+
+def _examples_not_shown(messages: list[Any]) -> list[str]:
+    """具体例を記録してよいかを、値（日付・数量など）を示さずに確かめた発言（#163）。
+    tool の結果はユーザーに見えないので、確かめてもらう行の値は発言に書く。
+    直前のアシスタントの発言で値を示していれば、その確認とみなす。"""
+    assistant = [m for m in messages if m.role == "assistant"]
+    found = []
+    for i, m in enumerate(assistant):
+        if not _EXAMPLE_CONFIRM.search(m.question or "") and not (
+            not m.question and _EXAMPLE_CONFIRM.search(m.text)
+        ):
+            continue
+        shown = _shown(m) + ("\n" + _shown(assistant[i - 1]) if i else "")
+        if not _VALUE.search(shown):
+            found.append(_shown(m).strip()[:60])
+    return found
+
+
 def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
     """アシスタントの質問のうち、pattern に合うもの（「…」で引用した言葉は除く）。"""
     return [
@@ -534,12 +562,14 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
     ]
     purpose = _questions_matching(messages, _PURPOSE)
+    hidden = _examples_not_shown(messages)
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
         CheckResult("no_unexplained_jargon", not jargon, ", ".join(jargon)),
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
         CheckResult("no_effort_question", not effort, " / ".join(effort[:3])),
+        CheckResult("examples_shown", not hidden, " / ".join(hidden[:3])),
         CheckResult("asks_irregular_cases", bool(irregular), " / ".join(irregular[:2])),
         CheckResult("asks_purpose", bool(purpose), " / ".join(purpose[:2])),
     ]
@@ -552,6 +582,7 @@ TRANSCRIPT_CHECKS = (
     "no_unexplained_jargon",
     "no_repeated_questions",
     "no_effort_question",
+    "examples_shown",
 )
 """どのシナリオでも行う会話のチェック。"""
 OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases", "asks_purpose")
