@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 from adp.catalog.catalog import Catalog
-from adp.cleansing.check import column_kind, date_derives, source_columns, validate
+from adp.cleansing.check import column_kinds, date_derives, source_columns, validate
 from adp.cleansing.check import draft as cleansing_draft
 from adp.cleansing.models import CleansingSpec, dump_spec, spec_path
 from adp.cleansing.render import SourceColumn
@@ -174,7 +174,7 @@ class OnboardingPipeline:
                 if spec is None
                 else spec.model_dump(mode="json", by_alias=True, exclude_defaults=True)
             ),
-            column_kinds={c.name: column_kind(c.data_type) for c in columns},
+            column_kinds=column_kinds(spec, columns),
             date_derives={} if spec is None else date_derives(spec, columns),
             columns=profile.profiles,
             concept_labels={c.name: c.label for c in merged.concepts},

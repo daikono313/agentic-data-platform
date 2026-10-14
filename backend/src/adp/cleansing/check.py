@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,7 +41,8 @@ def source_columns(catalog: Catalog, source: str) -> list[SourceColumn]:
 
 
 _NUMBER = re.compile(
-    r"U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|INT\d*|DOUBLE|FLOAT|REAL|DECIMAL|NUMERIC)"
+    r"U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|INT\d*|DOUBLE|FLOAT\d*|REAL|DECIMAL|NUMERIC)"
+    r"(\(\d+(,\s*\d+)?\))?"
 )
 
 
@@ -51,12 +53,14 @@ def column_kind(data_type: str) -> str:
     """
     if is_text_type(data_type):
         return "text"
-    t = data_type.upper()
+    t = data_type.upper().strip()
+    if "[" in t:  # 配列（INTEGER[] など）は、要素の型にかかわらず other
+        return "other"
     if t.startswith("TIMESTAMP"):
         return "timestamp"
     if t == "DATE":
         return "date"
-    if _NUMBER.match(t):
+    if _NUMBER.fullmatch(t):
         return "number"
     if t in ("BOOLEAN", "BOOL"):
         return "boolean"
@@ -69,12 +73,14 @@ def date_column_name(column: str) -> str:
 
 
 def date_derives(spec: CleansingSpec, columns: list[SourceColumn]) -> dict[str, str | None]:
-    """日時の列（型変換の後を含む）→ 日付の列として作る名前。ほかの出力の列と重なれば None。
+    """日時の列（型変換の後を含む）→ 日付の列として作る名前。
 
+    ほかの出力の列やほかの候補と重なる名前、列名に使えない名前は None
+    （画面では YAML で名前を付ける）。
     取り込みの画面で「日時から日付を作るか」を選ばせるために使う（#150）。
     """
     out = output_columns(spec, columns)
-    result: dict[str, str | None] = {}
+    names: dict[str, tuple[str, bool]] = {}
     for c in columns:
         rule = spec.rule(c.name)
         if rule is not None and rule.drop:
@@ -82,12 +88,26 @@ def date_derives(spec: CleansingSpec, columns: list[SourceColumn]) -> dict[str, 
         if column_kind((rule.cast if rule else None) or c.data_type) != "timestamp":
             continue
         current = next((d.name for d in rule.derive if d.as_ == "date"), None) if rule else None
-        name = current or date_column_name(rule.output if rule else c.name)
-        taken = name in out and current is None
-        result[c.name] = (
-            None if taken or name in RESERVED or not re.fullmatch(IDENT, name) else name
+        names[c.name] = (
+            current or date_column_name(rule.output if rule else c.name),
+            current is not None,
         )
+    counts = Counter(name for name, _ in names.values())
+    result: dict[str, str | None] = {}
+    for column, (name, exists) in names.items():
+        usable = re.fullmatch(IDENT, name) is not None and name not in RESERVED
+        taken = counts[name] > 1 or (not exists and name in out)
+        result[column] = name if usable and not taken else None
     return result
+
+
+def column_kinds(spec: CleansingSpec | None, columns: list[SourceColumn]) -> dict[str, str]:
+    """源泉の列 → クレンジング後（型変換の後）の型の種類。画面の型の表示に使う（#150）。"""
+    kinds: dict[str, str] = {}
+    for c in columns:
+        rule = spec.rule(c.name) if spec is not None else None
+        kinds[c.name] = column_kind((rule.cast if rule else None) or c.data_type)
+    return kinds
 
 
 def validate(spec: CleansingSpec, columns: list[SourceColumn]) -> list[str]:

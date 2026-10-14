@@ -380,7 +380,7 @@ def test_cleansing_spec_round_trips_through_the_form() -> None:
 
 def test_date_derives_follow_the_naming_convention() -> None:
     """日時から作る日付の列は _on（規約）。ほかの出力の列と重なる名前は出さない（#150）。"""
-    from adp.cleansing.check import column_kind, date_derives
+    from adp.cleansing.check import column_kind, column_kinds, date_derives
     from adp.cleansing.models import CleansingSpec
     from adp.cleansing.render import SourceColumn
 
@@ -390,6 +390,9 @@ def test_date_derives_follow_the_naming_convention() -> None:
         SourceColumn("shipped_on", "DATE"),
         SourceColumn("loaded_at", "TIMESTAMP"),
         SourceColumn("note", "VARCHAR"),
+        SourceColumn("paid_at", "TIMESTAMP"),
+        SourceColumn("paid", "TIMESTAMP"),
+        SourceColumn("tags_at", "TIMESTAMP[]"),
     ]
     spec = CleansingSpec.model_validate(
         {
@@ -402,7 +405,14 @@ def test_date_derives_follow_the_naming_convention() -> None:
         }
     )
     # 作ってある日付はその名前、型変換で日時になる列も対象、重なる名前は None、落とす列は出さない
-    assert date_derives(spec, columns) == {"ordered_at": "order_day", "shipped_at": None}
+    # 候補どうしで重なる名前（paid_at・paid → paid_on）も None。配列は日時として扱わない
+    assert date_derives(spec, columns) == {
+        "ordered_at": "order_day",
+        "shipped_at": None,
+        "paid_at": None,
+        "paid": None,
+    }
+    assert column_kinds(spec, columns)["shipped_at"] == "timestamp"  # 型変換の後の型
     assert [
         column_kind(t)
         for t in (
@@ -413,6 +423,8 @@ def test_date_derives_follow_the_naming_convention() -> None:
             "DECIMAL(10,2)",
             "BOOLEAN",
             "BLOB",
+            "INTERVAL",
+            "INTEGER[]",
         )
     ] == [
         "text",
@@ -421,6 +433,8 @@ def test_date_derives_follow_the_naming_convention() -> None:
         "number",
         "number",
         "boolean",
+        "other",
+        "other",
         "other",
     ]
 

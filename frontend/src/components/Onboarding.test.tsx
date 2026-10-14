@@ -250,12 +250,20 @@ describe('OnboardingScreen', () => {
     expect(name).toHaveValue('')
     expect(name).toHaveAttribute('placeholder', '日本語の表示名（未入力）')
     expect(screen.getByLabelText('属性 quantity の表示名')).toHaveValue('')
+    // 関係でも、表示名の無い概念は英語を主な表示にしない
+    expect(screen.getByLabelText('関係 store → inventory の動詞').closest('li')).toHaveTextContent('（表示名なし）')
     expect(screen.getByTestId('concept-key-inventory')).toHaveTextContent('（表示名なし）')
     expect(screen.getByTestId('untranslated')).toHaveTextContent('2 件')
+    // 1 文字ずつ入れても、英字の表示名（ID など）が消えない
+    const attr = screen.getByLabelText('属性 quantity の表示名')
+    fireEvent.change(attr, { target: { value: 'I' } })
+    fireEvent.change(attr, { target: { value: 'ID' } })
+    expect(attr).toHaveValue('ID')
+    expect(screen.getByTestId('untranslated')).toHaveTextContent('1 件')
     // 日付の名前がほかの列と重なるときは、作れないと出す
     expect(screen.getByTestId('derive-moved_at')).toHaveTextContent('作れません')
     expect(screen.getByLabelText('1 件を見分けるキー')).toHaveValue('inventory_id')
-    fireEvent.change(screen.getByLabelText('属性 quantity の表示名'), { target: { value: '数量' } })
+    fireEvent.change(attr, { target: { value: '数量' } })
     expect(screen.getByTestId('untranslated')).toHaveTextContent('1 件')
     fireEvent.click(screen.getByRole('button', { name: '確定して PR を作る' }))
     await waitFor(() => expect(start).toHaveBeenCalled())

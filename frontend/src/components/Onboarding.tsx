@@ -50,7 +50,7 @@ export function OnboardingScreen({ table }: { table: string }) {
       try {
         const d = await api.onboardingDraft(table, agent)
         setDraft(d)
-        setPatch(d.patch)
+        setPatch(blankUntranslated(d.patch))
         if (!cleansingEdited.current) {
           setCleansing(d.cleansing)
           setSpec(d.cleansing_spec ?? null)
@@ -218,15 +218,24 @@ function DraftBody({
   /** 源泉の列 → 属性の表示名（クレンジングのフォームで、列を日本語で示す） */
   const columnLabels = new Map(
     patch.concepts.flatMap((c) =>
-      c.attributes.filter((a) => japanese(a.label)).map((a) => [a.column, a.label] as const),
+      c.attributes.filter((a) => a.label.trim()).map((a) => [a.column, a.label] as const),
     ),
   )
   const untranslated = patch.concepts.reduce(
-    (n, c) => n + [c.label, ...c.attributes.map((a) => a.label)].filter((l) => !japanese(l)).length,
+    (n, c) => n + [c.label, ...c.attributes.map((a) => a.label)].filter((l) => !l.trim()).length,
     0,
   )
-  const conceptLabel = (name: string) =>
-    patch.concepts.find((c) => c.name === name)?.label || draft.concept_labels?.[name] || name
+  const conceptLabel = (name: string): ReactNode => {
+    const own = patch.concepts.find((c) => c.name === name)
+    const text = own ? own.label.trim() : (draft.concept_labels?.[name] ?? '')
+    return text && !(own === undefined && isUntranslated(text)) ? (
+      <span>{text}</span>
+    ) : (
+      <span>
+        <span className="text-muted-foreground">（表示名なし）</span> <Code>{name}</Code>
+      </span>
+    )
+  }
   return (
     <>
       <Card className="gap-2 py-3" aria-label="オントロジーへの追加案">
@@ -252,7 +261,7 @@ function DraftBody({
                     aria-label="概念の名前（表示名）"
                     className="h-8 w-56 text-sm"
                     placeholder={UNTRANSLATED}
-                    value={japanese(c.label)}
+                    value={c.label}
                     onChange={(e) => update(i, { label: e.target.value })}
                   />
                   <Code title="内部の名前">{c.name}</Code>
@@ -271,7 +280,7 @@ function DraftBody({
                 </dd>
                 <dt className="font-semibold">1 件を見分けるキー</dt>
                 <dd data-testid={`concept-key-${c.name}`}>
-                  {japanese(c.attributes.find((a) => a.column === c.key)?.label ?? columnLabels.get(c.key) ?? '') || (
+                  {c.attributes.find((a) => a.column === c.key)?.label.trim() || columnLabels.get(c.key) || (
                     <span className="text-muted-foreground">（表示名なし）</span>
                   )}{' '}
                   <Code title="列の名前">{c.key}</Code>
@@ -291,7 +300,7 @@ function DraftBody({
                           aria-label={`属性 ${a.column} の表示名`}
                           className="h-7 text-xs"
                           placeholder={UNTRANSLATED}
-                          value={japanese(a.label)}
+                          value={a.label}
                           onChange={(e) =>
                             update(i, {
                               attributes: c.attributes.map((x, j) => (j === k ? { ...x, label: e.target.value } : x)),
@@ -318,7 +327,7 @@ function DraftBody({
               <ul className="space-y-1">
                 {patch.relations.map((r, i) => (
                   <li key={i} className="flex flex-wrap items-center gap-2 text-xs">
-                    <span>{conceptLabel(r.from)}</span>→
+                    {conceptLabel(r.from)}→
                     <Input
                       aria-label={`関係 ${r.from} → ${r.to} の動詞`}
                       className="h-7 w-32 text-xs"
@@ -330,7 +339,7 @@ function DraftBody({
                         })
                       }
                     />
-                    →<span>{conceptLabel(r.to)}</span>
+                    →{conceptLabel(r.to)}
                     <Code title="つなぐ列">{r.via}</Code>
                   </li>
                 ))}
@@ -417,9 +426,24 @@ function Code({ children, title }: { children: ReactNode; title?: string }) {
 
 const UNTRANSLATED = '日本語の表示名（未入力）'
 
-/** 英語（ASCII）だけの表示名は、まだ日本語になっていないものとして空で出す（#150） */
-function japanese(label: string): string {
-  return /^[\x20-\x7e]*$/.test(label) ? '' : label
+/** 英語（ASCII）だけの表示名か（案の表示名が内部の名前のままのもの） */
+function isUntranslated(label: string): boolean {
+  return /^[\x20-\x7e]*$/.test(label)
+}
+
+/**
+ * 案を受け取ったときに一度だけ、英語だけの表示名を空にする（日本語の表示名を入れてもらう。#150）。
+ * 入力のたびには消さない（「ID」のような英字の表示名や、日本語入力の途中を壊さないため）。
+ */
+function blankUntranslated(patch: OntologyPatch): OntologyPatch {
+  return {
+    ...patch,
+    concepts: patch.concepts.map((c) => ({
+      ...c,
+      label: isUntranslated(c.label) ? '' : c.label,
+      attributes: c.attributes.map((a) => ({ ...a, label: isUntranslated(a.label) ? '' : a.label })),
+    })),
+  }
 }
 
 /** 確定のとき、空にした表示名は内部の名前で埋める（表示名は必須のため） */
@@ -577,7 +601,7 @@ function CleansingForm({
           if (!name) {
             return (
               <p key={c} className="text-muted-foreground" data-testid={`derive-${c}`}>
-                {label(c)} <Code>{c}</Code>: 同じ名前の列があるため、日付の列を作れません（YAML で名前を付けてください）
+                {label(c)} <Code>{c}</Code>: 決まりどおりの名前ではほかの列と重なるため、日付の列を作れません（YAML で名前を付けてください）
               </p>
             )
           }
@@ -589,7 +613,11 @@ function CleansingForm({
                 checked={on}
                 onChange={() => {
                   const rest = derive.filter((d) => d.as !== 'date')
-                  const next = on ? rest : [...rest, { name, as: 'date' as const, description: `${label(c)}の日付` }]
+                  // 表示名が無ければ説明を付けない（英語の列名を dbt の説明に入れない）
+                  const added = labels.has(c)
+                    ? { name, as: 'date' as const, description: `${label(c)}の日付` }
+                    : { name, as: 'date' as const }
+                  const next = on ? rest : [...rest, added]
                   const base: CleansingRule = { ...rule, derive: next }
                   if (!next.length) delete base.derive
                   setRule(base)
