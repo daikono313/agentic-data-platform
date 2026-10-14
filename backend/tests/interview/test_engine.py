@@ -163,6 +163,35 @@ async def test_question_from_present_choices_is_shown() -> None:
     assert done.message.choices == ["a", "b"]
 
 
+async def test_example_confirmation_needs_values_the_user_can_see() -> None:
+    """値を書かずに具体例を確かめる質問は出さず、値を書くよう tool のエラーで返す（#163）。"""
+    confirm = {"question": "この 2 件を具体例として記録してよいですか？", "options": ["よい", "別"]}
+    runner = ScriptedRunner(
+        [
+            [("present_choices", confirm)],
+            [
+                "- 2024-11-24 に 福岡店で 1 個\n- 2025-02-12 に 大阪店で 2 個",
+                ("present_choices", confirm),
+            ],
+            [("present_choices", confirm)],
+        ]
+    )
+    interviewer = Interviewer(runner, LLMSettings())
+    state = new_state("売上")
+    first = await collect(interviewer, state, "売上")
+    assert runner.tool_results[0].get("is_error") is True
+    done = first[-1]
+    assert isinstance(done, TurnDone) and done.message.question is None
+    # 本文で値を示していれば出せる
+    second = await collect(interviewer, state, "はい")
+    assert "is_error" not in runner.tool_results[1]
+    done = second[-1]
+    assert isinstance(done, TurnDone) and done.message.question == confirm["question"]
+    # 直前の発言で値を示していても出せる
+    await collect(interviewer, state, "もう一度")
+    assert "is_error" not in runner.tool_results[2]
+
+
 def test_transcript_checks_detect_position_words_and_repeats() -> None:
     from adp.evals.interview import _transcript_checks
     from adp.interview import ChatMessage

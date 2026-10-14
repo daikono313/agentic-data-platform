@@ -14,6 +14,10 @@
 「選択肢から選ぶか、自由に書いてください」「選択肢を表示しました」）も取り除く。質問とボタンが
 続けて表示されるので不要で、プロンプトで禁止しても別の言い方に置き換わるため（#158）。
 本文が全部消えてもよい（質問とボタンだけが表示される）。
+
+具体例を記録してよいかの確認は、確かめてもらう値（日付・数量など）がユーザーに見えているときだけ
+出せる（#163）。tool の結果はユーザーに見えないので、値を書かずに「この 2 件で」と聞いても確かめ
+られない。
 """
 
 from __future__ import annotations
@@ -58,6 +62,14 @@ _ASKING_MAX = 50
 _DATA = re.compile(r"[0-9０-９]|\*\*|\|")
 _SENTENCE = re.compile(r"[^。！？!?]*(?:[。！？!?]|$)")
 _SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
+_EXAMPLE_CONFIRM = re.compile(
+    r"例[^。？?]{0,20}(記録して|使って|で)(よい|良い|いい|よろしい)|例[^。？?]{0,20}合って"
+)
+_EXAMPLE_VALUE = re.compile(
+    r"\d{4}\s*[-/年]\s*\d{1,2}|\d+\s*月\s*\d+\s*日|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)"
+    r"|ID\s*[:：]?\s*\d"
+)
+"""具体例の値（日付・数量・金額・ID）。「2 件」のような件数は値に数えない。"""
 
 
 def is_position_sentence(sentence: str) -> bool:
@@ -79,6 +91,16 @@ def is_closing_sentence(sentence: str) -> bool:
     if len(s) > _ASKING_MAX or "「" in s or not _ASKING.search(s):
         return False
     return bool(_ASKING_ONLY.match(s) or _GENERIC.search(s))
+
+
+def is_example_confirmation(text: str) -> bool:
+    """具体例を記録してよいかの確認か。"""
+    return bool(_EXAMPLE_CONFIRM.search(text))
+
+
+def has_example_values(text: str) -> bool:
+    """具体例の値（日付・数量・金額・ID）が書かれているか。"""
+    return bool(_EXAMPLE_VALUE.search(text))
 
 
 def clean_reply(text: str, *, question: bool = False) -> tuple[str, list[str]]:

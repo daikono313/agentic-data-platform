@@ -44,7 +44,12 @@ from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import design_issues, load_ontology
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
-from adp.interview.wording import is_closing_sentence, is_position_sentence
+from adp.interview.wording import (
+    has_example_values,
+    is_closing_sentence,
+    is_example_confirmation,
+    is_position_sentence,
+)
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 from adp.warehouse import warehouse_db
@@ -442,17 +447,6 @@ _PURPOSE = re.compile(
 """要求の目的（指標を見て何を判断・行動するか）を聞く質問。区分のルールの「どう判断しますか」は除く。"""
 
 
-_EXAMPLE_CONFIRM = re.compile(
-    r"例[^。？?]{0,20}(記録して|使って|で)(よい|良い|いい|よろしい)|例[^。？?]{0,20}合って"
-)
-"""具体例を記録してよいかの確認。"""
-_VALUE = re.compile(
-    r"\d{4}\s*[-/年]\s*\d{1,2}|\d+\s*月\s*\d+\s*日|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)"
-    r"|ID\s*[:：]?\s*\d"
-)
-"""具体例の値（日付・数量・金額・ID）。「2 件」のような件数は値に数えない。"""
-
-
 def _examples_not_shown(messages: list[Any]) -> list[str]:
     """具体例を記録してよいかを、値（日付・数量など）を示さずに確かめた発言（#163）。
     tool の結果はユーザーに見えないので、確かめてもらう行の値は発言に書く。
@@ -460,12 +454,12 @@ def _examples_not_shown(messages: list[Any]) -> list[str]:
     assistant = [m for m in messages if m.role == "assistant"]
     found = []
     for i, m in enumerate(assistant):
-        if not _EXAMPLE_CONFIRM.search(m.question or "") and not (
-            not m.question and _EXAMPLE_CONFIRM.search(m.text)
+        if not is_example_confirmation(m.question or "") and not (
+            not m.question and is_example_confirmation(m.text)
         ):
             continue
         shown = _shown(m) + ("\n" + _shown(assistant[i - 1]) if i else "")
-        if not _VALUE.search(shown):
+        if not has_example_values(shown):
             found.append(_shown(m).strip()[:60])
     return found
 

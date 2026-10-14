@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from adp.beam import BeamModel, BusinessEvent, Gap, MetricRequest, to_yaml
 from adp.interview.state import InterviewState, Phase
+from adp.interview.wording import has_example_values, is_example_confirmation
 from adp.llm import tool_text
 
 SERVER_NAME = "beam"
@@ -46,8 +47,11 @@ def build_tools(
     state: InterviewState,
     on_change: Callable[[], None] | None = None,
     issues: Callable[[BeamModel], list[str]] | None = None,
+    shown: Callable[[], str] | None = None,
 ) -> list[SdkMcpTool[Any]]:
-    """issues: 確定までに残っている課題（既定は BEAM の条件だけ。設計の課題も含められる）。"""
+    """issues: 確定までに残っている課題（既定は BEAM の条件だけ。設計の課題も含められる）。
+    shown: ユーザーに見えている直近の文（直前の発言と、今の発言の本文）。具体例の確認で、
+    値が見えているかを確かめるのに使う（#163）。"""
 
     def apply(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
         data = state.beam.model_dump(mode="json")
@@ -171,7 +175,18 @@ def build_tools(
     )
     async def present_choices(args: dict[str, Any]) -> dict[str, Any]:
         options = [str(o) for o in args["options"]][:5]
-        state.question = str(args.get("question") or "").strip() or None
+        question = str(args.get("question") or "").strip()
+        # tool の結果はユーザーに見えないので、値を書かない具体例の確認は確かめようがない（#163）
+        if is_example_confirmation(question) and not has_example_values(
+            question + "\n" + (shown() if shown else "")
+        ):
+            return tool_text(
+                "具体例の値がユーザーに見えていません。tool の結果はユーザーには見えないため、"
+                "確かめてもらう行の値（日時・場所・商品・数量など）を question に書いて、"
+                "もう一度 present_choices を呼んでください。",
+                error=True,
+            )
+        state.question = question or None
         state.choices = options
         if on_change:
             on_change()

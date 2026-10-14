@@ -11,7 +11,7 @@ import re
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v10"
+PROMPT_VERSION = "interview-v11"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
