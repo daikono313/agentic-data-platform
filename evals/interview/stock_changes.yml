@@ -16,5 +16,5 @@ checks:
   - has_w: [what, when, where]
   - asks_irregular_cases
   - metric_filter: {column: raw.inventory.movement_type, includes: [receipt, transfer_out, disposal], excludes: [count]}
-  - metric_group_by_columns: [raw.stores.store_name, raw.products.category, raw.inventory.moved_at]
+  - metric_group_by_columns: [[raw.stores.store_name, raw.stores.store_id, raw.inventory.store_id], raw.products.category, raw.inventory.moved_at]
   - asks_purpose

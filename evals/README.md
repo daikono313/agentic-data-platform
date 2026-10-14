@@ -21,9 +21,8 @@
 |---|---|
 | `finalizable` | 確定できた（確定までの課題が無い。設計の課題を含む） |
 | `has_w: [what, when, …]` | 出来事に、その W のディメンションがある |
-| `metric_group_by_w: <w>` | 指標の切り口に、その W のディメンションがある |
 | `metric_aggregation: <sum など>` | 指標の measure が、その集計方法でデータがある |
-| `metric_type: <simple など>` / `metric_has_filter` | 指標の種類・条件 |
+| `metric_type: <simple など>` | 指標の種類 |
 | `has_gap: <種類>` / `min_events: N` | 足りないもの・出来事の数 |
 | `fact: <fct の名前>` | 出来事の fact がその名前になる（既存の fact を再利用したか。#113） |
 | `story_type: <discrete / recurring / evolving>` | 指標の出来事が、その種類（出来事・定期的な状態・進んでいく状態）になっている（#135） |
@@ -33,9 +32,11 @@
 | `has_hierarchy[: <ディメンション>]` | 階層のあるディメンションがある（名前を書けば、そのディメンションに） |
 | `shared_dimensions: [what, when, …]` | その W ごとに、2 つ以上の出来事が同じ名前のディメンションを持つ（共通ディメンション）。When は名前によらず dim_date で共通なので、2 つ以上の出来事にあればよい |
 | `fact_source: <源泉>` | その源泉を 1 行の元（設計と同じく、粒度のキーから決まるベースのテーブル。`adp.design.builder.base_table`）にした出来事があり、その fact がほかの源泉の既存の fact（オントロジーの概念のモデル）ではない。fact の名前は問わない（データ全体にしかない要求で新しい fact を作るか。#113） |
-| `metric_group_by_columns: [raw.orders.ordered_at, …]` | 指標の切り口に、その元の列がすべてある（属性は元の列、When はイベント側の日時の列に解決する。ディメンションや属性の名前の揺れによらない。#155） |
-| `metric_filter: {column: <元の列>, excludes: [...], includes: [...]}` | ある指標の絞り込みが、その列の excludes の値をすべて除き、includes の値をすべて残す（例: キャンセルを除く、入荷だけに絞る。#155） |
+| `metric_group_by_columns: [raw.orders.ordered_at, [raw.stores.store_name, raw.stores.store_id], …]` | 指標の切り口に、その元の列がすべてある（属性は元の列、When はイベント側の日時の列に解決する。ディメンションや属性の名前の揺れによらない。要素をリストにすると、そのどれか 1 つ。#155） |
+| `metric_filter: {column: <元の列>, excludes: [...], includes: [...]}` | どれか 1 つの指標の絞り込みが、その列の excludes（必須）の値をすべて除き、includes の値をすべて残す（例: キャンセルを除く、入荷だけに絞る。#155） |
 | `ratio_of: {numerator: <元の列>, denominator: <元の列>}` | 比率の指標の分子・分母の measure が、その元の列の集計になっている（例: 返品数量 ÷ 販売数量。#155） |
+
+元の列で採点するチェックは、源泉が式（`expr`）の measure・When を列として数えない（式の中の列とは一致しない）。
 
 ### 会話の質のチェック（どのシナリオでも行う）
 

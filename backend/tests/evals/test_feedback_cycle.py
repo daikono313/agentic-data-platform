@@ -441,6 +441,9 @@ def test_column_checks() -> None:
     # When は日時の列、属性は属性の元の列に解決する
     assert passed({"metric_group_by_columns": ["raw.stores.channel", "raw.orders.ordered_at"]})
     assert not passed({"metric_group_by_columns": ["raw.stores.channel", "raw.products.category"]})
+    # リストの要素は、そのどれか 1 つがあればよい（店舗名でも店舗 ID でも）
+    assert passed({"metric_group_by_columns": [["raw.stores.store_id", "raw.stores.store_name"]]})
+    assert not passed({"metric_group_by_columns": [["raw.stores.store_id", "raw.orders.store_id"]]})
 
     cancel = {"column": "raw.orders.order_status", "excludes": ["cancelled"]}
     assert passed({"metric_filter": cancel})
@@ -456,6 +459,9 @@ def test_column_checks() -> None:
     assert not passed({"metric_filter": cancel | {"includes": ["returned"]}})
     metric.filters = []
     assert not passed({"metric_filter": cancel})
+    # excludes の無い指定は、条件が無くても通ってしまうので受け付けない
+    with pytest.raises(ValueError, match="excludes"):
+        passed({"metric_filter": {"column": "raw.orders.order_status", "includes": ["completed"]}})
 
     # 比率: 分子・分母の指標の measure の元の列
     ratio = {"numerator": "raw.order_items.quantity", "denominator": "raw.order_items.quantity"}

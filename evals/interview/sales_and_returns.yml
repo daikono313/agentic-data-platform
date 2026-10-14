@@ -15,4 +15,4 @@ checks:
   - has_hierarchy: product
   - asks_purpose
   - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
-  - metric_group_by_columns: [raw.products.category, raw.products.subcategory, raw.orders.ordered_at, raw.returns.returned_at]
+  - metric_group_by_columns: [raw.products.category, raw.orders.ordered_at, raw.returns.returned_at]

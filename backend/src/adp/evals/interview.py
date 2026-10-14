@@ -127,24 +127,9 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             all(any(d.w == W(w) for e in beam.events for d in e.dimensions) for w in args),
             str(sorted({d.w.value for e in beam.events for d in e.dimensions})),
         ),
-        "metric_group_by_w": lambda: (
-            any(
-                e is not None
-                and any(
-                    (d := e.dimension(ref.partition(".")[0])) is not None and d.w == W(arg)
-                    for ref in m.group_by
-                )
-                for m, e in _metrics_events(beam)
-            ),
-            str([m.group_by for m in beam.metrics]),
-        ),
         "has_gap": lambda: (
             any(g.kind == GapKind(arg) for g in beam.gaps),
             str([g.kind.value for g in beam.gaps]),
-        ),
-        "metric_has_filter": lambda: (
-            any(m.filters for m in beam.metrics),
-            str([[f.model_dump(mode="json") for f in m.filters] for m in beam.metrics]),
         ),
         "metric_type": lambda: (
             any(m.type == MetricType(arg) for m in beam.metrics),
@@ -215,8 +200,10 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
         "shared_dimensions": lambda: _shared_dimensions(beam, args),
         # 以下は名前の揺れによらず、元の列（raw.orders.ordered_at）で採点する（#155）
-        # 指標の切り口に、その列がすべてある（When はイベント側の日時の列）
-        "metric_group_by_columns": lambda: _group_by_columns(beam, args),
+        # 指標の切り口に、その列がすべてある（When はイベント側の日時の列。列のリストはどれか 1 つ）
+        "metric_group_by_columns": lambda: _group_by_columns(
+            beam, raw if isinstance(raw, list) else [raw]
+        ),
         # 指標の絞り込みで、その列の値を除く・残す（例: キャンセルを除く）
         "metric_filter": lambda: _metric_filter(beam, opts),
         # 比率の指標の分子・分母が、その列の集計になっている
@@ -265,7 +252,8 @@ def _ref_column(event: BusinessEvent, ref: str) -> str | None:
     return None
 
 
-def _group_by_columns(beam: BeamModel, columns: list[str]) -> tuple[bool, str]:
+def _group_by_columns(beam: BeamModel, columns: list[Any]) -> tuple[bool, str]:
+    """columns の各要素が切り口にある。要素がリストなら、そのどれか 1 つ（店舗名か店舗 ID）。"""
     found = {
         c
         for m, e in _metrics_events(beam)
@@ -273,7 +261,8 @@ def _group_by_columns(beam: BeamModel, columns: list[str]) -> tuple[bool, str]:
         for ref in m.group_by
         if (c := _ref_column(e, ref))
     }
-    return set(columns) <= found, str(sorted(found))
+    wanted = [{str(c) for c in (x if isinstance(x, list) else [x])} for x in columns]
+    return all(w & found for w in wanted), str(sorted(found))
 
 
 def _allows(operator: FilterOperator, values: list[str], value: str) -> bool:
@@ -287,9 +276,14 @@ def _allows(operator: FilterOperator, values: list[str], value: str) -> bool:
 
 
 def _metric_filter(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
-    """ある指標が、column の excludes の値をすべて除き、includes の値をすべて残すか。"""
+    """ある指標が、column の excludes の値をすべて除き、includes の値をすべて残すか。
+
+    どれか 1 つの指標が満たせばよい（比率なら分母の指標だけに条件があることもある）。
+    """
+    if not opts.get("column") or not opts.get("excludes"):
+        raise ValueError(f"metric_filter には column と excludes（1 つ以上）が必要です: {opts}")
     column = str(opts["column"])
-    excludes = [str(v) for v in opts.get("excludes", [])]
+    excludes = [str(v) for v in opts["excludes"]]
     includes = [str(v) for v in opts.get("includes", [])]
     seen: list[str] = []
     for m, e in _metrics_events(beam):
@@ -322,6 +316,8 @@ def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
         for m in beam.metrics
         if m.type == MetricType.RATIO
     ]
+    if not opts.get("numerator") or not opts.get("denominator"):
+        raise ValueError(f"ratio_of には numerator と denominator が必要です: {opts}")
     want = (str(opts["numerator"]), str(opts["denominator"]))
     return want in pairs, str(pairs)
 

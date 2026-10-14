@@ -13,5 +13,5 @@ checks:
   - has_w: [what, when, where]
   - min_events: 1
   - metric_filter: {column: raw.inventory.movement_type, includes: [receipt], excludes: [transfer_out, disposal, count]}
-  - metric_group_by_columns: [raw.stores.store_name, raw.products.category, raw.inventory.moved_at]
+  - metric_group_by_columns: [[raw.stores.store_name, raw.stores.store_id, raw.inventory.store_id], raw.products.category, raw.inventory.moved_at]
   - asks_purpose

@@ -18,5 +18,5 @@ checks:
   - has_gap: data_unavailable
   - min_examples: 1
   - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
-  - metric_group_by_columns: [raw.stores.store_name, raw.stores.channel, raw.orders.ordered_at]
+  - metric_group_by_columns: [[raw.stores.store_name, raw.stores.store_id, raw.orders.store_id], raw.stores.channel, raw.orders.ordered_at]
   - asks_purpose
