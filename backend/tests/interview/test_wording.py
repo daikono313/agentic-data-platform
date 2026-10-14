@@ -1,4 +1,4 @@
-"""画面の位置を指す文を本文から取り除く（#77）。"""
+"""画面の位置を指す文（#77）と、質問を出したときの締めの一言（#158）を本文から取り除く。"""
 
 import pytest
 
@@ -53,3 +53,53 @@ def test_strips_position_sentences(text: str, kept: str, removed: list[str]) -> 
 )
 def test_keeps_other_sentences(text: str) -> None:
     assert strip_position_sentences(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    ("text", "kept", "removed"),
+    [
+        (
+            "店舗は 20 か所です。\n\n回答をお待ちしています。",
+            "店舗は 20 か所です。",
+            ["回答をお待ちしています。"],
+        ),
+        (
+            "「なぜ」の切り口について、お返事をお待ちしています。",
+            "",
+            ["「なぜ」の切り口について、お返事をお待ちしています。"],
+        ),
+        ("ユーザーの回答待ちです。", "", ["ユーザーの回答待ちです。"]),
+        ("質問と選択肢を表示しました。", "", ["質問と選択肢を表示しました。"]),
+        (
+            "目的を伺います。近いものを選ぶか、自由に入力してください（複数選択も可です）。",
+            "目的を伺います。",
+            ["近いものを選ぶか、自由に入力してください（複数選択も可です）。"],
+        ),
+        (
+            "自由に書いていただいても構いません。",
+            "",
+            ["自由に書いていただいても構いません。"],
+        ),
+    ],
+)
+def test_strips_closing_sentences_with_question(text: str, kept: str, removed: list[str]) -> None:
+    assert strip_position_sentences(text, question=True) == (kept, removed)
+    # 質問が無ければ締めの一言は残す
+    assert strip_position_sentences(text) == (text, [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "特に無ければ「今回は不要」を選んでください。",  # 具体的な答え方
+        "データに無さそうなものでも構いません。",
+        "ほかに見たい切り口があれば教えてください。",
+        "この 2 件を具体例として記録してよいか、回答をお待ちしています。",  # 数字を含む
+        "2024-12-23 に出荷、4日ご回答をお待ちしています。",  # 前の行の中身とつながった
+        "- 店舗名（20 店舗）\n- 回答をお待ちしています。",  # リストの行
+        "」という問いで合っているか、確認をお待ちしています。",  # 「」の中で切れた後ろ半分
+        "在庫の確認を待ってから出荷する運用です。",
+    ],
+)
+def test_keeps_sentences_that_are_not_just_closing(text: str) -> None:
+    assert strip_position_sentences(text, question=True) == (text, [])

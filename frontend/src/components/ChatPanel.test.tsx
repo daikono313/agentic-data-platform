@@ -33,4 +33,17 @@ describe('ChatPanel', () => {
     )
     expect(screen.getAllByText('前の質問？')).toHaveLength(1)
   })
+
+  it('本文が無く、質問がボタンの上に出ている発言は、空の吹き出しを出さない', () => {
+    const { container } = render(
+      <ChatPanel
+        {...base}
+        messages={[{ role: 'assistant', text: '', question: '優先度はどのくらいですか？' }]}
+        question="優先度はどのくらいですか？"
+        choices={['高い', '低い']}
+      />,
+    )
+    expect(screen.getAllByText('優先度はどのくらいですか？')).toHaveLength(1)
+    expect(container.querySelector('[role="log"] .bg-muted')).toBeNull()
+  })
 })

@@ -41,8 +41,9 @@ export function ChatPanel({ messages, draft, question, choices, busy, disabled, 
           // 今出ている選択肢の質問はボタンの上にだけ出し、吹き出しには出さない（二重表示を防ぐ）
           const activeQuestion = i === messages.length - 1 && !busy && choices.length > 0
           const showQuestion = m.role === 'assistant' && m.question && !activeQuestion
-          // 本文も質問も無い発言（tool だけを呼んだ応答）は出さない。添字は backend とそろえたまま
-          if (!m.text && !m.question) return null
+          // 吹き出しに出すものが無い発言（tool だけを呼んだ応答や、本文が無く質問がボタンの上に
+          // 出ている発言。#158）は出さない。添字は backend とそろえたまま
+          if (!m.text && !showQuestion) return null
           return (
             <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
               <div
