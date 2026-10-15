@@ -80,13 +80,13 @@ class Interviewer:
             logger.exception("設計の確認に失敗しました（確定は止めません）")
             return []
 
-    def _spec(self, state: InterviewState) -> AgentSpec:
+    def _spec(self, state: InterviewState, shown: Callable[[], str]) -> AgentSpec:
+        tools = beam_tools.build_tools(state, issues=self.issues, shown=shown)
         return AgentSpec(
             purpose="interview",
             system_prompt=system_prompt(),
             model=self.settings.default_model,
-            tools={beam_tools.SERVER_NAME: beam_tools.build_tools(state, issues=self.issues)}
-            | self.extra_tools,
+            tools={beam_tools.SERVER_NAME: tools} | self.extra_tools,
             max_turns=self.max_turns,
             thinking=False,
         )
@@ -107,16 +107,23 @@ class Interviewer:
                 yield event
 
     async def _send(self, state: InterviewState, text: str) -> AsyncIterator[InterviewEvent]:
+        previous = next((m for m in reversed(state.messages) if m.role == "assistant"), None)
         state.messages.append(ChatMessage(role="user", text=text))
         state.choices = []
         state.question = None
         snapshot = _Snapshot.of(state, self.issues)
 
         reply: list[str] = []
+        # ユーザーに見えている直近の文（直前の発言・ユーザーの発言・今の発言の本文。#163）
+        seen = "\n".join([previous.text, previous.question or ""] if previous else []) + "\n" + text
+
+        def shown() -> str:
+            return seen + "\n" + "".join(reply)
+
         result: TurnResult | None = None
         try:
             async for event in self.runner.run(
-                text, self._spec(state), resume=state.agent_session_id
+                text, self._spec(state, shown), resume=state.agent_session_id
             ):
                 for change in snapshot.diff(state):
                     yield change

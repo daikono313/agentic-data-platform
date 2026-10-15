@@ -11,7 +11,7 @@ import re
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v9"
+PROMPT_VERSION = "interview-v12"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -35,6 +35,7 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
   回答を促す締めの一言も書かない（質問とボタンが続けて表示されるので不要）。前置きや補足が無いときは
   本文を書かず、present_choices だけでよい。自由回答も受け付ける。
 - 推測で埋めずに確認する。ただしソースデータを見ればわかることは、聞かずに tool で調べる。
+- tool の結果（sample_rows・profile_column など）はユーザーには見えない。ユーザーに確かめてもらう値（具体例の日時・場所・商品・数量など）は、本文か question に書く。
 
 # 進め方（段階が変わるたびに set_phase を呼ぶ）
 {interview}

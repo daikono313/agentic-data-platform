@@ -44,7 +44,12 @@ from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import design_issues, load_ontology
 from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_state
 from adp.interview.prompts import prompt_version
-from adp.interview.wording import is_closing_sentence, is_position_sentence
+from adp.interview.wording import (
+    has_example_values,
+    is_closing_sentence,
+    is_example_confirmation,
+    is_position_sentence,
+)
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 from adp.warehouse import warehouse_db
@@ -442,6 +447,26 @@ _PURPOSE = re.compile(
 """要求の目的（指標を見て何を判断・行動するか）を聞く質問。区分のルールの「どう判断しますか」は除く。"""
 
 
+def _examples_not_shown(messages: list[Any]) -> list[str]:
+    """具体例を記録してよいかを、値（日付・数量など）を示さずに確かめた発言（#163）。
+    tool の結果はユーザーに見えないので、確かめてもらう行の値は発言に書く。
+    直前のアシスタントの発言か、その後のユーザーの発言に値があれば、その確認とみなす
+    （present_choices のエラーと同じ範囲）。"""
+    found = []
+    seen = ""  # 直前のアシスタントの発言から、この発言までにユーザーに見えた文
+    for m in messages:
+        if m.role != "assistant":
+            seen += "\n" + _shown(m)
+            continue
+        confirms = is_example_confirmation(m.question or "") or (
+            not m.question and is_example_confirmation(m.text)
+        )
+        if confirms and not has_example_values(seen + "\n" + _shown(m)):
+            found.append(_shown(m).strip()[:60])
+        seen = _shown(m)
+    return found
+
+
 def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[str]:
     """アシスタントの質問のうち、pattern に合うもの（「…」で引用した言葉は除く）。"""
     return [
@@ -534,12 +559,14 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
     ]
     purpose = _questions_matching(messages, _PURPOSE)
+    hidden = _examples_not_shown(messages)
     results = [
         CheckResult("no_choice_position_words", not position, " / ".join(position[:3])),
         CheckResult("question_not_repeated_in_text", not repeated, " / ".join(repeated[:3])),
         CheckResult("no_unexplained_jargon", not jargon, ", ".join(jargon)),
         CheckResult("no_repeated_questions", not again, " / ".join(again[:3])),
         CheckResult("no_effort_question", not effort, " / ".join(effort[:3])),
+        CheckResult("examples_shown", not hidden, " / ".join(hidden[:3])),
         CheckResult("asks_irregular_cases", bool(irregular), " / ".join(irregular[:2])),
         CheckResult("asks_purpose", bool(purpose), " / ".join(purpose[:2])),
     ]
@@ -552,6 +579,7 @@ TRANSCRIPT_CHECKS = (
     "no_unexplained_jargon",
     "no_repeated_questions",
     "no_effort_question",
+    "examples_shown",
 )
 """どのシナリオでも行う会話のチェック。"""
 OPTIONAL_TRANSCRIPT_CHECKS = ("asks_irregular_cases", "asks_purpose")

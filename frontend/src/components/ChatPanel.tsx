@@ -89,7 +89,7 @@ export function ChatPanel({ messages, draft, question, choices, busy, disabled, 
       </div>
       {!busy && choices.length > 0 && (
         <div className="space-y-2 border-t p-3">
-          {question && <p className="text-xs text-muted-foreground">{question}</p>}
+          {question && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{question}</p>}
           <div className="flex flex-wrap gap-2">
             {choices.map((c) => (
               <Button key={c} variant="outline" size="sm" onClick={() => submit(c)} disabled={disabled}>
