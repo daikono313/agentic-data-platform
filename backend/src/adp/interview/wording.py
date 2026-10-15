@@ -40,10 +40,13 @@ _END = r"(?:（[^）]*）)?[。！!]?$"
 _WAITING = re.compile(
     r"((ご回答|回答|お答え|お返事|ご返事|ご確認)[^。]{0,6}"
     r"(お待ち(しています|します|しております)|待ち(です|ます)|待っています)"
-    r"|(質問|選択肢)[^。]{0,6}表示しました)" + _END
+    r"|確認をお待ち(しています|しております)"
+    r"|合って[^。]{0,15}確認(中です|しています)"
+    r"|(質問|選択肢)[^。]{0,6}(表示しました|確認しています))" + _END
 )
-"""回答を待っている・質問を出したと言うだけの文。業務の説明（「出荷は倉庫の確認待ちです」
-「顧客からの回答を待っています」）と分けるため、敬語の形か「回答」に限り、「〜からの」は除く。"""
+"""回答を待っている・質問を出した・確かめている最中だと言うだけの文（「〜で合っているかを、
+選択肢で確認しています」。#170）。業務の説明（「出荷は倉庫の確認待ちです」「顧客からの回答を
+待っています」）と分けるため、敬語の形か「回答」「合って」に限り、「〜からの」は除く。"""
 _FROM_SOMEONE = re.compile(r"から(の)?(ご|お)?(回答|返事|確認|答え)")
 _ASKING_VERB = (
     r"(お選び|選んで|選択して|お答え|ご回答|回答して|ご記入|記入して|ご入力|入力して|書いて|お書き)"
@@ -61,7 +64,11 @@ _GENERIC = re.compile(
 「今回は不要」を選んでください」）は残す。"""
 _ASKING_MAX = 50
 _DATA = re.compile(r"[0-9０-９]|\*\*|\|")
-_SENTENCE = re.compile(r"[^。！？!?]*(?:[。！？!?]|$)")
+_SENTENCE = re.compile(r"(?:「[^」\n]*」|[^。！？!?])*(?:[。！？!?]|$)")
+"""文。「」の中の句点・疑問符では切らない（切ると「」の閉じない断片が残る。#170）。"""
+_QUOTED_QUESTION = re.compile(r"「[^」]*(か|？|\?)」")
+"""問い（言い換えた問いなど）を引用した部分。これを含む文は、位置の言葉や締めの言い方があっても
+取り除かない（中身がユーザーに見えなくなるため）。"""
 _SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
 _EXAMPLE = r"(?<!事)例(?!外|え)[^。？?]{0,20}"
 _EXAMPLE_CONFIRM = re.compile(
@@ -160,8 +167,10 @@ def clean_reply(text: str, *, question: bool = False) -> tuple[str, list[str]]:
             continue
         kept = []
         for sentence in _SENTENCE.findall(line):
-            if sentence.strip() and (
-                is_position_sentence(sentence) or (question and is_closing_sentence(sentence))
+            if (
+                sentence.strip()
+                and not _QUOTED_QUESTION.search(sentence)
+                and (is_position_sentence(sentence) or (question and is_closing_sentence(sentence)))
             ):
                 removed.append(sentence.strip())
             else:
