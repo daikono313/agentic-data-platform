@@ -206,9 +206,19 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
     other = Interviewer(runner2, LLMSettings())
     state2 = new_state("売上")
     await collect(other, state2, "売上")
-    assert "言い換えた問い" in runner2.tool_results[0]["content"][0]["text"]
+    error = runner2.tool_results[0]["content"][0]["text"]
+    # 言い換えた問いは本文ではなく question に入れさせる（本文から「上の言い換え」と指さない。#168）
+    assert "言い換えた問い" in error and "question の中に" in error
     await collect(other, state2, "はい")
     assert "is_error" not in runner2.tool_results[1]
+    # question の中に言い換えた問いがあれば、本文が無くても出せる
+    inline = {
+        "question": "「月ごとの売上金額はいくらか」という言い換えで合っていますか？",
+        "options": ["はい", "いいえ"],
+    }
+    runner3 = ScriptedRunner([[("present_choices", inline)]])
+    await collect(Interviewer(runner3, LLMSettings()), new_state("売上"), "売上")
+    assert "is_error" not in runner3.tool_results[0]
     # ユーザーが自分で書いた例を確かめるときも出せる
     await collect(interviewer, state, "ほか")
     await collect(interviewer, state, "例: 2024-05-01 に 3 個入荷")
