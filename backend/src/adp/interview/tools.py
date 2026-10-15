@@ -178,12 +178,19 @@ def build_tools(
         options = [str(o) for o in args["options"]][:5]
         question = str(args.get("question") or "").strip()
         # tool の結果や記録した内容はユーザーに見えないので、中身を書かない確認は確かめようが
-        # ない（具体例の値は #163、言い換えた問いは #165）
+        # ない（具体例の値は #163、言い換えた問いは #165）。言い換えた問いは question に入れさせる。
+        # 本文に書かせると「上の言い換えで…選択肢から」と本文から指すため（#168）
         kind = hidden_confirmation(question, *(shown() if shown else ("",)))
         if kind:
+            where = (
+                "question の中に書いて（例: 「『月ごとの売上金額はいくらか』という言い換えで"
+                "合っていますか？」）"
+                if kind == "reframe"
+                else "本文に書いてから（本文では画面の位置や操作に触れない）"
+            )
             return tool_text(
                 f"確かめてもらう{CONFIRMED[kind]}がユーザーに見えていません。tool の結果や記録した"
-                "内容はユーザーには見えないため、それを本文に書いてから、"
+                f"内容はユーザーには見えないため、それを{where}、"
                 "もう一度 present_choices を呼んでください。",
                 error=True,
             )
