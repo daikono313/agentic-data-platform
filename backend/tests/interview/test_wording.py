@@ -182,3 +182,31 @@ def test_has_example_values(text: str, expected: bool) -> None:
 )
 def test_hidden_confirmation(question: str, visible: str, expected: str | None) -> None:
     assert hidden_confirmation(question, visible) == expected
+
+
+def test_hidden_reframe_ignores_user_text_and_follow_up_questions() -> None:
+    """言い換えた問いは、アシスタントが確認より前に書いたものだけを見る（#167 のレビュー）。"""
+    confirm = "この言い換えで合っていますか？"
+    # ユーザーの要求文の「どれだけ」「何日」では通さない
+    assert hidden_confirmation(confirm, "", "在庫がどれだけ増えたかを見たい") == "reframe"
+    # 確認の後ろの別の質問では通さない
+    assert hidden_confirmation(confirm + "返品率の分母は何にしますか？", "") == "reframe"
+    # 具体例は、ユーザーが自分で書いた値でもよい
+    assert hidden_confirmation("この例で合っていますか？", "", "2024-05-01 に 3 個") is None
+
+
+@pytest.mark.parametrize(
+    "visible",
+    [
+        "「商品カテゴリ別の返品数 ÷ 販売数」と言い換えました。",
+        "「月別・店舗別の購入顧客数はいくつか」と言い換えました。",
+        "この言い換え（商品カテゴリ別に、返品された個数 ÷ 販売した個数）",
+    ],
+)
+def test_reframe_shown_variants(visible: str) -> None:
+    assert hidden_confirmation("この言い換えで合っていますか？", visible) is None
+
+
+def test_reframe_confirmation_across_sentences() -> None:
+    """「言い換えました。合っていますか？」も言い換えの確認として見る。"""
+    assert hidden_confirmation("言い換えました。合っていますか？", "") == "reframe"

@@ -322,8 +322,11 @@ def test_reframe_shown() -> None:
     inline = [_msg("", "「月ごとの購入者数はいくつか？」という言い換えでよいですか？")]
     assert _checks(inline)["reframe_shown"]
     # 直前の発言で示していればよい
-    before = [_msg("言い換えは「店舗別の入荷数量は月ごとにいくつか」です。"), shown[0]]
-    assert _checks([before[0], _msg("", "この言い換えで合っていますか？")])["reframe_shown"]
+    before = _msg("言い換えは「店舗別の入荷数量は月ごとにいくつか」です。")
+    assert _checks([before, _msg("", "この言い換えで合っていますか？")])["reframe_shown"]
+    # ユーザーの発言の中の「何日」では通さない
+    user = ChatMessage(role="user", text="出荷から何日かかっているかを見たい")
+    assert not _checks([user, _msg("", "この言い換えで合っていますか？")])["reframe_shown"]
 
 
 def test_closing_phrases_are_counted() -> None:

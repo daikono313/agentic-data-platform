@@ -80,7 +80,7 @@ class Interviewer:
             logger.exception("設計の確認に失敗しました（確定は止めません）")
             return []
 
-    def _spec(self, state: InterviewState, shown: Callable[[], str]) -> AgentSpec:
+    def _spec(self, state: InterviewState, shown: Callable[[], tuple[str, str]]) -> AgentSpec:
         tools = beam_tools.build_tools(state, issues=self.issues, shown=shown)
         return AgentSpec(
             purpose="interview",
@@ -114,11 +114,12 @@ class Interviewer:
         snapshot = _Snapshot.of(state, self.issues)
 
         reply: list[str] = []
-        # ユーザーに見えている直近の文（直前の発言・ユーザーの発言・今の発言の本文。#163）
-        seen = "\n".join([previous.text, previous.question or ""] if previous else []) + "\n" + text
+        # ユーザーに見えている直近の文（アシスタントの直前の発言と今の発言の本文、ユーザーの発言。
+        # 確認の質問で中身が見えているかに使う。#163・#165）
+        seen = "\n".join([previous.text, previous.question or ""] if previous else [])
 
-        def shown() -> str:
-            return seen + "\n" + "".join(reply)
+        def shown() -> tuple[str, str]:
+            return seen + "\n" + "".join(reply), text
 
         result: TurnResult | None = None
         try:

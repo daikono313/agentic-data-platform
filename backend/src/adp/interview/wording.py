@@ -73,8 +73,10 @@ _EXAMPLE_VALUE = re.compile(
     r"|\d[\d,.]*\s*(個|円|点|日|人|本|枚|回)|ID\s*[:：]?\s*\d"
 )
 """具体例の値（日時・数量・金額・比率・ID）。「2 件」のような件数は値に数えない。"""
-_REFRAME_CONFIRM = re.compile(r"言い換え[^。？?]{0,30}(合って|よい|良い|いい|よろしい)")
-"""言い換えた問いで合っているかの確認。"""
+_REFRAME_CONFIRM = re.compile(
+    r"言い換え[^？?]{0,40}?(合って|よい|良い|いい|よろしい)[^。？?\n]*[。？?]?"
+)
+"""言い換えた問いで合っているかの確認（「言い換えました。合っていますか？」も含む）。"""
 _REFRAME_BARE = re.compile(
     r"(この|上の|次の|今の|先ほどの)?言い換え(は|で|が)?(これで)?(合って|よい|良い|いい|よろしい)"
     r"[^。？?\n]*[。？?]?"
@@ -82,9 +84,9 @@ _REFRAME_BARE = re.compile(
 """中身を含まない確認の言い方（「この言い換えで合っていますか？」）。"""
 _REFRAMED = re.compile(
     r"(いくつ|いくら|何[件人個日回円%]|どれ(だけ|くらい)|どのくらい|割合|比率|\S率|平均|合計|総額"
-    r"|件数|数量|人数|金額|日数)[^。\n？?]{0,25}(か|？|\?)"
+    r"|件数|数量|人数|個数|金額|日数|\S数)[^。\n？?]{0,25}(か|？|\?)|[÷／]"
 )
-"""言い換えた問い（数えられる問い。「月ごとの売上金額はいくらか」）。"""
+"""言い換えた問い（数えられる問い。「月ごとの売上金額はいくらか」「返品数 ÷ 販売数」）。"""
 
 
 def is_position_sentence(sentence: str) -> bool:
@@ -120,20 +122,27 @@ def has_example_values(text: str) -> bool:
 
 CONFIRMED = {
     "examples": "具体例の値（日時・場所・商品・数量など）",
-    "reframe": "言い換えた問い（「月ごとの売上金額はいくらか」など）",
+    "reframe": "言い換えた問い（「月ごとの売上金額はいくらか」など。記録した framed_question）",
 }
 """確認の質問で、ユーザーに見えている必要がある中身（hidden_confirmation の戻り値と、その説明）。"""
 
 
-def hidden_confirmation(question: str, visible: str) -> str | None:
+def hidden_confirmation(question: str, assistant: str, user: str = "") -> str | None:
     """確認の質問で、確かめてもらう中身がユーザーに見えていなければ、その種類（CONFIRMED のキー）。
-    visible はユーザーに見えている直近の文（直前のアシスタントの発言・ユーザーの発言・
-    今の発言の本文）。"""
-    text = question + "\n" + visible
-    if is_example_confirmation(question) and not has_example_values(text):
-        return "examples"
-    if _REFRAME_CONFIRM.search(question) and not _REFRAMED.search(_REFRAME_BARE.sub("", text)):
-        return "reframe"
+
+    assistant はアシスタントが書いてユーザーに見えている直近の文（直前の発言と今の発言の本文）、
+    user はその間のユーザーの発言。具体例はユーザーが自分で書いた値でもよいが、言い換えた問いは
+    アシスタントが書いたものだけを見る（ユーザーの要求文の「どれだけ」「何日」で通さない）。
+    言い換えの確認の後ろに続く別の質問（「〜で合っていますか？分母は何にしますか？」）も見ない。"""
+    if is_example_confirmation(question):
+        if not has_example_values("\n".join([question, assistant, user])):
+            return "examples"
+        return None
+    confirm = _REFRAME_CONFIRM.search(question)
+    if confirm:
+        own = _REFRAME_BARE.sub("", question[: confirm.end()] + "\n" + assistant)
+        if not _REFRAMED.search(own):
+            return "reframe"
     return None
 
 

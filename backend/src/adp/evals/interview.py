@@ -453,15 +453,17 @@ def _hidden_confirmations(messages: list[Any]) -> dict[str, list[str]]:
     直前のアシスタントの発言か、その後のユーザーの発言に中身があれば、その確認とみなす
     （present_choices のエラーと同じ判定・範囲）。本文だけで確かめた発言（質問なし）も見る。"""
     found: dict[str, list[str]] = {kind: [] for kind in CONFIRMED}
-    seen = ""  # 直前のアシスタントの発言から、この発言までにユーザーに見えた文
+    seen = ""  # 直前のアシスタントの発言
+    user = ""  # その後のユーザーの発言
     for m in messages:
         if m.role != "assistant":
-            seen += "\n" + _shown(m)
+            user += "\n" + _shown(m)
             continue
-        kind = hidden_confirmation(m.question or m.text, seen + "\n" + _shown(m))
+        question = m.question or m.text
+        kind = hidden_confirmation(question, seen + "\n" + (m.text if m.question else ""), user)
         if kind:
             found[kind].append(_shown(m).strip()[:60])
-        seen = _shown(m)
+        seen, user = _shown(m), ""
     return found
 
 

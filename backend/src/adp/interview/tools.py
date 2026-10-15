@@ -47,11 +47,11 @@ def build_tools(
     state: InterviewState,
     on_change: Callable[[], None] | None = None,
     issues: Callable[[BeamModel], list[str]] | None = None,
-    shown: Callable[[], str] | None = None,
+    shown: Callable[[], tuple[str, str]] | None = None,
 ) -> list[SdkMcpTool[Any]]:
     """issues: 確定までに残っている課題（既定は BEAM の条件だけ。設計の課題も含められる）。
-    shown: ユーザーに見えている直近の文（直前のアシスタントの発言・ユーザーの発言・今の発言の
-    本文）。確認の質問で、確かめてもらう中身が見えているかを確かめるのに使う（#163・#165。
+    shown: ユーザーに見えている直近の文（アシスタントの直前の発言と今の発言の本文、ユーザーの
+    発言）。確認の質問で、確かめてもらう中身が見えているかを確かめるのに使う（#163・#165。
     eval の examples_shown・reframe_shown と同じ範囲）。"""
 
     def apply(mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
@@ -179,12 +179,11 @@ def build_tools(
         question = str(args.get("question") or "").strip()
         # tool の結果や記録した内容はユーザーに見えないので、中身を書かない確認は確かめようが
         # ない（具体例の値は #163、言い換えた問いは #165）
-        kind = hidden_confirmation(question, shown() if shown else "")
+        kind = hidden_confirmation(question, *(shown() if shown else ("",)))
         if kind:
-            hidden = CONFIRMED[kind]
             return tool_text(
-                f"確かめてもらう{hidden}がユーザーに見えていません。tool の結果や記録した内容は"
-                f"ユーザーには見えないため、{hidden}を本文に書いてから、"
+                f"確かめてもらう{CONFIRMED[kind]}がユーザーに見えていません。tool の結果や記録した"
+                "内容はユーザーには見えないため、それを本文に書いてから、"
                 "もう一度 present_choices を呼んでください。",
                 error=True,
             )
