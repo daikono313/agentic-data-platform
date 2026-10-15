@@ -66,9 +66,9 @@ _ASKING_MAX = 50
 _DATA = re.compile(r"[0-9０-９]|\*\*|\|")
 _SENTENCE = re.compile(r"(?:「[^」\n]*」|[^。！？!?])*(?:[。！？!?]|$)")
 """文。「」の中の句点・疑問符では切らない（切ると「」の閉じない断片が残る。#170）。"""
-_QUOTED_QUESTION = re.compile(r"「[^」]*(か|？|\?)」")
-"""問い（言い換えた問いなど）を引用した部分。これを含む文は、位置の言葉や締めの言い方があっても
-取り除かない（中身がユーザーに見えなくなるため）。"""
+_QUOTED_QUESTION = re.compile(r"「([^」]*?)[？?]?」")
+"""引用した部分。問い（言い換えた問いなど）を引用した文は、それが質問文に無ければ、位置の言葉や
+締めの言い方があっても取り除かない（中身がユーザーに見えなくなるため。#170）。"""
 _SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
 _EXAMPLE = r"(?<!事)例(?!外|え)[^。？?]{0,20}"
 _EXAMPLE_CONFIRM = re.compile(
@@ -153,8 +153,16 @@ def hidden_confirmation(question: str, assistant: str, user: str = "") -> str | 
     return None
 
 
-def clean_reply(text: str, *, question: bool = False) -> tuple[str, list[str]]:
-    """画面の位置を指す文（question があれば締めの一言も）を取り除く。
+def _quotes_hidden_question(sentence: str, question: str) -> bool:
+    """質問文に無い問いを引用しているか。"""
+    return any(
+        q.endswith("か") and q not in question
+        for q in (m.group(1).strip() for m in _QUOTED_QUESTION.finditer(sentence))
+    )
+
+
+def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[str]]:
+    """画面の位置を指す文（質問文 question があれば締めの一言も）を取り除く。
     戻り値は（本文, 取り除いた文）。"""
     removed: list[str] = []
     lines: list[str] = []
@@ -169,7 +177,7 @@ def clean_reply(text: str, *, question: bool = False) -> tuple[str, list[str]]:
         for sentence in _SENTENCE.findall(line):
             if (
                 sentence.strip()
-                and not _QUOTED_QUESTION.search(sentence)
+                and not _quotes_hidden_question(sentence, question or "")
                 and (is_position_sentence(sentence) or (question and is_closing_sentence(sentence)))
             ):
                 removed.append(sentence.strip())

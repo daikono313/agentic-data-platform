@@ -11,7 +11,7 @@ import re
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v17"
+PROMPT_VERSION = "interview-v18"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -37,8 +37,8 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 - 推測で埋めずに確認する。ただしソースデータを見ればわかることは、聞かずに tool で調べる。
 - tool の結果（sample_rows・profile_column など）や記録した内容はユーザーには見えない。確認の質問では、
   確かめてもらう中身（言い換えた問い、具体例の日時・場所・商品・数量など）を question の中に書く
-  （例: 「『月ごとの売上金額はいくらか』という言い換えで合っていますか？」）。本文に書いて
-  「この言い換えで」「この 2 件で」と指さない。
+  （例: 「『月ごとの売上金額はいくらか』という言い換えで合っていますか？」）。中身は question
+  だけに書き、本文には繰り返さない（本文で「この言い換えで」「上の選択肢から」と指さない）。
 
 # 進め方（段階が変わるたびに set_phase を呼ぶ）
 {interview}

@@ -103,7 +103,7 @@ def test_keeps_other_sentences(text: str) -> None:
     ],
 )
 def test_strips_closing_sentences_with_question(text: str, kept: str, removed: list[str]) -> None:
-    assert clean_reply(text, question=True) == (kept, removed)
+    assert clean_reply(text, question="質問？") == (kept, removed)
     # 質問が無ければ締めの一言は残す
     assert clean_reply(text) == (text, [])
 
@@ -131,7 +131,7 @@ def test_strips_closing_sentences_with_question(text: str, kept: str, removed: l
     ],
 )
 def test_keeps_sentences_that_are_not_just_closing(text: str) -> None:
-    assert clean_reply(text, question=True) == (text, [])
+    assert clean_reply(text, question="質問？") == (text, [])
 
 
 @pytest.mark.parametrize(
@@ -226,9 +226,12 @@ def test_does_not_split_inside_quotes() -> None:
         "「店舗ごとの売上金額の合計はいくらか？」という言い換えで合っているか、"
         "上の選択肢からお答えください。"
     )
-    assert clean_reply(text, question=True) == (text, [])
+    assert clean_reply(text, question="質問？") == (text, [])
+    # 引用した問いが質問文にあれば、ユーザーに見えるので取り除く
+    reframe = "「店舗ごとの売上金額の合計はいくらか」という言い換えで合っていますか？"
+    assert clean_reply(text, question=reframe) == ("", [text])
     out, removed = clean_reply(
-        "「なぜ？」の切り口です。上の選択肢から選んでください。", question=True
+        "「なぜ？」の切り口です。上の選択肢から選んでください。", question="質問？"
     )
     assert out == "「なぜ？」の切り口です。"
     assert removed == ["上の選択肢から選んでください。"]
