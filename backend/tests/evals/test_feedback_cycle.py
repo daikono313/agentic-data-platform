@@ -305,6 +305,30 @@ def test_examples_shown() -> None:
     assert _checks([_msg("", "この 2 つの切り口でよいですか？")])["examples_shown"]
 
 
+def test_reframe_shown() -> None:
+    """言い換えの確認では、言い換えた問いを発言に書く（記録した内容はユーザーに見えない。#165）。"""
+    assert not _checks([_msg("", "この言い換えで合っていますか？")])["reframe_shown"]
+    assert not _checks([_msg("回答をお待ちしています。", "この言い換えでよいですか？")])[
+        "reframe_shown"
+    ]
+    shown = [
+        _msg(
+            "「月ごと・支払方法ごとの売上金額はいくらか？」と言い換えました。",
+            "この言い換えで合っていますか？",
+        )
+    ]
+    assert _checks(shown)["reframe_shown"]
+    # 確認の文の中に言い換えた問いがあればよい
+    inline = [_msg("", "「月ごとの購入者数はいくつか？」という言い換えでよいですか？")]
+    assert _checks(inline)["reframe_shown"]
+    # 直前の発言で示していればよい
+    before = _msg("言い換えは「店舗別の入荷数量は月ごとにいくつか」です。")
+    assert _checks([before, _msg("", "この言い換えで合っていますか？")])["reframe_shown"]
+    # ユーザーの発言の中の「何日」では通さない
+    user = ChatMessage(role="user", text="出荷から何日かかっているかを見たい")
+    assert not _checks([user, _msg("", "この言い換えで合っていますか？")])["reframe_shown"]
+
+
 def test_closing_phrases_are_counted() -> None:
     """質問を出した発言の締めの一言を、取り除いた文も含めて数える（#158）。"""
     removed = ChatMessage(

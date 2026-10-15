@@ -193,6 +193,20 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
     # 直前の発言で値を示していても出せる
     await collect(interviewer, state, "もう一度")
     assert "is_error" not in runner.tool_results[2]
+    # 言い換えた問いを書かずに確かめる質問も、同じく出さない（#165）
+    reframe = {"question": "この言い換えで合っていますか？", "options": ["はい", "いいえ"]}
+    runner2 = ScriptedRunner(
+        [
+            [("present_choices", reframe)],
+            ["「月ごとの売上金額はいくらか？」と言い換えました。", ("present_choices", reframe)],
+        ]
+    )
+    other = Interviewer(runner2, LLMSettings())
+    state2 = new_state("売上")
+    await collect(other, state2, "売上")
+    assert "言い換えた問い" in runner2.tool_results[0]["content"][0]["text"]
+    await collect(other, state2, "はい")
+    assert "is_error" not in runner2.tool_results[1]
     # ユーザーが自分で書いた例を確かめるときも出せる
     await collect(interviewer, state, "ほか")
     await collect(interviewer, state, "例: 2024-05-01 に 3 個入荷")
@@ -215,6 +229,7 @@ def test_transcript_checks_detect_position_words_and_repeats() -> None:
         "no_repeated_questions": True,
         "no_effort_question": True,
         "examples_shown": True,
+        "reframe_shown": True,
     }
     good = [ChatMessage(role="assistant", text="支払方法は4種類です。", question="見たいですか？")]
     assert all(r.passed for r in _transcript_checks(good))
