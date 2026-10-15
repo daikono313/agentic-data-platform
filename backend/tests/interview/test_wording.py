@@ -2,7 +2,12 @@
 
 import pytest
 
-from adp.interview.wording import clean_reply, has_example_values, is_example_confirmation
+from adp.interview.wording import (
+    clean_reply,
+    has_example_values,
+    hidden_confirmation,
+    is_example_confirmation,
+)
 
 
 @pytest.mark.parametrize(
@@ -152,3 +157,28 @@ def test_is_example_confirmation(text: str, expected: bool) -> None:
 )
 def test_has_example_values(text: str, expected: bool) -> None:
     assert has_example_values(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("question", "visible", "expected"),
+    [
+        ("この言い換えで合っていますか？", "", "reframe"),
+        ("この言い換えで合っていますか？", "回答をお待ちしています。", "reframe"),
+        (
+            "この言い換えで合っていますか？",
+            "「月ごとの売上金額はいくらか？」と言い換えました。",
+            None,
+        ),
+        ("「店舗別の入荷数量はいくつか」という言い換えでよいですか？", "", None),
+        (
+            "この言い換え（カテゴリ別の返品数量 ÷ 販売数量の割合はいくらか）で合っていますか？",
+            "",
+            None,
+        ),
+        ("この 2 件を具体例として記録してよいですか？", "", "examples"),
+        ("この 2 件を具体例として記録してよいですか？", "2024-11-24 に 3 個", None),
+        ("支払方法のほかに見たい切り口はありますか？", "", None),
+    ],
+)
+def test_hidden_confirmation(question: str, visible: str, expected: str | None) -> None:
+    assert hidden_confirmation(question, visible) == expected
