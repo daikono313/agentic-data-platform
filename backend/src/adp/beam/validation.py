@@ -19,7 +19,7 @@ from adp.beam.models import (
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent
+    from adp.beam.models import BeamModel, BusinessEvent, MetricRequest
 
 TIME_GRAINS = {g.value for g in TimeGrain}
 # 集計方法ごとに、宣言できる加法性
@@ -226,15 +226,21 @@ def _metric_issues(model: BeamModel) -> list[str]:
             )
         if metric.type in (MetricType.RATIO, MetricType.DERIVED):
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
-            for name in metric.inputs:
-                src = metrics.get(name)
-                src_event = model.event(src.event) if src else None
+            # （元の指標がさらに比率・派生なら、その下の指標まで。MetricFlow は filter を下へ渡す。
+            # #180）
+            leaves, cycle = _leaf_inputs(metric, metrics)
+            if cycle:
+                issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
+            for via, name in leaves:
+                src = metrics[name]
+                src_event = model.event(src.event)
                 if src_event is None or src_event.name == event.name:
                     continue
+                where = name if via == name else f"{via} の元の {name}"
                 for ref in [*metric.group_by, *(f.ref for f in metric.filters)]:
                     if resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
-                            f"{p} {ref} は元の指標 {name} のイベント {src_event.name} にありません"
+                            f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
@@ -243,6 +249,30 @@ def _metric_issues(model: BeamModel) -> list[str]:
             elif kind == "attribute" and _attribute_unavailable(event, ref):
                 issues.append(f"{p} group_by {ref} はデータなしです")
     return issues
+
+
+def _leaf_inputs(
+    metric: MetricRequest, metrics: dict[str, MetricRequest]
+) -> tuple[list[tuple[str, str]], bool]:
+    """比率・派生の入れ子をたどった先の、measure を集計する指標（MetricFlow が切り口・絞り込みを
+    解決する指標）を、（直接の元の指標, その指標）で。2 つ目は、たどると自分に戻るか（循環）。"""
+    leaves: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    cycle = False
+    todo = [(n, n) for n in metric.inputs]
+    while todo:
+        via, name = todo.pop()
+        src = metrics.get(name)
+        if name == metric.name:
+            cycle = True
+        if name in seen or name == metric.name or src is None:
+            continue
+        seen.add(name)
+        if src.type in (MetricType.RATIO, MetricType.DERIVED):
+            todo += [(via, n) for n in src.inputs]
+        else:
+            leaves.append((via, name))
+    return leaves, cycle
 
 
 def _conformance_issues(model: BeamModel) -> list[str]:
