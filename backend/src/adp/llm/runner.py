@@ -58,6 +58,13 @@ class TextDelta:
     text: str
 
 
+def join_chunks(chunks: list[str]) -> str:
+    """tool 呼び出しで分かれた本文（TextDelta）のかたまりを空行でつなぐ（区切り無しでつながらない
+    ように。#161）。書き直した二重のかたまりは消さない（前のかたまりにしか無い情報を消さずに
+    見分けられないため。インタビューの eval の repeated_text で数える）。"""
+    return "\n\n".join(c for c in (c.strip() for c in chunks) if c)
+
+
 @dataclass
 class ToolCall:
     name: str

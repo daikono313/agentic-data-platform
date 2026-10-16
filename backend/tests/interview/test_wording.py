@@ -7,7 +7,6 @@ from adp.interview.wording import (
     has_example_values,
     hidden_confirmation,
     is_example_confirmation,
-    join_chunks,
 )
 
 
@@ -253,74 +252,3 @@ def test_quoted_question_matches_question_loosely() -> None:
     text = "「月ごとの 売上はいくらか」という言い換えで合っているか、上の選択肢からお答えください。"
     question = "『月ごとの売上はいくらか』で合っていますか？"
     assert clean_reply(text, question=question) == ("", [text])
-
-
-_RETURNS = "返品のデータは `raw.returns` にあります（3,699 件）。"
-_REFRAME = "次のように言い換えました。\n\n「商品カテゴリごとの販売数量はいくつか？」"
-_EVENT = "イベントの整理:\n- 粒度: 1 注文明細 1 行\n- 単位: 個"
-
-
-@pytest.mark.parametrize(
-    ("chunks", "expected"),
-    [
-        # tool 呼び出しをまたいだかたまりは空行で区切る（#161）
-        (["- 数量: 54 個", "次は店舗です。"], "- 数量: 54 個\n\n次は店舗です。"),
-        (["", "  前置きだけ。  ", ""], "前置きだけ。"),
-        # 中身がすべて後のかたまりにあるかたまりは捨てる（全角・半角の違いは無視。実際の記録から）
-        ([_REFRAME, _REFRAME], _REFRAME),
-        (
-            [
-                "検索します。",
-                _RETURNS,
-                _RETURNS.replace("（", "(").replace("）", ")") + "\n\nどう使いますか？",
-            ],
-            "検索します。\n\n"
-            + _RETURNS.replace("（", "(").replace("）", ")")
-            + "\n\nどう使いますか？",
-        ),
-        (
-            ["条件を記録しました。", "x", "条件を記録しました。続けます。"],
-            "x\n\n条件を記録しました。続けます。",
-        ),
-        (["1. 店舗ごとに集計します", "1. 店舗ごとに集計します"], "1. 店舗ごとに集計します"),
-        # 前のかたまりにしか無い中身があれば捨てない（#161 レビュー）
-        (
-            [
-                "具体例を次のように記録しました。\n- 例 1: 1/5 に 3 個",
-                "具体例を次のように記録しました。\n- 例 2: 1/6 に 2 個",
-            ],
-            None,
-        ),
-        (
-            [
-                "次のように整理しました。\n\n注文は 1 注文明細 1 行です。",
-                "次のように整理しました。\n\n返品は 1 返品 1 行です。",
-            ],
-            None,
-        ),
-        (
-            [
-                "粒度を 1 注文明細 1 行で記録しました。次は店舗について伺います。",
-                "次は店舗について伺います。単位はどれですか？",
-            ],
-            None,
-        ),
-        (["売上は税抜きで計算すると記録しました。次のように言い換えました。", _REFRAME], None),
-        (
-            ["次のように記録しました。\n- 注文日\n- 店舗", "次のように記録しました。\n- 注文日"],
-            None,
-        ),
-        (["注文" + _EVENT, "返品" + _EVENT], None),
-        (["はい。", "はい。"], None),
-        # 言い回しを変えた書き直しは残る（eval の repeated_text で数える）
-        (
-            [
-                "店舗は、店舗名で記録します。次は「何を」（商品）です。",
-                "店舗は、店舗名で記録しました。次は「何を」（商品）です。",
-            ],
-            None,
-        ),
-    ],
-)
-def test_join_chunks(chunks: list[str], expected: str | None) -> None:
-    assert join_chunks(chunks) == (expected or "\n\n".join(chunks))

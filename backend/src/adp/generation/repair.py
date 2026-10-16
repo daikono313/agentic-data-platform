@@ -25,7 +25,15 @@ from adp.generation.guard import (
     allowed_patterns,
 )
 from adp.generation.semantic import MetricQuery
-from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
+from adp.llm import (
+    AgentRunner,
+    AgentSpec,
+    LLMSettings,
+    TextDelta,
+    ToolCall,
+    TurnResult,
+    join_chunks,
+)
 from adp.llm.settings import REPO_ROOT
 from adp.warehouse import tool_env
 
@@ -247,18 +255,18 @@ class Repairer:
             max_turns=40,
             cwd=warehouse,
         )
-        text: list[str] = []
+        text = [""]  # 本文のかたまり（tool 呼び出しで区切る。#161）
         try:
             async for event in self.runner.run(prompt, spec):
                 if isinstance(event, TextDelta):
-                    text.append(event.text)
-                elif isinstance(event, ToolCall) and text and not text[-1].endswith("\n"):
-                    text.append("\n")  # tool 呼び出しをまたいだ本文がつながらないように（#161）
+                    text[-1] += event.text
+                elif isinstance(event, ToolCall):
+                    text.append("")
                 elif isinstance(event, TurnResult) and event.is_error:
-                    text.append(f"\n（エージェントのエラー: {event.error}）")
+                    text.append(f"（エージェントのエラー: {event.error}）")
         except Exception as e:  # CLI の異常終了など。修正の試行は失敗として続ける
-            text.append(f"\n（エージェントの実行に失敗しました: {e}）")
-        return "".join(text).strip(), guard.denied
+            text.append(f"（エージェントの実行に失敗しました: {e}）")
+        return join_chunks(text), guard.denied
 
     async def run(
         self,

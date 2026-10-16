@@ -19,10 +19,6 @@
 具体例を記録してよいかの確認には値（日付・数量など。#163）、言い換えの確認には言い換えた問い
 （「〜はいくつか」。#165）が要る。tool の結果や記録した内容はユーザーに見えないので、中身を書かずに
 「この 2 件で」「この言い換えで」と聞いても確かめられない。
-
-1 ターンの本文は、tool 呼び出しをまたぐとかたまりに分かれる（`join_chunks`）。かたまりは空行で
-区切り、中身がすべて後のかたまりにある（書き直した）かたまりは捨てる（present_choices がエラーで
-呼び直しになったときなどに、モデルが同じ前置きを書き直すことがある。#161）。
 """
 
 from __future__ import annotations
@@ -226,23 +222,3 @@ def prose_sentences(text: str) -> list[str]:
         if not in_code and not is_structure_line(line):
             sentences += [normalize(x) for x in _SENTENCE.findall(line)]
     return [x for x in sentences if x]
-
-
-def _contents(chunk: str) -> set[str]:
-    """かたまりの中身: 8 文字以上の地の文と、構造の行（比べる形）。"""
-    lines = {normalize(x) for x in chunk.split("\n") if is_structure_line(x)}
-    return {x for x in prose_sentences(chunk) if len(x) >= 8} | {x for x in lines if x}
-
-
-def join_chunks(chunks: list[str]) -> str:
-    """tool 呼び出しで分かれた本文のかたまりを空行でつなぐ。前のかたまりの中身がすべて後のかたまりに
-    あれば、書き直したものとみなして前のかたまりを捨てる（中身が残るものだけを捨てる。言い回しを
-    変えた書き直しは残る）。"""
-    kept: list[str] = []
-    for chunk in (c.strip() for c in chunks):
-        if not chunk:
-            continue
-        contents = _contents(chunk)
-        kept = [c for c in kept if not (_contents(c) and _contents(c) <= contents)]
-        kept.append(chunk)
-    return "\n\n".join(kept)

@@ -14,8 +14,16 @@ from adp.beam import BeamModel, EventMatrix, build_event_matrix
 from adp.interview import tools as beam_tools
 from adp.interview.prompts import prompt_version, system_prompt
 from adp.interview.state import ChatMessage, InterviewState, Phase
-from adp.interview.wording import clean_reply, join_chunks
-from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
+from adp.interview.wording import clean_reply
+from adp.llm import (
+    AgentRunner,
+    AgentSpec,
+    LLMSettings,
+    TextDelta,
+    ToolCall,
+    TurnResult,
+    join_chunks,
+)
 
 
 @dataclass
