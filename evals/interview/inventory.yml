@@ -10,6 +10,7 @@ persona: |
   - 優先度は高い。
 checks:
   - finalizable
+  - min_examples: 2
   - has_w: [what, when, where]
   - min_events: 1
   - metric_filter: {column: raw.inventory.movement_type, includes: [receipt], excludes: [transfer_out, disposal, count]}

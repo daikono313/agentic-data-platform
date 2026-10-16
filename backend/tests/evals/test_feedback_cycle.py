@@ -159,7 +159,7 @@ def test_drafts_map_categories_to_checks(tmp_path: Path) -> None:
 
     scenario = yaml.safe_load(text)
     assert scenario["request"] == "店舗ごとの売上を見たい"
-    assert scenario["checks"] == ["finalizable", "no_unexplained_jargon"]
+    assert scenario["checks"] == ["finalizable", {"min_examples": 2}, "no_unexplained_jargon"]
 
 
 async def test_summary_treats_feedback_as_data() -> None:

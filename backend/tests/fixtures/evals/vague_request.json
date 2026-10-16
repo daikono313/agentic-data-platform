@@ -8,17 +8,67 @@
    "detail": ""
   },
   {
-   "name": "metric_aggregation: count_distinct",
+   "name": "min_examples: 2",
    "passed": true,
-   "detail": "['ordering_customers']"
+   "detail": "[2]"
   },
   {
-   "name": "metric_group_by_w: who",
+   "name": "metric_aggregation: count_distinct",
    "passed": true,
-   "detail": "[['ordered_at.month', 'customer.membership_rank', 'customer.region']]"
+   "detail": "['customer_count']"
+  },
+  {
+   "name": "metric_filter: {'column': 'raw.orders.order_status', 'excludes': ['cancelled']}",
+   "passed": true,
+   "detail": "purchasing_customer_count: order_status.order_status != ['cancelled']"
+  },
+  {
+   "name": "metric_group_by_columns: ['raw.customers.membership_rank', 'raw.customers.region', 'raw.orders.ordered_at']",
+   "passed": true,
+   "detail": "['raw.customers.membership_rank', 'raw.customers.region', 'raw.orders.ordered_at']"
+  },
+  {
+   "name": "asks_purpose",
+   "passed": true,
+   "detail": "月ごとの購入客数がわかったら、その数字をどんな判断に使いますか？"
+  },
+  {
+   "name": "no_choice_position_words",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "question_not_repeated_in_text",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_unexplained_jargon",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_repeated_questions",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_effort_question",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "examples_shown",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "reframe_shown",
+   "passed": true,
+   "detail": ""
   }
  ],
- "turns": 9,
+ "turns": 12,
  "tool_calls": [
   [
    {
@@ -28,6 +78,10 @@
     }
    },
    {
+    "name": "mcp__source_catalog__list_facts",
+    "input": {}
+   },
+   {
     "name": "mcp__source_catalog__list_sources",
     "input": {}
    },
@@ -35,27 +89,42 @@
     "name": "mcp__beam__set_overview",
     "input": {
      "name": "customer_behavior",
-     "title": "顧客行動の分析"
+     "title": "顧客の動きの把握"
     }
    },
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "「お客さんの動き」として、まず一番知りたいのはどれに近いですか？",
+     "question": "「お客さんの動き」を、まずは次のどの数字で見るのが近いですか？",
      "options": [
-      "日別の注文した顧客数",
-      "顧客ごとの注文回数・購入金額",
-      "リピート購入している顧客の数",
-      "商品の返品をした顧客数"
+      "日別・月別の購入客数（注文したお客さんの数）",
+      "お客さん1人あたりの注文回数",
+      "お客さん1人あたりの購入金額",
+      "リピート客（2回以上注文した人）の数",
+      "どれも違う（自由に回答）"
      ]
     }
    }
   ],
   [
    {
-    "name": "mcp__source_catalog__describe_table",
+    "name": "mcp__beam__present_choices",
     "input": {
-     "table": "raw.orders"
+     "question": "月ごとの購入客数がわかったら、その数字をどんな判断に使いますか？",
+     "options": [
+      "キャンペーンやプロモーションの効果を見る",
+      "店舗やチャネルごとの集客力を比べる",
+      "商品や在庫の計画に反映する",
+      "売上目標との差を確認する"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "event_discovery"
     }
    },
    {
@@ -71,10 +140,108 @@
     }
    },
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__source_catalog__describe_table",
     "input": {
-     "table": "raw.customers",
-     "column": "region"
+     "table": "raw.order_items"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.orders"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "customer_count",
+        "label": "購入客数",
+        "aggregation": "count_distinct",
+        "additivity": "non_additive",
+        "unit": "人",
+        "availability": "available",
+        "description": "注文したお客さんの数(重複を除く)",
+        "source": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "availability": "available",
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "region",
+          "label": "居住地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.customers",
+           "column": "region"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       }
+      ]
+     }
     }
    },
    {
@@ -85,98 +252,10 @@
     }
    },
    {
-    "name": "mcp__beam__set_phase",
+    "name": "mcp__source_catalog__profile_column",
     "input": {
-     "phase": "event_discovery"
-    }
-   },
-   {
-    "name": "mcp__beam__present_choices",
-    "input": {
-     "question": "「地方別」は、どちらの地方で見たいですか？",
-     "options": [
-      "お客さんの住んでいる地方",
-      "買った店舗のある地方（オンライン・アプリは地方なし）",
-      "両方見たい"
-     ]
-    }
-   }
-  ],
-  [
-   {
-    "name": "mcp__beam__upsert_event",
-    "input": {
-     "data": {
-      "name": "customer_orders_product",
-      "label": "顧客が商品を注文する",
-      "subject": "顧客",
-      "verb": "注文する",
-      "object": "商品",
-      "story_type": "discrete",
-      "source_tables": [
-       "raw.orders",
-       "raw.customers"
-      ],
-      "agg_time_dimension": "ordered_at",
-      "dimensions": [
-       {
-        "w": "who",
-        "name": "customer",
-        "label": "顧客",
-        "business_key": {
-         "table": "raw.customers",
-         "column": "customer_id"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "attributes": [
-         {
-          "name": "membership_rank",
-          "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
-          "availability": "available",
-          "examples": [
-           "bronze",
-           "silver",
-           "gold",
-           "platinum"
-          ]
-         },
-         {
-          "name": "region",
-          "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
-          "availability": "available",
-          "examples": [
-           "関東",
-           "関西",
-           "中部",
-           "北海道",
-           "九州"
-          ]
-         }
-        ]
-       },
-       {
-        "w": "when",
-        "name": "ordered_at",
-        "label": "注文日時",
-        "time_grain": "day",
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "ordered_at"
-        }
-       }
-      ]
-     }
+     "table": "raw.customers",
+     "column": "region"
     }
    },
    {
@@ -184,18 +263,29 @@
     "input": {
      "phase": "seven_ws"
     }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "お客さんについて、ほかに見たい切り口はありますか？データに無さそうなものでも構いません。",
+     "options": [
+      "これで十分（会員ランク・居住地方のみ）",
+      "性別や年齢層も見たい",
+      "都道府県別も見たい",
+      "その他（自由に回答）"
+     ]
+    }
    }
   ],
   [
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "お客さんの会員ランクや居住地方が後で変わったとき、過去の月の集計はどちらで見たいですか？",
+     "question": "お客さんの会員ランクや居住地方が後から変わったとき、過去の分析は当時の値で見たいですか？",
      "options": [
-      "その当時のランク・地方で見たい",
-      "最新のランク・地方で見たい",
-      "ランクだけ当時の値で見たい",
-      "後で決める"
+      "当時の値で見たい（ランクアップ前は前のランクとして）",
+      "最新の値で見ればよい",
+      "ランクだけ当時の値、地方は最新でよい"
      ]
     }
    }
@@ -211,11 +301,41 @@
       "verb": "注文する",
       "object": "商品",
       "story_type": "discrete",
+      "table_name": "order_lines",
       "source_tables": [
-       "raw.orders",
-       "raw.customers"
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
       ],
       "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "customer_count",
+        "label": "購入客数",
+        "aggregation": "count_distinct",
+        "additivity": "non_additive",
+        "unit": "人",
+        "availability": "available",
+        "description": "注文したお客さんの数(重複を除く)",
+        "source": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        }
+       }
+      ],
       "dimensions": [
        {
         "w": "who",
@@ -233,10 +353,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -244,15 +360,15 @@
            "silver",
            "gold",
            "platinum"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
          },
          {
           "name": "region",
           "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -261,7 +377,11 @@
            "中部",
            "北海道",
            "九州"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "region"
+          }
          }
         ]
        },
@@ -282,18 +402,141 @@
    {
     "name": "mcp__source_catalog__profile_column",
     "input": {
-     "table": "raw.orders",
-     "column": "order_status"
+     "table": "raw.products",
+     "column": "category"
     }
    },
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "「月ごとに買ってくれたお客さんの人数」には、どの注文を含めますか？",
+     "question": "商品について、見たい切り口はありますか？",
      "options": [
-      "キャンセルを除く（完了と返品ありを含む）",
-      "完了した注文のみ",
-      "すべての注文を含む"
+      "商品カテゴリだけでよい",
+      "商品名やブランドも見たい",
+      "商品は見なくてよい",
+      "その他（自由に回答）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.stores",
+     "column": "channel"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.stores",
+     "column": "region"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "「地方別」は、どちらの地方のことですか？",
+     "options": [
+      "お客さんの居住地方",
+      "買った店の所在地方",
+      "両方見たい",
+      "チャネル（実店舗・アプリ・オンライン）も見たい"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.promotions"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "プロモーション（なぜ買ったか）について、見たい切り口はありますか？",
+     "options": [
+      "見なくてよい",
+      "プロモーション名別に見たい",
+      "プロモーションの種類別に見たい",
+      "その他（自由に回答）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.orders",
+     "column": "order_status"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.orders",
+     "column": "payment_method"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "支払方法など、ほかに見たい切り口はありますか？",
+     "options": [
+      "見なくてよい",
+      "支払方法別にも見たい",
+      "その他（自由に回答）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.orders",
+     "limit": 2
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.customers",
+     "where_column": "customer_id",
+     "value": "4488"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.customers",
+     "where_column": "customer_id",
+     "value": "2561"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この 2 件を、具体例として記録してよいですか？",
+     "options": [
+      "よい",
+      "別の例を示してほしい",
+      "自分で例を伝える"
+     ]
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "次の 2 件を具体例として記録してよいですか？ ①2024年11月24日 16:40、関東在住の bronze 会員（顧客ID 4488）が注文。②2025年2月12日 14:20、中部在住の bronze 会員（顧客ID 2561）が注文。どちらも購入客数は 1 人です。",
+     "options": [
+      "よい",
+      "別の例を示してほしい",
+      "自分で例を伝える"
      ]
     }
    }
@@ -309,11 +552,41 @@
       "verb": "注文する",
       "object": "商品",
       "story_type": "discrete",
+      "table_name": "order_lines",
       "source_tables": [
-       "raw.orders",
-       "raw.customers"
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
       ],
       "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "customer_count",
+        "label": "購入客数",
+        "aggregation": "count_distinct",
+        "additivity": "non_additive",
+        "unit": "人",
+        "availability": "available",
+        "description": "注文したお客さんの数(重複を除く)",
+        "source": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        }
+       }
+      ],
       "dimensions": [
        {
         "w": "who",
@@ -331,10 +604,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -342,15 +611,15 @@
            "silver",
            "gold",
            "platinum"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
          },
          {
           "name": "region",
           "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -359,7 +628,11 @@
            "中部",
            "北海道",
            "九州"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "region"
+          }
          }
         ]
        },
@@ -389,50 +662,67 @@
          {
           "name": "order_status",
           "label": "注文ステータス",
-          "source": {
-           "table": "raw.orders",
-           "column": "order_status"
-          },
           "availability": "available",
           "examples": [
            "completed",
            "returned",
            "cancelled"
-          ]
+          ],
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
          }
         ]
        }
       ],
-      "measures": [
+      "examples": [
        {
-        "name": "ordering_customers",
-        "label": "注文した顧客数",
-        "aggregation": "count_distinct",
-        "additivity": "non_additive",
-        "availability": "available",
-        "unit": "人",
-        "source": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "description": "注文した顧客のユニーク人数。期間をまたいでは足し上げられない"
+        "values": {
+         "ordered_at": "2024-11-24 16:40:00",
+         "customer.membership_rank": "bronze",
+         "customer.region": "関東",
+         "customer_count": 1
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
+         "customer.membership_rank": "bronze",
+         "customer.region": "中部",
+         "customer_count": 1
+        }
        }
       ]
      }
     }
    },
    {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "購入客数を数えるとき、キャンセルや返品の注文はどう扱いますか？",
+     "options": [
+      "キャンセルだけ除く（返品は買った人として数える）",
+      "キャンセルも返品も除く（完了した注文のみ）",
+      "すべて数える",
+      "後で決める"
+     ]
+    }
+   }
+  ],
+  [
+   {
     "name": "mcp__beam__upsert_metric",
     "input": {
      "data": {
-      "name": "monthly_ordering_customers",
-      "label": "月別注文顧客数",
-      "question": "月ごとに何人のお客さんが買ってくれたかを、会員ランク別と地方別に知りたい",
-      "framed_question": "月ごとに、会員ランク別・お客さんの居住地方別で、キャンセルを除く注文をした顧客は何人か",
+      "name": "purchasing_customer_count",
+      "label": "購入客数",
+      "question": "月ごとに、何人のお客さんが買ってくれたかを知りたい(会員ランク・地方別)",
+      "framed_question": "月別(日別)・会員ランク別・居住地方別の購入客数はいくつか?",
       "event": "customer_orders_product",
       "type": "simple",
-      "measure": "ordering_customers",
-      "filter": "キャンセルを除く（完了と返品ありを含む）",
+      "measure": "customer_count",
+      "filter": "キャンセルした注文を除く(返品は購入客として数える)",
       "filters": [
        {
         "ref": "order_status.order_status",
@@ -446,308 +736,8 @@
        "ordered_at.month",
        "customer.membership_rank",
        "customer.region"
-      ]
-     }
-    }
-   }
-  ],
-  [
-   {
-    "name": "mcp__beam__upsert_event",
-    "input": {
-     "data": {
-      "name": "customer_orders_product",
-      "label": "顧客が商品を注文する",
-      "subject": "顧客",
-      "verb": "注文する",
-      "object": "商品",
-      "story_type": "discrete",
-      "source_tables": [
-       "raw.orders",
-       "raw.customers"
       ],
-      "agg_time_dimension": "ordered_at",
-      "dimensions": [
-       {
-        "w": "who",
-        "name": "customer",
-        "label": "顧客",
-        "business_key": {
-         "table": "raw.customers",
-         "column": "customer_id"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "attributes": [
-         {
-          "name": "membership_rank",
-          "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
-          "availability": "available",
-          "history_required": true,
-          "examples": [
-           "bronze",
-           "silver",
-           "gold",
-           "platinum"
-          ]
-         },
-         {
-          "name": "region",
-          "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
-          "availability": "available",
-          "history_required": true,
-          "examples": [
-           "関東",
-           "関西",
-           "中部",
-           "北海道",
-           "九州"
-          ]
-         }
-        ]
-       },
-       {
-        "w": "when",
-        "name": "ordered_at",
-        "label": "注文日時",
-        "time_grain": "day",
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "ordered_at"
-        }
-       },
-       {
-        "w": "how",
-        "name": "order_status",
-        "label": "注文ステータス",
-        "business_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "attributes": [
-         {
-          "name": "order_status",
-          "label": "注文ステータス",
-          "source": {
-           "table": "raw.orders",
-           "column": "order_status"
-          },
-          "availability": "available",
-          "examples": [
-           "completed",
-           "returned",
-           "cancelled"
-          ]
-         }
-        ]
-       }
-      ],
-      "measures": [
-       {
-        "name": "ordering_customers",
-        "label": "注文した顧客数",
-        "aggregation": "count_distinct",
-        "additivity": "non_additive",
-        "availability": "available",
-        "unit": "人",
-        "source": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "description": "注文した顧客のユニーク人数。期間をまたいでは足し上げられない"
-       }
-      ],
-      "examples": [
-       {
-        "values": {
-         "ordering_customers": 1,
-         "customer.membership_rank": "gold",
-         "customer.region": "関東",
-         "ordered_at": "2026-09-15",
-         "order_status.order_status": "completed"
-        }
-       }
-      ]
-     }
-    }
-   },
-   {
-    "name": "mcp__beam__set_phase",
-    "input": {
-     "phase": "grain"
-    }
-   },
-   {
-    "name": "mcp__beam__present_choices",
-    "input": {
-     "question": "分析用データの1行は、何を表すのがよいですか？",
-     "options": [
-      "注文 1 件を 1 行とする（今回の人数にはこれで十分）",
-      "注文の中の商品 1 つずつを 1 行とする"
-     ]
-    }
-   }
-  ],
-  [
-   {
-    "name": "mcp__beam__upsert_event",
-    "input": {
-     "data": {
-      "name": "customer_orders_product",
-      "label": "顧客が商品を注文する",
-      "subject": "顧客",
-      "verb": "注文する",
-      "object": "商品",
-      "story_type": "discrete",
-      "table_name": "orders",
-      "grain": "注文 1 件を 1 行とする",
-      "grain_keys": [
-       "order_id"
-      ],
-      "degenerate_dimensions": [
-       {
-        "name": "order_id",
-        "label": "注文ID",
-        "source": {
-         "table": "raw.orders",
-         "column": "order_id"
-        }
-       }
-      ],
-      "source_tables": [
-       "raw.orders",
-       "raw.customers"
-      ],
-      "agg_time_dimension": "ordered_at",
-      "dimensions": [
-       {
-        "w": "who",
-        "name": "customer",
-        "label": "顧客",
-        "business_key": {
-         "table": "raw.customers",
-         "column": "customer_id"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "attributes": [
-         {
-          "name": "membership_rank",
-          "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
-          "availability": "available",
-          "history_required": true,
-          "examples": [
-           "bronze",
-           "silver",
-           "gold",
-           "platinum"
-          ]
-         },
-         {
-          "name": "region",
-          "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
-          "availability": "available",
-          "history_required": true,
-          "examples": [
-           "関東",
-           "関西",
-           "中部",
-           "北海道",
-           "九州"
-          ]
-         }
-        ]
-       },
-       {
-        "w": "when",
-        "name": "ordered_at",
-        "label": "注文日時",
-        "time_grain": "day",
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "ordered_at"
-        }
-       },
-       {
-        "w": "how",
-        "name": "order_status",
-        "label": "注文ステータス",
-        "business_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "attributes": [
-         {
-          "name": "order_status",
-          "label": "注文ステータス",
-          "source": {
-           "table": "raw.orders",
-           "column": "order_status"
-          },
-          "availability": "available",
-          "examples": [
-           "completed",
-           "returned",
-           "cancelled"
-          ]
-         }
-        ]
-       }
-      ],
-      "measures": [
-       {
-        "name": "ordering_customers",
-        "label": "注文した顧客数",
-        "aggregation": "count_distinct",
-        "additivity": "non_additive",
-        "availability": "available",
-        "unit": "人",
-        "source": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "description": "注文した顧客のユニーク人数。期間をまたいでは足し上げられない"
-       }
-      ],
-      "examples": [
-       {
-        "values": {
-         "ordering_customers": 1,
-         "customer.membership_rank": "gold",
-         "customer.region": "関東",
-         "ordered_at": "2026-09-15",
-         "order_status.order_status": "completed"
-        }
-       }
-      ]
+      "status": "draft"
      }
     }
    },
@@ -760,11 +750,11 @@
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "この「月別・会員ランク別・地方別の注文顧客数」の優先度はどれくらいですか？",
+     "question": "この購入客数の集計は、どのくらい優先して作りたいですか？",
      "options": [
       "high（最優先）",
-      "medium",
-      "low",
+      "medium（普通）",
+      "low（急いでいない）",
       "おまかせ"
      ]
     }
@@ -781,29 +771,44 @@
       "verb": "注文する",
       "object": "商品",
       "story_type": "discrete",
-      "table_name": "orders",
-      "grain": "注文 1 件を 1 行とする",
-      "grain_keys": [
-       "order_id"
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
       ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
       "priority": "high",
       "impact": "high",
-      "effort": "low",
+      "effort": "medium",
       "degenerate_dimensions": [
        {
-        "name": "order_id",
-        "label": "注文ID",
+        "name": "order_item_id",
+        "label": "注文明細ID",
         "source": {
-         "table": "raw.orders",
-         "column": "order_id"
+         "table": "raw.order_items",
+         "column": "order_item_id"
         }
        }
       ],
-      "source_tables": [
-       "raw.orders",
-       "raw.customers"
+      "measures": [
+       {
+        "name": "customer_count",
+        "label": "購入客数",
+        "aggregation": "count_distinct",
+        "additivity": "non_additive",
+        "unit": "人",
+        "availability": "available",
+        "description": "注文したお客さんの数(重複を除く)",
+        "source": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        }
+       }
       ],
-      "agg_time_dimension": "ordered_at",
       "dimensions": [
        {
         "w": "who",
@@ -821,10 +826,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "source": {
-           "table": "raw.customers",
-           "column": "membership_rank"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -832,15 +833,15 @@
            "silver",
            "gold",
            "platinum"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
          },
          {
           "name": "region",
           "label": "居住地方",
-          "source": {
-           "table": "raw.customers",
-           "column": "region"
-          },
           "availability": "available",
           "history_required": true,
           "examples": [
@@ -849,7 +850,11 @@
            "中部",
            "北海道",
            "九州"
-          ]
+          ],
+          "source": {
+           "table": "raw.customers",
+           "column": "region"
+          }
          }
         ]
        },
@@ -879,56 +884,38 @@
          {
           "name": "order_status",
           "label": "注文ステータス",
-          "source": {
-           "table": "raw.orders",
-           "column": "order_status"
-          },
           "availability": "available",
           "examples": [
            "completed",
            "returned",
            "cancelled"
-          ]
+          ],
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
          }
         ]
-       }
-      ],
-      "measures": [
-       {
-        "name": "ordering_customers",
-        "label": "注文した顧客数",
-        "aggregation": "count_distinct",
-        "additivity": "non_additive",
-        "availability": "available",
-        "unit": "人",
-        "source": {
-         "table": "raw.orders",
-         "column": "customer_id"
-        },
-        "description": "注文した顧客のユニーク人数。期間をまたいでは足し上げられない"
        }
       ],
       "examples": [
        {
         "values": {
-         "ordering_customers": 1,
-         "customer.membership_rank": "gold",
+         "ordered_at": "2024-11-24 16:40:00",
+         "customer.membership_rank": "bronze",
          "customer.region": "関東",
-         "ordered_at": "2026-09-15",
-         "order_status.order_status": "completed"
+         "customer_count": 1
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
+         "customer.membership_rank": "bronze",
+         "customer.region": "中部",
+         "customer_count": 1
         }
        }
       ]
-     }
-    }
-   },
-   {
-    "name": "mcp__beam__add_gap",
-    "input": {
-     "data": {
-      "kind": "deferred",
-      "description": "インパクト(high)と工数(low)はモデラーの見積もり",
-      "event": "customer_orders_product"
      }
     }
    },
@@ -937,32 +924,36 @@
     "input": {
      "phase": "review"
     }
+   },
+   {
+    "name": "mcp__beam__get_beam",
+    "input": {}
    }
   ]
  ],
  "beam": {
   "schema_version": 1,
   "name": "customer_behavior",
-  "title": "顧客行動の分析",
+  "title": "顧客の動きの把握",
   "request": "お客さんの動きをもっと知りたい",
   "events": [
    {
     "name": "customer_orders_product",
-    "table_name": "orders",
+    "table_name": "order_lines",
     "label": "顧客が商品を注文する",
     "subject": "顧客",
     "verb": "注文する",
     "object": "商品",
     "story_type": "discrete",
-    "grain": "注文 1 件を 1 行とする",
+    "grain": "注文の中の商品1つ(注文明細1行)",
     "grain_keys": [
-     "order_id"
+     "order_item_id"
     ],
     "measures": [
      {
-      "name": "ordering_customers",
-      "label": "注文した顧客数",
-      "description": "注文した顧客のユニーク人数。期間をまたいでは足し上げられない",
+      "name": "customer_count",
+      "label": "購入客数",
+      "description": "注文したお客さんの数(重複を除く)",
       "aggregation": "count_distinct",
       "additivity": "non_additive",
       "unit": "人",
@@ -1091,11 +1082,11 @@
     ],
     "degenerate_dimensions": [
      {
-      "name": "order_id",
-      "label": "注文ID",
+      "name": "order_item_id",
+      "label": "注文明細ID",
       "source": {
-       "table": "raw.orders",
-       "column": "order_id",
+       "table": "raw.order_items",
+       "column": "order_item_id",
        "expr": null
       }
      }
@@ -1104,37 +1095,44 @@
     "examples": [
      {
       "values": {
-       "ordering_customers": 1,
-       "customer.membership_rank": "gold",
+       "ordered_at": "2024-11-24 16:40:00",
+       "customer.membership_rank": "bronze",
        "customer.region": "関東",
-       "ordered_at": "2026-09-15",
-       "order_status.order_status": "completed"
+       "customer_count": 1
+      }
+     },
+     {
+      "values": {
+       "ordered_at": "2025-02-12 14:20:00",
+       "customer.membership_rank": "bronze",
+       "customer.region": "中部",
+       "customer_count": 1
       }
      }
     ],
     "priority": "high",
     "impact": "high",
-    "effort": "low",
+    "effort": "medium",
     "source_tables": [
-     "raw.orders",
-     "raw.customers"
+     "raw.order_items",
+     "raw.orders"
     ]
    }
   ],
   "metrics": [
    {
-    "name": "monthly_ordering_customers",
-    "label": "月別注文顧客数",
-    "question": "月ごとに何人のお客さんが買ってくれたかを、会員ランク別と地方別に知りたい",
-    "framed_question": "月ごとに、会員ランク別・お客さんの居住地方別で、キャンセルを除く注文をした顧客は何人か",
+    "name": "purchasing_customer_count",
+    "label": "購入客数",
+    "question": "月ごとに、何人のお客さんが買ってくれたかを知りたい(会員ランク・地方別)",
+    "framed_question": "月別(日別)・会員ランク別・居住地方別の購入客数はいくつか?",
     "type": "simple",
     "event": "customer_orders_product",
-    "measure": "ordering_customers",
+    "measure": "customer_count",
     "numerator": null,
     "denominator": null,
     "expr": null,
     "window": null,
-    "filter": "キャンセルを除く（完了と返品ありを含む）",
+    "filter": "キャンセルした注文を除く(返品は購入客として数える)",
     "filters": [
      {
       "ref": "order_status.order_status",
@@ -1152,15 +1150,7 @@
     "status": "draft"
    }
   ],
-  "gaps": [
-   {
-    "kind": "deferred",
-    "description": "インパクト(high)と工数(low)はモデラーの見積もり",
-    "event": "customer_orders_product",
-    "w": null,
-    "related": null
-   }
-  ],
-  "finalized_at": "2026-10-10T10:59:04.419092Z"
+  "gaps": [],
+  "finalized_at": "2026-10-16T15:42:40.036267Z"
  }
 }
