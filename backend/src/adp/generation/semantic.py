@@ -108,6 +108,26 @@ def _filters(event: BusinessEvent, fact: FactTable, m: MetricRequest) -> str | N
     return " and ".join(exprs) if exprs else None
 
 
+def _input(
+    beam: BeamModel, design: PhysicalDesign, m: MetricRequest, name: str, *, named: bool = False
+) -> str | dict[str, Any]:
+    """比率・派生の指標の元の指標。絞り込みは元の指標ごとに、その出来事の名前で書く。
+
+    指標の filter は元の指標すべてに効くが、名前は 1 つの出来事でしか解決できない（返品の出来事の
+    return__order_status は、注文の指標には無い。#178）。参照が元の指標（入れ子ならたどった先の
+    指標）の出来事にあることは検証で確かめている（adp.beam.validation、#180）。入れ子で、下の指標の
+    出来事で同じ名前になるかは確かめていない（#181）。
+    """
+    if not m.filters:
+        return {"name": name} if named else name
+    src = next((x for x in beam.metrics if x.name == name), None)
+    event = beam.event(src.event) if src else None
+    fact = next((f for f in design.facts if event and f.event == event.name), None)
+    if event is None or fact is None:
+        raise SemanticError(f"metric {m.name} の元の指標 {name} の fact が見つかりません")
+    return {"name": name, "filter": _filters(event, fact, m)}
+
+
 def non_additive_dimension(
     event: BusinessEvent, fact: FactTable, measure: Measure
 ) -> dict[str, Any] | None:
@@ -261,9 +281,11 @@ def metric_definitions(
                     cumulative["window"] = m.window
                 top.append(cumulative)
         elif m.type == MetricType.RATIO:
-            ratio = base | {"type": "ratio", "numerator": m.numerator, "denominator": m.denominator}
-            if flt:
-                ratio["filter"] = flt
+            ratio = base | {
+                "type": "ratio",
+                "numerator": _input(beam, design, m, m.numerator or ""),
+                "denominator": _input(beam, design, m, m.denominator or ""),
+            }
             top.append(ratio)
         elif m.type == MetricType.DERIVED:
             assert m.expr is not None
@@ -271,10 +293,8 @@ def metric_definitions(
             derived = base | {
                 "type": "derived",
                 "expr": m.expr,
-                "input_metrics": [{"name": n} for n in inputs],
+                "input_metrics": [_input(beam, design, m, n, named=True) for n in inputs],
             }
-            if flt:
-                derived["filter"] = flt
             top.append(derived)
         group_by = [mf_name(event, fact, ref) for ref in m.group_by]
         if m.type == MetricType.CUMULATIVE and not any(
