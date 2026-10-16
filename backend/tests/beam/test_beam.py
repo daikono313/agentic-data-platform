@@ -348,6 +348,38 @@ def test_nested_inputs_must_resolve_refs() -> None:
     )
     issues = model.finalize_issues()
     assert any(
-        "[metric rate_pct] return_reason.return_reason は元の指標 sold_qty_excl_cancelled" in i
+        "[metric rate_pct] return_reason.return_reason は元の指標 return_rate_by_category の元の "
+        "sold_qty_excl_cancelled のイベント customer_orders_product にありません" in i
         for i in issues
     ), issues
+    # 商品カテゴリなら、たどった先の指標（返品・注文）のどちらでも解決できる
+    model.metrics[-1].filters[0].ref = "product.category"
+    assert model.finalize_issues() == []
+
+    # 途中の比率の置き場所（返品の出来事）は問わない。たどった先の注文の指標で解決できればよい
+    orders = {"event": "customer_orders_product"}
+    model.metrics += [
+        MetricRequest.model_validate(
+            base
+            | {"name": "self_rate", "event": "customer_returns_product", "type": "ratio"}
+            | {"numerator": "sold_qty_excl_cancelled", "denominator": "sold_qty_excl_cancelled"}
+        ),
+        MetricRequest.model_validate(
+            base
+            | orders
+            | {"name": "t", "type": "derived", "expr": "self_rate * 2"}
+            | {"filters": [{"ref": "order_status.order_status", "operator": "=", "values": ["x"]}]}
+        ),
+    ]
+    assert model.finalize_issues() == []
+
+
+def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
+    base = {"label": "x", "question": "q", "framed_question": "q"}
+    base |= {"event": "customer_orders_product"}
+    model.metrics += [
+        MetricRequest.model_validate(base | {"name": "a", "type": "derived", "expr": "b + 1"}),
+        MetricRequest.model_validate(base | {"name": "b", "type": "derived", "expr": "a + 1"}),
+    ]
+    issues = model.finalize_issues()
+    assert any("[metric a] 元の指標をたどると a に戻ります" in i for i in issues), issues

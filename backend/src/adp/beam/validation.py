@@ -228,15 +228,19 @@ def _metric_issues(model: BeamModel) -> list[str]:
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
             # （元の指標がさらに比率・派生なら、その下の指標まで。MetricFlow は filter を下へ渡す。
             # #180）
-            for name in _all_inputs(metric, metrics):
-                src = metrics.get(name)
-                src_event = model.event(src.event) if src else None
+            leaves, cycle = _leaf_inputs(metric, metrics)
+            if cycle:
+                issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
+            for via, name in leaves:
+                src = metrics[name]
+                src_event = model.event(src.event)
                 if src_event is None or src_event.name == event.name:
                     continue
+                where = name if via == name else f"{via} の元の {name}"
                 for ref in [*metric.group_by, *(f.ref for f in metric.filters)]:
                     if resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
-                            f"{p} {ref} は元の指標 {name} のイベント {src_event.name} にありません"
+                            f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
@@ -247,18 +251,28 @@ def _metric_issues(model: BeamModel) -> list[str]:
     return issues
 
 
-def _all_inputs(metric: MetricRequest, metrics: dict[str, MetricRequest]) -> list[str]:
-    """元になる指標の名前を、比率・派生の入れ子をたどってすべて（循環しても止まる）。"""
-    seen: list[str] = []
-    todo = list(metric.inputs)
+def _leaf_inputs(
+    metric: MetricRequest, metrics: dict[str, MetricRequest]
+) -> tuple[list[tuple[str, str]], bool]:
+    """比率・派生の入れ子をたどった先の、measure を集計する指標（MetricFlow が切り口・絞り込みを
+    解決する指標）を、（直接の元の指標, その指標）で。2 つ目は、たどると自分に戻るか（循環）。"""
+    leaves: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    cycle = False
+    todo = [(n, n) for n in metric.inputs]
     while todo:
-        name = todo.pop(0)
-        if name in seen or name == metric.name:
+        via, name = todo.pop()
+        src = metrics.get(name)
+        if name == metric.name:
+            cycle = True
+        if name in seen or name == metric.name or src is None:
             continue
-        seen.append(name)
-        if (src := metrics.get(name)) is not None:
-            todo += src.inputs
-    return seen
+        seen.add(name)
+        if src.type in (MetricType.RATIO, MetricType.DERIVED):
+            todo += [(via, n) for n in src.inputs]
+        else:
+            leaves.append((via, name))
+    return leaves, cycle
 
 
 def _conformance_issues(model: BeamModel) -> list[str]:
