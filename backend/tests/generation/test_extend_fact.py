@@ -4,7 +4,6 @@ S1（店舗別の売上）で fct_order_lines を作った後に、返品率（�
 返品率の分母の「販売数量」は fct_order_lines に無い列なので、既存の列・指標を変えずに足す。
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -19,13 +18,15 @@ from adp.generation.project import ProjectInfo
 from adp.generation.semantic import MetricQuery
 from tests.generation.test_dbt_codegen import FIXTURES, _dbt, _warehouse_copy, mf_query
 
-RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "evals" / "return_rate_by_category.json"
+# eval の記録（#164 で取り直した 20261016-224137）から取った返品率の成果物。
+# eval の記録は取り直すたびに中身が変わるので、生成のテストはこの固定の成果物を使う
+RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "beam" / "return_rate_by_category.yml"
 
 
 def _return_rate() -> BeamModel:
     """記録した返品率の成果物。販売数量の measure を既存の列（quantity）と別の名前にする
     （同じ式の既存の列を使い、列を足さないことを確かめる。#113）。"""
-    data = json.loads(RETURN_RATE.read_text())["beam"]
+    data = load(RETURN_RATE).model_dump(mode="json")
     event = next(e for e in data["events"] if e["name"] == "customer_orders_product")
     for m in event["measures"]:
         if m["name"] == "quantity":
