@@ -82,6 +82,14 @@ def test_keeps_other_sentences(text: str) -> None:
         ),
         ("お選びください。", "", ["お選びください。"]),
         ("質問と選択肢を表示しました。", "", ["質問と選択肢を表示しました。"]),
+        # 確かめている最中だと言うだけの文（#170）
+        (
+            "言い換えで合っているかを、選択肢で確認しています。",
+            "",
+            ["言い換えで合っているかを、選択肢で確認しています。"],
+        ),
+        ("この理解で合っているか、確認中です。", "", ["この理解で合っているか、確認中です。"]),
+        ("確認をお待ちしています。", "", ["確認をお待ちしています。"]),
         (
             "目的を伺います。近いものを選ぶか、自由に入力してください（複数選択も可です）。",
             "目的を伺います。",
@@ -95,7 +103,7 @@ def test_keeps_other_sentences(text: str) -> None:
     ],
 )
 def test_strips_closing_sentences_with_question(text: str, kept: str, removed: list[str]) -> None:
-    assert clean_reply(text, question=True) == (kept, removed)
+    assert clean_reply(text, question="質問？") == (kept, removed)
     # 質問が無ければ締めの一言は残す
     assert clean_reply(text) == (text, [])
 
@@ -113,6 +121,11 @@ def test_strips_closing_sentences_with_question(text: str, kept: str, removed: l
         "在庫の確認を待ってから出荷する運用です。",
         # 業務の説明（#160 レビュー）
         "出荷は倉庫の確認待ちです。",
+        # 業務の確認（#174 レビュー）
+        "店舗では毎月、帳簿と実在庫が合っているかを確認しています。",
+        "出荷前に、数量が伝票と合っているか確認しています。",
+        "経理で金額が合っているかを確認中です。",
+        "現在、取引先の確認をお待ちしています。",
         "返品は、顧客からの返事を待っています。",
         "承認されるまで、注文は確認を待ちます。",
         "顧客からの回答を待っています。",
@@ -123,7 +136,7 @@ def test_strips_closing_sentences_with_question(text: str, kept: str, removed: l
     ],
 )
 def test_keeps_sentences_that_are_not_just_closing(text: str) -> None:
-    assert clean_reply(text, question=True) == (text, [])
+    assert clean_reply(text, question="質問？") == (text, [])
 
 
 @pytest.mark.parametrize(
@@ -210,3 +223,32 @@ def test_reframe_shown_variants(visible: str) -> None:
 def test_reframe_confirmation_across_sentences() -> None:
     """「言い換えました。合っていますか？」も言い換えの確認として見る。"""
     assert hidden_confirmation("言い換えました。合っていますか？", "") == "reframe"
+
+
+def test_does_not_split_inside_quotes() -> None:
+    """「」の中の疑問符で文を切らない。問いを引用した文は、位置の言葉があっても残す（#170）。"""
+    text = (
+        "「店舗ごとの売上金額の合計はいくらか？」という言い換えで合っているか、"
+        "上の選択肢からお答えください。"
+    )
+    assert clean_reply(text, question="質問？") == (text, [])
+    # 引用した問いが質問文にあれば、ユーザーに見えるので取り除く
+    reframe = "「店舗ごとの売上金額の合計はいくらか」という言い換えで合っていますか？"
+    assert clean_reply(text, question=reframe) == ("", [text])
+    out, removed = clean_reply(
+        "「なぜ？」の切り口です。上の選択肢から選んでください。", question="質問？"
+    )
+    assert out == "「なぜ？」の切り口です。"
+    assert removed == ["上の選択肢から選んでください。"]
+    # 閉じない「は普通の文字として扱う
+    assert clean_reply("「途中の文。上の選択肢から選んでください。") == (
+        "「途中の文。",
+        ["上の選択肢から選んでください。"],
+    )
+
+
+def test_quoted_question_matches_question_loosely() -> None:
+    """引用した問いと質問文は、空白・読点・かぎ括弧の違いを無視して比べる（#174 レビュー）。"""
+    text = "「月ごとの 売上はいくらか」という言い換えで合っているか、上の選択肢からお答えください。"
+    question = "『月ごとの売上はいくらか』で合っていますか？"
+    assert clean_reply(text, question=question) == ("", [text])

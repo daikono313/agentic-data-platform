@@ -43,6 +43,14 @@ def _schema(model: type[Any]) -> dict[str, Any]:
     }
 
 
+_EXAMPLES = {
+    "examples": "「2024-11-24 に福岡店で 1 個、2025-02-12 に大阪店で 2 個。この 2 件を具体例として"
+    "記録してよいですか？」",
+    "reframe": "「『月ごとの売上金額はいくらか』という言い換えで合っていますか？」",
+}
+"""見えていない確認のエラーで示す、中身を書いた question の例（hidden_confirmation の種類ごと）。"""
+
+
 def build_tools(
     state: InterviewState,
     on_change: Callable[[], None] | None = None,
@@ -178,20 +186,15 @@ def build_tools(
         options = [str(o) for o in args["options"]][:5]
         question = str(args.get("question") or "").strip()
         # tool の結果や記録した内容はユーザーに見えないので、中身を書かない確認は確かめようが
-        # ない（具体例の値は #163、言い換えた問いは #165）。言い換えた問いは question に入れさせる。
-        # 本文に書かせると「上の言い換えで…選択肢から」と本文から指すため（#168）
+        # ない（具体例の値は #163、言い換えた問いは #165）。中身は question に入れさせる。本文に
+        # 書かせると「上の言い換えで…選択肢から」と本文から指し（#168）、状況の説明も残る（#170）
         kind = hidden_confirmation(question, *(shown() if shown else ("",)))
         if kind:
-            where = (
-                "question の中に書いて（例: 「『月ごとの売上金額はいくらか』という言い換えで"
-                "合っていますか？」）"
-                if kind == "reframe"
-                else "本文に書いてから（本文では画面の位置や操作に触れない）"
-            )
             return tool_text(
                 f"確かめてもらう{CONFIRMED[kind]}がユーザーに見えていません。tool の結果や記録した"
-                f"内容はユーザーには見えないため、それを{where}、"
-                "もう一度 present_choices を呼んでください。",
+                "内容はユーザーには見えないため、それを question の中に書いて"
+                f"（例: {_EXAMPLES[kind]}）、もう一度 present_choices を呼んでください。"
+                "本文は前置きだけにする（無ければ書かない）。",
                 error=True,
             )
         state.question = question or None
