@@ -11,6 +11,7 @@ persona: |
   - 優先度は高い。
 checks:
   - finalizable
+  - min_examples: 2
   - fact_source: raw.payments
   - metric_group_by_columns: [raw.payments.payment_method, raw.payments.paid_at]
   - asks_purpose

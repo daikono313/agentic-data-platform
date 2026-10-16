@@ -13,6 +13,7 @@ persona: |
   - 優先度は高い。
 checks:
   - finalizable
+  - min_examples: 2
   - max_assistant_turns: 15
   - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
   - metric_group_by_columns: [raw.products.category, raw.orders.ordered_at]

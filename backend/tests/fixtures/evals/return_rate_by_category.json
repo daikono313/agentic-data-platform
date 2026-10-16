@@ -1,1916 +1,2015 @@
 {
-  "scenario": "return_rate_by_category",
-  "passed": true,
-  "turns": 12,
-  "checks": [
-    {
-      "name": "finalizable",
-      "passed": true,
-      "detail": ""
-    },
-    {
-      "name": "has_w: ['what', 'when']",
-      "passed": true,
-      "detail": "['how', 'what', 'when', 'why']"
-    },
-    {
-      "name": "metric_type: ratio",
-      "passed": true,
-      "detail": "['simple', 'simple', 'ratio']"
-    },
-    {
-      "name": "min_events: 1",
-      "passed": true,
-      "detail": "2"
-    },
-    {
-      "name": "no_choice_position_words",
-      "passed": true,
-      "detail": ""
-    },
-    {
-      "name": "question_not_repeated_in_text",
-      "passed": true,
-      "detail": ""
-    },
-    {
-      "name": "no_unexplained_jargon",
-      "passed": true,
-      "detail": ""
-    },
-    {
-      "name": "no_repeated_questions",
-      "passed": true,
-      "detail": ""
-    },
-    {
-      "name": "no_effort_question",
-      "passed": true,
-      "detail": ""
-    }
-  ],
-  "tool_calls": [
-    [
-      {
-        "name": "mcp__beam__set_phase",
-        "input": {
-          "phase": "framing"
-        }
-      },
-      {
-        "name": "mcp__beam__get_beam",
-        "input": {}
-      },
-      {
-        "name": "mcp__source_catalog__list_facts",
-        "input": {}
-      },
-      {
-        "name": "mcp__source_catalog__list_sources",
-        "input": {}
-      },
-      {
-        "name": "mcp__beam__set_overview",
-        "input": {
-          "name": "product_category_return_rate",
-          "title": "商品カテゴリ別の返品率"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.returns"
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "「返品率」は、次のどの数え方で見たいですか？",
-          "options": [
-            "返品された数量 ÷ 販売数量",
-            "返品のあった注文明細の件数 ÷ 注文明細の件数",
-            "返品金額 ÷ 売上金額",
-            "まだ決めていない"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__set_phase",
-        "input": {
-          "phase": "event_discovery"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.order_items"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.products"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.orders"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__profile_column",
-        "input": {
-          "table": "raw.orders",
-          "column": "status"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__profile_column",
-        "input": {
-          "table": "raw.orders",
-          "column": "order_status"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__profile_column",
-        "input": {
-          "table": "raw.products",
-          "column": "category"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__profile_column",
-        "input": {
-          "table": "raw.returns",
-          "column": "return_reason"
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_orders_product",
-            "label": "顧客が商品を注文する",
-            "subject": "顧客",
-            "verb": "注文する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "order_lines",
-            "source_tables": [
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "注文の中の商品1つ(注文明細1行)",
-            "grain_keys": [
-              "order_item_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "degenerate_dimensions": [
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "quantity",
-                "label": "販売数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "返品された数量は、いつの分として数えたいですか？",
-          "options": [
-            "返品された日で数える",
-            "元の注文日で数える（販売と同じ期間で比べる）",
-            "どちらも見たい"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_returns_product",
-            "label": "顧客が商品を返品する",
-            "subject": "顧客",
-            "verb": "返品する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "returns",
-            "source_tables": [
-              "raw.returns",
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "返品の記録1件(返品1行)",
-            "grain_keys": [
-              "return_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "degenerate_dimensions": [
-              {
-                "name": "return_id",
-                "label": "返品ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "return_id"
-                }
-              },
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "returned_quantity",
-                "label": "返品数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "元の注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__set_phase",
-        "input": {
-          "phase": "seven_ws"
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_metric",
-        "input": {
-          "data": {
-            "name": "sold_quantity",
-            "label": "販売数量(キャンセル除く)",
-            "question": "販売はキャンセルされた注文を除いてください",
-            "framed_question": "キャンセルを除いた販売数量はいくつか",
-            "event": "customer_orders_product",
-            "type": "simple",
-            "measure": "quantity",
-            "filter": "キャンセルされた注文を除く",
-            "filters": [
-              {
-                "ref": "order_status.order_status",
-                "operator": "!=",
-                "values": [
-                  "cancelled"
-                ]
-              }
-            ],
-            "group_by": [
-              "product.category",
-              "ordered_at.month"
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_metric",
-        "input": {
-          "data": {
-            "name": "returned_quantity_total",
-            "label": "返品数量",
-            "question": "返品された数量",
-            "framed_question": "元の注文日で数えた返品数量はいくつか",
-            "event": "customer_returns_product",
-            "type": "simple",
-            "measure": "returned_quantity",
-            "group_by": [
-              "product.category",
-              "ordered_at.month"
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_metric",
-        "input": {
-          "data": {
-            "name": "return_rate",
-            "label": "返品率",
-            "question": "商品カテゴリ別の返品率を知りたい",
-            "framed_question": "商品カテゴリごとに、返品数量 ÷ 販売数量(キャンセル除く)はどれだけか",
-            "event": "customer_returns_product",
-            "type": "ratio",
-            "numerator": "returned_quantity_total",
-            "denominator": "sold_quantity",
-            "group_by": [
-              "product.category",
-              "ordered_at.month"
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "商品について、ほかに見たい切り口はありますか？（データに無さそうなものでも構いません）",
-          "options": [
-            "サブカテゴリも見たい",
-            "ブランドも見たい",
-            "商品名も見たい",
-            "カテゴリだけでよい"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_returns_product",
-            "label": "顧客が商品を返品する",
-            "subject": "顧客",
-            "verb": "返品する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "returns",
-            "source_tables": [
-              "raw.returns",
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "返品の記録1件(返品1行)",
-            "grain_keys": [
-              "return_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "degenerate_dimensions": [
-              {
-                "name": "return_id",
-                "label": "返品ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "return_id"
-                }
-              },
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "returned_quantity",
-                "label": "返品数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "元の注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "why",
-                "name": "return_reason",
-                "label": "返品理由",
-                "business_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "fact_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "attributes": [
-                  {
-                    "name": "return_reason",
-                    "label": "返品理由",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.returns",
-                      "column": "return_reason"
-                    },
-                    "examples": [
-                      "サイズ違い",
-                      "イメージ違い",
-                      "誤配送",
-                      "初期不良"
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_metric",
-        "input": {
-          "data": {
-            "name": "returned_quantity_total",
-            "label": "返品数量",
-            "question": "返品された数量。返品理由別にも見たい",
-            "framed_question": "元の注文日で数えた返品数量は、商品カテゴリ別・返品理由別にいくつか",
-            "event": "customer_returns_product",
-            "type": "simple",
-            "measure": "returned_quantity",
-            "group_by": [
-              "product.category",
-              "return_reason.return_reason",
-              "ordered_at.month"
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "返品の理由について、ほかに見たい切り口はありますか？（データに無さそうなものでも構いません）",
-          "options": [
-            "プロモーション別も見たい",
-            "理由別だけでよい",
-            "別の切り口を自分で伝える"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.customers"
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "顧客について、見たい切り口はありますか？（データに無さそうなものでも構いません）",
-          "options": [
-            "会員ランク別",
-            "地方・都道府県別",
-            "性別・年代別",
-            "顧客の切り口は不要"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__source_catalog__describe_table",
-        "input": {
-          "table": "raw.stores"
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "店舗やチャネルについて、見たい切り口はありますか？（データに無さそうなものでも構いません）",
-          "options": [
-            "チャネル別",
-            "店舗別",
-            "地方・都道府県別",
-            "場所の切り口は不要"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "支払方法や配送手段など、「どのように」の切り口で見たいものはありますか？（データに無さそうなものでも構いません）",
-          "options": [
-            "支払方法別",
-            "配送手段別",
-            "不要"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__source_catalog__sample_rows",
-        "input": {
-          "table": "raw.returns",
-          "limit": 2
-        }
-      },
-      {
-        "name": "mcp__source_catalog__sample_rows",
-        "input": {
-          "table": "raw.order_items",
-          "where_column": "order_item_id",
-          "value": "32"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__sample_rows",
-        "input": {
-          "table": "raw.order_items",
-          "where_column": "order_item_id",
-          "value": "35"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__sample_rows",
-        "input": {
-          "table": "raw.orders",
-          "where_column": "order_id",
-          "value": "12"
-        }
-      },
-      {
-        "name": "mcp__source_catalog__sample_rows",
-        "input": {
-          "table": "raw.products",
-          "where_column": "product_id",
-          "value": "95"
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "実際のデータに、次の例がありました。この例を具体例として記録してよいですか？",
-          "options": [
-            "はい、この例でよい",
-            "別の例を探してほしい",
-            "自分で例を伝える"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_orders_product",
-            "label": "顧客が商品を注文する",
-            "subject": "顧客",
-            "verb": "注文する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "order_lines",
-            "source_tables": [
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "注文の中の商品1つ(注文明細1行)",
-            "grain_keys": [
-              "order_item_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "degenerate_dimensions": [
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "quantity",
-                "label": "販売数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              }
-            ],
-            "examples": [
-              {
-                "values": {
-                  "order_item_id": 32,
-                  "quantity": 3,
-                  "product.category": "衣料",
-                  "ordered_at": "2024-05-12 18:19:00",
-                  "order_status.order_status": "returned"
-                }
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_returns_product",
-            "label": "顧客が商品を返品する",
-            "subject": "顧客",
-            "verb": "返品する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "returns",
-            "source_tables": [
-              "raw.returns",
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "返品の記録1件(返品1行)",
-            "grain_keys": [
-              "return_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "degenerate_dimensions": [
-              {
-                "name": "return_id",
-                "label": "返品ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "return_id"
-                }
-              },
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "returned_quantity",
-                "label": "返品数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "元の注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "why",
-                "name": "return_reason",
-                "label": "返品理由",
-                "business_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "fact_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "attributes": [
-                  {
-                    "name": "return_reason",
-                    "label": "返品理由",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.returns",
-                      "column": "return_reason"
-                    },
-                    "examples": [
-                      "サイズ違い",
-                      "イメージ違い",
-                      "誤配送",
-                      "初期不良"
-                    ]
-                  }
-                ]
-              }
-            ],
-            "examples": [
-              {
-                "values": {
-                  "return_id": 1,
-                  "order_item_id": 32,
-                  "returned_quantity": 2,
-                  "product.category": "衣料",
-                  "ordered_at": "2024-05-12 18:19:00",
-                  "return_reason.return_reason": "サイズ違い",
-                  "order_status.order_status": "returned"
-                }
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "数え方の例外になりそうなケースはありますか？（例: 一部だけの返品、同じ明細への複数回の返品、返品された日と注文日が月をまたぐ場合など）",
-          "options": [
-            "特にない",
-            "ある（自分で伝える）",
-            "後で決める"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__set_phase",
-        "input": {
-          "phase": "prioritization"
-        }
-      },
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "この返品率の優先度は、どのくらいですか？",
-          "options": [
-            "high",
-            "medium",
-            "low",
-            "おまかせ"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__present_choices",
-        "input": {
-          "question": "インパクト（実現したときの業務への効果）は、どのくらいですか？",
-          "options": [
-            "high",
-            "medium",
-            "low",
-            "おまかせ"
-          ]
-        }
-      }
-    ],
-    [
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_orders_product",
-            "label": "顧客が商品を注文する",
-            "subject": "顧客",
-            "verb": "注文する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "order_lines",
-            "source_tables": [
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "注文の中の商品1つ(注文明細1行)",
-            "grain_keys": [
-              "order_item_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "priority": "medium",
-            "impact": "medium",
-            "effort": "low",
-            "degenerate_dimensions": [
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "quantity",
-                "label": "販売数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.order_items",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              }
-            ],
-            "examples": [
-              {
-                "values": {
-                  "order_item_id": 32,
-                  "quantity": 3,
-                  "product.category": "衣料",
-                  "ordered_at": "2024-05-12 18:19:00",
-                  "order_status.order_status": "returned"
-                }
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__upsert_event",
-        "input": {
-          "data": {
-            "name": "customer_returns_product",
-            "label": "顧客が商品を返品する",
-            "subject": "顧客",
-            "verb": "返品する",
-            "object": "商品",
-            "story_type": "discrete",
-            "table_name": "returns",
-            "source_tables": [
-              "raw.returns",
-              "raw.order_items",
-              "raw.orders"
-            ],
-            "grain": "返品の記録1件(返品1行)",
-            "grain_keys": [
-              "return_id"
-            ],
-            "agg_time_dimension": "ordered_at",
-            "priority": "medium",
-            "impact": "medium",
-            "effort": "medium",
-            "degenerate_dimensions": [
-              {
-                "name": "return_id",
-                "label": "返品ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "return_id"
-                }
-              },
-              {
-                "name": "order_item_id",
-                "label": "注文明細ID",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "order_item_id"
-                }
-              }
-            ],
-            "measures": [
-              {
-                "name": "returned_quantity",
-                "label": "返品数量",
-                "unit": "個",
-                "aggregation": "sum",
-                "additivity": "additive",
-                "availability": "available",
-                "source": {
-                  "table": "raw.returns",
-                  "column": "quantity"
-                }
-              }
-            ],
-            "dimensions": [
-              {
-                "w": "what",
-                "name": "product",
-                "label": "商品",
-                "business_key": {
-                  "table": "raw.products",
-                  "column": "product_id"
-                },
-                "fact_key": {
-                  "table": "raw.order_items",
-                  "column": "product_id"
-                },
-                "attributes": [
-                  {
-                    "name": "category",
-                    "label": "商品カテゴリ",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.products",
-                      "column": "category"
-                    },
-                    "examples": [
-                      "衣料",
-                      "家電",
-                      "日用品",
-                      "書籍",
-                      "食品"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "when",
-                "name": "ordered_at",
-                "label": "元の注文日時",
-                "time_grain": "day",
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "ordered_at"
-                }
-              },
-              {
-                "w": "how",
-                "name": "order_status",
-                "label": "注文ステータス",
-                "business_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "fact_key": {
-                  "table": "raw.orders",
-                  "column": "order_status"
-                },
-                "attributes": [
-                  {
-                    "name": "order_status",
-                    "label": "注文ステータス",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.orders",
-                      "column": "order_status"
-                    },
-                    "examples": [
-                      "completed",
-                      "cancelled",
-                      "returned"
-                    ]
-                  }
-                ]
-              },
-              {
-                "w": "why",
-                "name": "return_reason",
-                "label": "返品理由",
-                "business_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "fact_key": {
-                  "table": "raw.returns",
-                  "column": "return_reason"
-                },
-                "attributes": [
-                  {
-                    "name": "return_reason",
-                    "label": "返品理由",
-                    "availability": "available",
-                    "source": {
-                      "table": "raw.returns",
-                      "column": "return_reason"
-                    },
-                    "examples": [
-                      "サイズ違い",
-                      "イメージ違い",
-                      "誤配送",
-                      "初期不良"
-                    ]
-                  }
-                ]
-              }
-            ],
-            "examples": [
-              {
-                "values": {
-                  "return_id": 1,
-                  "order_item_id": 32,
-                  "returned_quantity": 2,
-                  "product.category": "衣料",
-                  "ordered_at": "2024-05-12 18:19:00",
-                  "return_reason.return_reason": "サイズ違い",
-                  "order_status.order_status": "returned"
-                }
-              }
-            ]
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__add_gap",
-        "input": {
-          "data": {
-            "kind": "deferred",
-            "description": "インパクトはモデラーの見積もり(medium)",
-            "related": "customer_returns_product"
-          }
-        }
-      },
-      {
-        "name": "mcp__beam__set_phase",
-        "input": {
-          "phase": "review"
-        }
-      }
-    ]
-  ],
-  "beam": {
-    "schema_version": 1,
-    "name": "product_category_return_rate",
-    "title": "商品カテゴリ別の返品率",
-    "request": "商品カテゴリ別の返品率を知りたい",
-    "events": [
-      {
-        "name": "customer_orders_product",
-        "table_name": "order_lines",
-        "label": "顧客が商品を注文する",
-        "subject": "顧客",
-        "verb": "注文する",
-        "object": "商品",
-        "story_type": "discrete",
-        "grain": "注文の中の商品1つ(注文明細1行)",
-        "grain_keys": [
-          "order_item_id"
-        ],
-        "measures": [
-          {
-            "name": "quantity",
-            "label": "販売数量",
-            "description": "",
-            "aggregation": "sum",
-            "additivity": "additive",
-            "unit": "個",
-            "non_additive_dimension": null,
-            "source": {
-              "table": "raw.order_items",
-              "column": "quantity",
-              "expr": null
-            },
-            "availability": "available"
-          }
-        ],
-        "dimensions": [
-          {
-            "w": "what",
-            "name": "product",
-            "label": "商品",
-            "description": "",
-            "role": null,
-            "attributes": [
-              {
-                "name": "category",
-                "label": "商品カテゴリ",
-                "description": "",
-                "examples": [
-                  "衣料",
-                  "家電",
-                  "日用品",
-                  "書籍",
-                  "食品"
-                ],
-                "source": {
-                  "table": "raw.products",
-                  "column": "category",
-                  "expr": null
-                },
-                "availability": "available",
-                "history_required": false
-              }
-            ],
-            "hierarchy": [],
-            "time_grain": null,
-            "business_key": {
-              "table": "raw.products",
-              "column": "product_id",
-              "expr": null
-            },
-            "fact_key": {
-              "table": "raw.order_items",
-              "column": "product_id",
-              "expr": null
-            }
-          },
-          {
-            "w": "when",
-            "name": "ordered_at",
-            "label": "注文日時",
-            "description": "",
-            "role": null,
-            "attributes": [],
-            "hierarchy": [],
-            "time_grain": "day",
-            "business_key": null,
-            "fact_key": {
-              "table": "raw.orders",
-              "column": "ordered_at",
-              "expr": null
-            }
-          },
-          {
-            "w": "how",
-            "name": "order_status",
-            "label": "注文ステータス",
-            "description": "",
-            "role": null,
-            "attributes": [
-              {
-                "name": "order_status",
-                "label": "注文ステータス",
-                "description": "",
-                "examples": [
-                  "completed",
-                  "cancelled",
-                  "returned"
-                ],
-                "source": {
-                  "table": "raw.orders",
-                  "column": "order_status",
-                  "expr": null
-                },
-                "availability": "available",
-                "history_required": false
-              }
-            ],
-            "hierarchy": [],
-            "time_grain": null,
-            "business_key": {
-              "table": "raw.orders",
-              "column": "order_status",
-              "expr": null
-            },
-            "fact_key": {
-              "table": "raw.orders",
-              "column": "order_status",
-              "expr": null
-            }
-          }
-        ],
-        "degenerate_dimensions": [
-          {
-            "name": "order_item_id",
-            "label": "注文明細ID",
-            "source": {
-              "table": "raw.order_items",
-              "column": "order_item_id",
-              "expr": null
-            }
-          }
-        ],
-        "agg_time_dimension": "ordered_at",
-        "examples": [
-          {
-            "values": {
-              "order_item_id": 32,
-              "quantity": 3,
-              "product.category": "衣料",
-              "ordered_at": "2024-05-12 18:19:00",
-              "order_status.order_status": "returned"
-            }
-          }
-        ],
-        "priority": "medium",
-        "impact": "medium",
-        "effort": "low",
-        "source_tables": [
-          "raw.order_items",
-          "raw.orders"
-        ]
-      },
-      {
-        "name": "customer_returns_product",
-        "table_name": "returns",
-        "label": "顧客が商品を返品する",
-        "subject": "顧客",
-        "verb": "返品する",
-        "object": "商品",
-        "story_type": "discrete",
-        "grain": "返品の記録1件(返品1行)",
-        "grain_keys": [
-          "return_id"
-        ],
-        "measures": [
-          {
-            "name": "returned_quantity",
-            "label": "返品数量",
-            "description": "",
-            "aggregation": "sum",
-            "additivity": "additive",
-            "unit": "個",
-            "non_additive_dimension": null,
-            "source": {
-              "table": "raw.returns",
-              "column": "quantity",
-              "expr": null
-            },
-            "availability": "available"
-          }
-        ],
-        "dimensions": [
-          {
-            "w": "what",
-            "name": "product",
-            "label": "商品",
-            "description": "",
-            "role": null,
-            "attributes": [
-              {
-                "name": "category",
-                "label": "商品カテゴリ",
-                "description": "",
-                "examples": [
-                  "衣料",
-                  "家電",
-                  "日用品",
-                  "書籍",
-                  "食品"
-                ],
-                "source": {
-                  "table": "raw.products",
-                  "column": "category",
-                  "expr": null
-                },
-                "availability": "available",
-                "history_required": false
-              }
-            ],
-            "hierarchy": [],
-            "time_grain": null,
-            "business_key": {
-              "table": "raw.products",
-              "column": "product_id",
-              "expr": null
-            },
-            "fact_key": {
-              "table": "raw.order_items",
-              "column": "product_id",
-              "expr": null
-            }
-          },
-          {
-            "w": "when",
-            "name": "ordered_at",
-            "label": "元の注文日時",
-            "description": "",
-            "role": null,
-            "attributes": [],
-            "hierarchy": [],
-            "time_grain": "day",
-            "business_key": null,
-            "fact_key": {
-              "table": "raw.orders",
-              "column": "ordered_at",
-              "expr": null
-            }
-          },
-          {
-            "w": "how",
-            "name": "order_status",
-            "label": "注文ステータス",
-            "description": "",
-            "role": null,
-            "attributes": [
-              {
-                "name": "order_status",
-                "label": "注文ステータス",
-                "description": "",
-                "examples": [
-                  "completed",
-                  "cancelled",
-                  "returned"
-                ],
-                "source": {
-                  "table": "raw.orders",
-                  "column": "order_status",
-                  "expr": null
-                },
-                "availability": "available",
-                "history_required": false
-              }
-            ],
-            "hierarchy": [],
-            "time_grain": null,
-            "business_key": {
-              "table": "raw.orders",
-              "column": "order_status",
-              "expr": null
-            },
-            "fact_key": {
-              "table": "raw.orders",
-              "column": "order_status",
-              "expr": null
-            }
-          },
-          {
-            "w": "why",
-            "name": "return_reason",
-            "label": "返品理由",
-            "description": "",
-            "role": null,
-            "attributes": [
-              {
-                "name": "return_reason",
-                "label": "返品理由",
-                "description": "",
-                "examples": [
-                  "サイズ違い",
-                  "イメージ違い",
-                  "誤配送",
-                  "初期不良"
-                ],
-                "source": {
-                  "table": "raw.returns",
-                  "column": "return_reason",
-                  "expr": null
-                },
-                "availability": "available",
-                "history_required": false
-              }
-            ],
-            "hierarchy": [],
-            "time_grain": null,
-            "business_key": {
-              "table": "raw.returns",
-              "column": "return_reason",
-              "expr": null
-            },
-            "fact_key": {
-              "table": "raw.returns",
-              "column": "return_reason",
-              "expr": null
-            }
-          }
-        ],
-        "degenerate_dimensions": [
-          {
-            "name": "return_id",
-            "label": "返品ID",
-            "source": {
-              "table": "raw.returns",
-              "column": "return_id",
-              "expr": null
-            }
-          },
-          {
-            "name": "order_item_id",
-            "label": "注文明細ID",
-            "source": {
-              "table": "raw.returns",
-              "column": "order_item_id",
-              "expr": null
-            }
-          }
-        ],
-        "agg_time_dimension": "ordered_at",
-        "examples": [
-          {
-            "values": {
-              "return_id": 1,
-              "order_item_id": 32,
-              "returned_quantity": 2,
-              "product.category": "衣料",
-              "ordered_at": "2024-05-12 18:19:00",
-              "return_reason.return_reason": "サイズ違い",
-              "order_status.order_status": "returned"
-            }
-          }
-        ],
-        "priority": "medium",
-        "impact": "medium",
-        "effort": "medium",
-        "source_tables": [
-          "raw.returns",
-          "raw.order_items",
-          "raw.orders"
-        ]
-      }
-    ],
-    "metrics": [
-      {
-        "name": "sold_quantity",
-        "label": "販売数量(キャンセル除く)",
-        "question": "販売はキャンセルされた注文を除いてください",
-        "framed_question": "キャンセルを除いた販売数量はいくつか",
-        "type": "simple",
-        "event": "customer_orders_product",
-        "measure": "quantity",
-        "numerator": null,
-        "denominator": null,
-        "expr": null,
-        "window": null,
-        "filter": "キャンセルされた注文を除く",
-        "filters": [
-          {
-            "ref": "order_status.order_status",
-            "operator": "!=",
-            "values": [
-              "cancelled"
-            ]
-          }
-        ],
-        "group_by": [
-          "product.category",
-          "ordered_at.month"
-        ],
-        "status": "draft"
-      },
-      {
-        "name": "returned_quantity_total",
-        "label": "返品数量",
-        "question": "返品された数量。返品理由別にも見たい",
-        "framed_question": "元の注文日で数えた返品数量は、商品カテゴリ別・返品理由別にいくつか",
-        "type": "simple",
-        "event": "customer_returns_product",
-        "measure": "returned_quantity",
-        "numerator": null,
-        "denominator": null,
-        "expr": null,
-        "window": null,
-        "filter": null,
-        "filters": [],
-        "group_by": [
-          "product.category",
-          "return_reason.return_reason",
-          "ordered_at.month"
-        ],
-        "status": "draft"
-      },
-      {
-        "name": "return_rate",
-        "label": "返品率",
-        "question": "商品カテゴリ別の返品率を知りたい",
-        "framed_question": "商品カテゴリごとに、返品数量 ÷ 販売数量(キャンセル除く)はどれだけか",
-        "type": "ratio",
-        "event": "customer_returns_product",
-        "measure": null,
-        "numerator": "returned_quantity_total",
-        "denominator": "sold_quantity",
-        "expr": null,
-        "window": null,
-        "filter": null,
-        "filters": [],
-        "group_by": [
-          "product.category",
-          "ordered_at.month"
-        ],
-        "status": "draft"
-      }
-    ],
-    "gaps": [
-      {
-        "kind": "deferred",
-        "description": "インパクトはモデラーの見積もり(medium)",
-        "event": null,
-        "w": null,
-        "related": "customer_returns_product"
-      }
-    ],
-    "finalized_at": "2026-10-14T02:38:41.361981Z"
+ "scenario": "return_rate_by_category",
+ "passed": true,
+ "checks": [
+  {
+   "name": "finalizable",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "has_w: ['what', 'when']",
+   "passed": true,
+   "detail": "['how', 'what', 'when', 'why']"
+  },
+  {
+   "name": "metric_type: ratio",
+   "passed": true,
+   "detail": "['simple', 'simple', 'ratio']"
+  },
+  {
+   "name": "min_events: 1",
+   "passed": true,
+   "detail": "2"
+  },
+  {
+   "name": "metric_filter: {'column': 'raw.orders.order_status', 'excludes': ['cancelled']}",
+   "passed": true,
+   "detail": "sold_qty_excl_cancelled: order_status.order_status != ['cancelled']"
+  },
+  {
+   "name": "ratio_of: {'numerator': 'raw.returns.quantity', 'denominator': 'raw.order_items.quantity'}",
+   "passed": true,
+   "detail": "[('raw.returns.quantity', 'raw.order_items.quantity')]"
+  },
+  {
+   "name": "metric_group_by_columns: ['raw.products.category', 'raw.returns.return_reason']",
+   "passed": true,
+   "detail": "['raw.orders.ordered_at', 'raw.products.category', 'raw.returns.return_reason', 'raw.returns.returned_at']"
+  },
+  {
+   "name": "asks_purpose",
+   "passed": true,
+   "detail": "この返品率を見て、どんな判断に使いますか？"
+  },
+  {
+   "name": "no_choice_position_words",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "question_not_repeated_in_text",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_unexplained_jargon",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_repeated_questions",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_effort_question",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "examples_shown",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "reframe_shown",
+   "passed": true,
+   "detail": ""
   }
+ ],
+ "turns": 13,
+ "tool_calls": [
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "framing"
+    }
+   },
+   {
+    "name": "mcp__beam__set_overview",
+    "input": {
+     "name": "return_rate_by_product_category",
+     "title": "商品カテゴリ別の返品率"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__list_facts",
+    "input": {}
+   },
+   {
+    "name": "mcp__source_catalog__list_sources",
+    "input": {}
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "返品率は、どの割合を見たいですか？",
+     "options": [
+      "返品された数量 ÷ 販売数量",
+      "返品された件数 ÷ 注文明細の件数",
+      "返品された金額 ÷ 売上金額",
+      "この言い換えで合っている（数え方はお任せ）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この返品率を見て、どんな判断に使いますか？",
+     "options": [
+      "返品が多いカテゴリの品質・仕入れの見直し",
+      "カテゴリごとの在庫・発注量の調整",
+      "商品説明やサイズ表記などの改善",
+      "カテゴリ別の採算・利益の把握"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "event_discovery"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.returns"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.order_items"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.products"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.orders"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.returns"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.returns",
+     "column": "return_reason"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__profile_column",
+    "input": {
+     "table": "raw.products",
+     "column": "category"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_returns_product",
+      "label": "顧客が商品を返品する",
+      "subject": "顧客",
+      "verb": "返品する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "returns",
+      "source_tables": [
+       "raw.returns",
+       "raw.order_items",
+       "raw.orders",
+       "raw.products"
+      ],
+      "grain": "返品 1 件（返品記録 1 行）",
+      "grain_keys": [
+       "return_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "return_id",
+        "label": "返品ID",
+        "source": {
+         "table": "raw.returns",
+         "column": "return_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "returned_qty",
+        "label": "返品数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.returns",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.returns",
+         "expr": "(select product_id from raw.order_items oi where oi.order_item_id = raw.returns.order_item_id)"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "returned_at",
+        "label": "返品日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "returned_at"
+        }
+       }
+      ],
+      "agg_time_dimension": "returned_at"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_returns_product",
+      "label": "顧客が商品を返品する",
+      "subject": "顧客",
+      "verb": "返品する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "returns",
+      "source_tables": [
+       "raw.returns",
+       "raw.order_items"
+      ],
+      "grain": "返品 1 件（返品記録 1 行）",
+      "grain_keys": [
+       "return_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "return_id",
+        "label": "返品ID",
+        "source": {
+         "table": "raw.returns",
+         "column": "return_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "returned_qty",
+        "label": "返品数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.returns",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "returned_at",
+        "label": "返品日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "returned_at"
+        }
+       }
+      ],
+      "agg_time_dimension": "returned_at"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "seven_ws"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "商品について、カテゴリのほかに見たい切り口はありますか？",
+     "options": [
+      "サブカテゴリ",
+      "ブランド",
+      "商品名",
+      "仕入れ先（データに無さそうですが記録します）",
+      "カテゴリだけでよい"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_returns_product",
+      "label": "顧客が商品を返品する",
+      "subject": "顧客",
+      "verb": "返品する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "returns",
+      "source_tables": [
+       "raw.returns",
+       "raw.order_items"
+      ],
+      "grain": "返品 1 件（返品記録 1 行）",
+      "grain_keys": [
+       "return_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "return_id",
+        "label": "返品ID",
+        "source": {
+         "table": "raw.returns",
+         "column": "return_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "returned_qty",
+        "label": "返品数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.returns",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "returned_at",
+        "label": "返品日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "returned_at"
+        }
+       },
+       {
+        "w": "why",
+        "name": "return_reason",
+        "label": "返品理由",
+        "business_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "attributes": [
+         {
+          "name": "return_reason",
+          "label": "返品理由",
+          "availability": "available",
+          "source": {
+           "table": "raw.returns",
+           "column": "return_reason"
+          },
+          "examples": [
+           "サイズ違い",
+           "イメージ違い",
+           "誤配送",
+           "初期不良"
+          ]
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "returned_at"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "商品のカテゴリが後で変わった場合、過去の返品はどのカテゴリで見たいですか？",
+     "options": [
+      "当時のカテゴリで見たい",
+      "現在のカテゴリで見ればよい",
+      "ここでは決めない（後で決める）"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
+     "table": "raw.customers"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "顧客について、見たい切り口はありますか？",
+     "options": [
+      "会員ランク",
+      "居住地方・都道府県",
+      "性別・年齢",
+      "顧客の切り口は不要"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.order_items",
+     "where_column": "order_item_id",
+     "value": "32"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.order_items",
+     "where_column": "order_item_id",
+     "value": "35"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.products",
+     "where_column": "product_id",
+     "value": "95"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.products",
+     "where_column": "product_id",
+     "value": "92"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この 2 件を、返品の具体例として記録してよいですか？",
+     "options": [
+      "この 2 件でよい",
+      "別の例を自分で伝える"
+     ]
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "次の 2 件を返品の具体例として記録してよいですか？ ①2024-05-25 02:19、衣料「つばさ トップス 0095」を 2 個返品（理由: サイズ違い）。②2025-06-22 02:58、衣料「こだま トップス 0092」を 1 個返品（理由: サイズ違い）。",
+     "options": [
+      "この 2 件でよい",
+      "別の例を自分で伝える"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_returns_product",
+      "label": "顧客が商品を返品する",
+      "subject": "顧客",
+      "verb": "返品する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "returns",
+      "source_tables": [
+       "raw.returns",
+       "raw.order_items"
+      ],
+      "grain": "返品 1 件（返品記録 1 行）",
+      "grain_keys": [
+       "return_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "return_id",
+        "label": "返品ID",
+        "source": {
+         "table": "raw.returns",
+         "column": "return_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "returned_qty",
+        "label": "返品数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.returns",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "returned_at",
+        "label": "返品日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "returned_at"
+        }
+       },
+       {
+        "w": "why",
+        "name": "return_reason",
+        "label": "返品理由",
+        "business_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "attributes": [
+         {
+          "name": "return_reason",
+          "label": "返品理由",
+          "availability": "available",
+          "source": {
+           "table": "raw.returns",
+           "column": "return_reason"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "returned_at",
+      "examples": [
+       {
+        "values": {
+         "returned_at": "2024-05-25 02:19:00",
+         "product.category": "衣料",
+         "return_reason.return_reason": "サイズ違い",
+         "returned_qty": 2
+        }
+       },
+       {
+        "values": {
+         "returned_at": "2025-06-22 02:58:00",
+         "product.category": "衣料",
+         "return_reason.return_reason": "サイズ違い",
+         "returned_qty": 1
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "返品率の数え方で、例外として扱いたいケースはありますか？（キャンセル注文を販売から除くことは確認済みです）",
+     "options": [
+      "特にない",
+      "交換目的の返品は除きたい",
+      "誘配送など、商品の品質と無関係な理由は除きたい",
+      "後で決める"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "grain"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "quantity",
+        "label": "販売数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "ordered_at",
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-05-25",
+         "product.category": "衣料",
+         "quantity": 3
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "quantity",
+        "label": "販売数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "ordered_at"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "returned_qty_total",
+      "label": "返品数量",
+      "question": "商品カテゴリ別の返品率を知りたい",
+      "framed_question": "商品カテゴリ別の返品数量はいくつか（返品率の分子）",
+      "event": "customer_returns_product",
+      "type": "simple",
+      "measure": "returned_qty",
+      "group_by": [
+       "product.category",
+       "returned_at.month",
+       "return_reason.return_reason"
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "sold_qty_excl_cancelled",
+      "label": "販売数量（キャンセル除く）",
+      "question": "商品カテゴリ別の返品率を知りたい",
+      "framed_question": "商品カテゴリ別の販売数量はいくつか（キャンセル注文を除く。返品率の分母）",
+      "event": "customer_orders_product",
+      "type": "simple",
+      "measure": "quantity",
+      "filter": "キャンセルされた注文を除く",
+      "filters": [
+       {
+        "ref": "order_status.order_status",
+        "operator": "!=",
+        "values": [
+         "cancelled"
+        ]
+       }
+      ],
+      "group_by": [
+       "product.category",
+       "ordered_at.month"
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "return_rate_by_category",
+      "label": "商品カテゴリ別の返品率",
+      "question": "商品カテゴリ別の返品率を知りたい",
+      "framed_question": "商品カテゴリ別に、販売数量（キャンセル注文を除く）のうち返品された数量の割合はいくつか",
+      "event": "customer_returns_product",
+      "type": "ratio",
+      "numerator": "returned_qty_total",
+      "denominator": "sold_qty_excl_cancelled",
+      "group_by": [
+       "product.category"
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.orders",
+     "where_column": "order_id",
+     "value": "12"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.orders",
+     "where_column": "order_id",
+     "value": "13"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "販売数量の具体例として、次の 2 件を記録してよいですか？ ①2024-05-12 18:19 の注文で、衣料「つばさ トップス 0095」を 3 個購入（ステータス: returned）。②2025-06-09 21:58 の注文で、衣料「こだま トップス 0092」を 1 個購入（ステータス: returned）。",
+     "options": [
+      "この 2 件でよい",
+      "別の例を自分で伝える"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "quantity",
+        "label": "販売数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "ordered_at",
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-05-12 18:19:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 3
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-06-09 21:58:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 1
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "prioritization"
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この返品率の優先度はどのくらいですか？",
+     "options": [
+      "high",
+      "medium",
+      "low",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "この返品率が改善に与えるインパクト（効果の大きさ）はどのくらいですか？",
+     "options": [
+      "high",
+      "medium",
+      "low",
+      "おまかせ"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__get_beam",
+    "input": {}
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_returns_product",
+      "label": "顧客が商品を返品する",
+      "subject": "顧客",
+      "verb": "返品する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "returns",
+      "source_tables": [
+       "raw.returns",
+       "raw.order_items"
+      ],
+      "grain": "返品 1 件（返品記録 1 行）",
+      "grain_keys": [
+       "return_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "return_id",
+        "label": "返品ID",
+        "source": {
+         "table": "raw.returns",
+         "column": "return_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "returned_qty",
+        "label": "返品数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.returns",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "returned_at",
+        "label": "返品日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "returned_at"
+        }
+       },
+       {
+        "w": "why",
+        "name": "return_reason",
+        "label": "返品理由",
+        "business_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "fact_key": {
+         "table": "raw.returns",
+         "column": "return_reason"
+        },
+        "attributes": [
+         {
+          "name": "return_reason",
+          "label": "返品理由",
+          "availability": "available",
+          "source": {
+           "table": "raw.returns",
+           "column": "return_reason"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "returned_at",
+      "priority": "medium",
+      "impact": "medium",
+      "effort": "medium",
+      "examples": [
+       {
+        "values": {
+         "returned_at": "2024-05-25 02:19:00",
+         "product.category": "衣料",
+         "return_reason.return_reason": "サイズ違い",
+         "returned_qty": 2
+        }
+       },
+       {
+        "values": {
+         "returned_at": "2025-06-22 02:58:00",
+         "product.category": "衣料",
+         "return_reason.return_reason": "サイズ違い",
+         "returned_qty": 1
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "quantity",
+        "label": "販売数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "ordered_at",
+      "priority": "medium",
+      "impact": "medium",
+      "effort": "low",
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-05-12 18:19:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 3
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-06-09 21:58:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 1
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__add_gap",
+    "input": {
+     "data": {
+      "kind": "deferred",
+      "description": "インパクト（medium）はモデラーの見積もり",
+      "event": "customer_returns_product"
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "review"
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "注文ステータスは、キャンセル除外の条件としてだけ残す形でよいですか？",
+     "options": [
+      "条件としてだけ残す形でよい",
+      "キャンセル除外もやめたい",
+      "もう少し説明がほしい"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "quantity",
+        "label": "販売数量",
+        "unit": "個",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "column": "quantity"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "attributes": [
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         }
+        ]
+       },
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日時",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "description": "キャンセル注文を除く条件としてのみ使う。集計の切り口（group_by）には使わない（ユーザー要望）",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "agg_time_dimension": "ordered_at",
+      "priority": "medium",
+      "impact": "medium",
+      "effort": "low",
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-05-12 18:19:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 3
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-06-09 21:58:00",
+         "product.category": "衣料",
+         "order_status.order_status": "returned",
+         "quantity": 1
+        }
+       }
+      ]
+     }
+    }
+   }
+  ]
+ ],
+ "beam": {
+  "schema_version": 1,
+  "name": "return_rate_by_product_category",
+  "title": "商品カテゴリ別の返品率",
+  "request": "商品カテゴリ別の返品率を知りたい",
+  "events": [
+   {
+    "name": "customer_returns_product",
+    "table_name": "returns",
+    "label": "顧客が商品を返品する",
+    "subject": "顧客",
+    "verb": "返品する",
+    "object": "商品",
+    "story_type": "discrete",
+    "grain": "返品 1 件（返品記録 1 行）",
+    "grain_keys": [
+     "return_id"
+    ],
+    "measures": [
+     {
+      "name": "returned_qty",
+      "label": "返品数量",
+      "description": "",
+      "aggregation": "sum",
+      "additivity": "additive",
+      "unit": "個",
+      "non_additive_dimension": null,
+      "source": {
+       "table": "raw.returns",
+       "column": "quantity",
+       "expr": null
+      },
+      "availability": "available"
+     }
+    ],
+    "dimensions": [
+     {
+      "w": "what",
+      "name": "product",
+      "label": "商品",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "category",
+        "label": "商品カテゴリ",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.products",
+         "column": "category",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.products",
+       "column": "product_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.order_items",
+       "column": "product_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "when",
+      "name": "returned_at",
+      "label": "返品日時",
+      "description": "",
+      "role": null,
+      "attributes": [],
+      "hierarchy": [],
+      "time_grain": "day",
+      "business_key": null,
+      "fact_key": {
+       "table": "raw.returns",
+       "column": "returned_at",
+       "expr": null
+      }
+     },
+     {
+      "w": "why",
+      "name": "return_reason",
+      "label": "返品理由",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "return_reason",
+        "label": "返品理由",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.returns",
+         "column": "return_reason",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.returns",
+       "column": "return_reason",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.returns",
+       "column": "return_reason",
+       "expr": null
+      }
+     }
+    ],
+    "degenerate_dimensions": [
+     {
+      "name": "return_id",
+      "label": "返品ID",
+      "source": {
+       "table": "raw.returns",
+       "column": "return_id",
+       "expr": null
+      }
+     }
+    ],
+    "agg_time_dimension": "returned_at",
+    "examples": [
+     {
+      "values": {
+       "returned_at": "2024-05-25 02:19:00",
+       "product.category": "衣料",
+       "return_reason.return_reason": "サイズ違い",
+       "returned_qty": 2
+      }
+     },
+     {
+      "values": {
+       "returned_at": "2025-06-22 02:58:00",
+       "product.category": "衣料",
+       "return_reason.return_reason": "サイズ違い",
+       "returned_qty": 1
+      }
+     }
+    ],
+    "priority": "medium",
+    "impact": "medium",
+    "effort": "medium",
+    "source_tables": [
+     "raw.returns",
+     "raw.order_items"
+    ]
+   },
+   {
+    "name": "customer_orders_product",
+    "table_name": "order_lines",
+    "label": "顧客が商品を注文する",
+    "subject": "顧客",
+    "verb": "注文する",
+    "object": "商品",
+    "story_type": "discrete",
+    "grain": "注文の中の商品 1 つ（注文明細 1 行）",
+    "grain_keys": [
+     "order_item_id"
+    ],
+    "measures": [
+     {
+      "name": "quantity",
+      "label": "販売数量",
+      "description": "",
+      "aggregation": "sum",
+      "additivity": "additive",
+      "unit": "個",
+      "non_additive_dimension": null,
+      "source": {
+       "table": "raw.order_items",
+       "column": "quantity",
+       "expr": null
+      },
+      "availability": "available"
+     }
+    ],
+    "dimensions": [
+     {
+      "w": "what",
+      "name": "product",
+      "label": "商品",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "category",
+        "label": "商品カテゴリ",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.products",
+         "column": "category",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.products",
+       "column": "product_id",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.order_items",
+       "column": "product_id",
+       "expr": null
+      }
+     },
+     {
+      "w": "when",
+      "name": "ordered_at",
+      "label": "注文日時",
+      "description": "",
+      "role": null,
+      "attributes": [],
+      "hierarchy": [],
+      "time_grain": "day",
+      "business_key": null,
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "ordered_at",
+       "expr": null
+      }
+     },
+     {
+      "w": "how",
+      "name": "order_status",
+      "label": "注文ステータス",
+      "description": "キャンセル注文を除く条件としてのみ使う。集計の切り口（group_by）には使わない（ユーザー要望）",
+      "role": null,
+      "attributes": [
+       {
+        "name": "order_status",
+        "label": "注文ステータス",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.orders",
+         "column": "order_status",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.orders",
+       "column": "order_status",
+       "expr": null
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": "order_status",
+       "expr": null
+      }
+     }
+    ],
+    "degenerate_dimensions": [
+     {
+      "name": "order_item_id",
+      "label": "注文明細ID",
+      "source": {
+       "table": "raw.order_items",
+       "column": "order_item_id",
+       "expr": null
+      }
+     }
+    ],
+    "agg_time_dimension": "ordered_at",
+    "examples": [
+     {
+      "values": {
+       "ordered_at": "2024-05-12 18:19:00",
+       "product.category": "衣料",
+       "order_status.order_status": "returned",
+       "quantity": 3
+      }
+     },
+     {
+      "values": {
+       "ordered_at": "2025-06-09 21:58:00",
+       "product.category": "衣料",
+       "order_status.order_status": "returned",
+       "quantity": 1
+      }
+     }
+    ],
+    "priority": "medium",
+    "impact": "medium",
+    "effort": "low",
+    "source_tables": [
+     "raw.order_items",
+     "raw.orders"
+    ]
+   }
+  ],
+  "metrics": [
+   {
+    "name": "returned_qty_total",
+    "label": "返品数量",
+    "question": "商品カテゴリ別の返品率を知りたい",
+    "framed_question": "商品カテゴリ別の返品数量はいくつか（返品率の分子）",
+    "type": "simple",
+    "event": "customer_returns_product",
+    "measure": "returned_qty",
+    "numerator": null,
+    "denominator": null,
+    "expr": null,
+    "window": null,
+    "filter": null,
+    "filters": [],
+    "group_by": [
+     "product.category",
+     "returned_at.month",
+     "return_reason.return_reason"
+    ],
+    "status": "draft"
+   },
+   {
+    "name": "sold_qty_excl_cancelled",
+    "label": "販売数量（キャンセル除く）",
+    "question": "商品カテゴリ別の返品率を知りたい",
+    "framed_question": "商品カテゴリ別の販売数量はいくつか（キャンセル注文を除く。返品率の分母）",
+    "type": "simple",
+    "event": "customer_orders_product",
+    "measure": "quantity",
+    "numerator": null,
+    "denominator": null,
+    "expr": null,
+    "window": null,
+    "filter": "キャンセルされた注文を除く",
+    "filters": [
+     {
+      "ref": "order_status.order_status",
+      "operator": "!=",
+      "values": [
+       "cancelled"
+      ]
+     }
+    ],
+    "group_by": [
+     "product.category",
+     "ordered_at.month"
+    ],
+    "status": "draft"
+   },
+   {
+    "name": "return_rate_by_category",
+    "label": "商品カテゴリ別の返品率",
+    "question": "商品カテゴリ別の返品率を知りたい",
+    "framed_question": "商品カテゴリ別に、販売数量（キャンセル注文を除く）のうち返品された数量の割合はいくつか",
+    "type": "ratio",
+    "event": "customer_returns_product",
+    "measure": null,
+    "numerator": "returned_qty_total",
+    "denominator": "sold_qty_excl_cancelled",
+    "expr": null,
+    "window": null,
+    "filter": null,
+    "filters": [],
+    "group_by": [
+     "product.category"
+    ],
+    "status": "draft"
+   }
+  ],
+  "gaps": [
+   {
+    "kind": "deferred",
+    "description": "インパクト（medium）はモデラーの見積もり",
+    "event": "customer_returns_product",
+    "w": null,
+    "related": null
+   }
+  ],
+  "finalized_at": "2026-10-16T14:48:13.352662Z"
+ }
 }

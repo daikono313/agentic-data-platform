@@ -13,36 +13,74 @@
    "detail": "['how', 'what', 'when', 'where', 'who', 'why']"
   },
   {
-   "name": "metric_group_by_w: where",
-   "passed": true,
-   "detail": "[['ordered_at.day', 'store.store_name', 'store.channel', 'product.category', 'customer.membership_rank', 'promotion.promotion_name']]"
-  },
-  {
    "name": "has_gap: data_unavailable",
    "passed": true,
-   "detail": "['data_unavailable', 'deferred', 'deferred']"
+   "detail": "['data_unavailable', 'deferred']"
   },
   {
-   "name": "metric_has_filter",
+   "name": "min_examples: 1",
    "passed": true,
-   "detail": "[[{'ref': 'order_status.order_status', 'operator': '!=', 'values': ['cancelled']}]]"
+   "detail": "[2]"
   },
   {
-   "name": "has_examples",
+   "name": "metric_filter: {'column': 'raw.orders.order_status', 'excludes': ['cancelled']}",
    "passed": true,
-   "detail": "[1]"
+   "detail": "sales_amount_by_store: order_status.order_status != ['cancelled']"
+  },
+  {
+   "name": "metric_group_by_columns: [['raw.stores.store_name', 'raw.stores.store_id', 'raw.orders.store_id'], 'raw.stores.channel', 'raw.orders.ordered_at']",
+   "passed": true,
+   "detail": "['raw.customers.membership_rank', 'raw.orders.ordered_at', 'raw.orders:promotion_id is not null', 'raw.products.category', 'raw.stores.channel', 'raw.stores.prefecture', 'raw.stores.region', 'raw.stores.store_name']"
+  },
+  {
+   "name": "asks_purpose",
+   "passed": true,
+   "detail": "店舗別・日別・チャネル別の売上を見て、どんな判断に使いますか？"
+  },
+  {
+   "name": "no_choice_position_words",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "question_not_repeated_in_text",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_unexplained_jargon",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_repeated_questions",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "no_effort_question",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "examples_shown",
+   "passed": true,
+   "detail": ""
+  },
+  {
+   "name": "reframe_shown",
+   "passed": true,
+   "detail": ""
   }
  ],
- "turns": 11,
+ "turns": 12,
  "tool_calls": [
   [
    {
-    "name": "mcp__beam__get_beam",
-    "input": {}
-   },
-   {
-    "name": "mcp__source_catalog__list_sources",
-    "input": {}
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "framing"
+    }
    },
    {
     "name": "mcp__beam__set_overview",
@@ -52,17 +90,35 @@
     }
    },
    {
-    "name": "mcp__beam__set_phase",
+    "name": "mcp__source_catalog__list_facts",
+    "input": {}
+   },
+   {
+    "name": "mcp__beam__present_choices",
     "input": {
-     "phase": "framing"
+     "question": "この言い換えで合っていますか？",
+     "options": [
+      "合っている",
+      "売上金額ではなく販売数量を見たい",
+      "税込の売上で見たい",
+      "ほかにも見たい数字がある"
+     ]
     }
    },
    {
-    "name": "mcp__source_catalog__describe_table",
+    "name": "mcp__beam__present_choices",
     "input": {
-     "table": "raw.orders"
+     "question": "「店舗別の売上金額（税抜）はいくらか」という言い換えで合っていますか？",
+     "options": [
+      "合っている",
+      "売上金額ではなく販売数量を見たい",
+      "税込の売上で見たい",
+      "ほかにも見たい数字がある"
+     ]
     }
-   },
+   }
+  ],
+  [
    {
     "name": "mcp__source_catalog__describe_table",
     "input": {
@@ -70,14 +126,20 @@
     }
    },
    {
+    "name": "mcp__source_catalog__search_columns",
+    "input": {
+     "query": "channel チャネル"
+    }
+   },
+   {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "「店舗ごとの売上」は「店舗別の売上金額（数量×単価−値引額の合計、税抜）はいくらか？」という問いでよろしいですか？",
+     "question": "店舗別・日別・チャネル別の売上を見て、どんな判断に使いますか？",
      "options": [
-      "はい、それでOK",
-      "売上金額ではなく注文件数が見たい",
-      "値引き前の金額で見たい",
-      "別の意味で考えている"
+      "店舗・チャネルごとの業績評価",
+      "人員配置や仕入れの調整",
+      "販促・キャンペーンの効果確認",
+      "出店・閉店の判断"
      ]
     }
    }
@@ -92,41 +154,105 @@
    {
     "name": "mcp__source_catalog__describe_table",
     "input": {
+     "table": "raw.orders"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__describe_table",
+    "input": {
      "table": "raw.stores"
     }
    },
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__beam__upsert_event",
     "input": {
-     "table": "raw.orders",
-     "column": "order_status"
-    }
-   },
-   {
-    "name": "mcp__beam__present_choices",
-    "input": {
-     "question": "返品があった注文（returned）は、売上に含めますか？",
-     "options": [
-      "含める（キャンセルだけ除く）",
-      "除く（completed のみ）",
-      "おまかせ",
-      "あとで決める"
-     ]
-    }
-   }
-  ],
-  [
-   {
-    "name": "mcp__beam__set_phase",
-    "input": {
-     "phase": "seven_ws"
-    }
-   },
-   {
-    "name": "mcp__source_catalog__profile_column",
-    "input": {
-     "table": "raw.stores",
-     "column": "store_name"
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "unit": "円",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "販売チャネル",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         }
+        ]
+       }
+      ]
+     }
     }
    },
    {
@@ -137,21 +263,46 @@
     }
    },
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__source_catalog__sample_rows",
     "input": {
      "table": "raw.stores",
-     "column": "region"
+     "limit": 5
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "seven_ws"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "sales_amount_by_store",
+      "label": "店舗別売上金額(税抜)",
+      "question": "店舗ごとの売上を見たい",
+      "framed_question": "店舗別の売上金額(税抜)はいくらか(日別・チャネル別も)",
+      "event": "customer_orders_product",
+      "type": "simple",
+      "measure": "sales_amount",
+      "group_by": [
+       "store.store_name",
+       "store.channel",
+       "ordered_at.day"
+      ]
+     }
     }
    },
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "店舗の切り口として、どれを使いたいですか？ ほかに見たい切り口があれば教えてください。",
+     "question": "店舗名とチャネル以外に、ほかに見たい切り口はありますか？（データに無さそうなものでも構いません）",
      "options": [
-      "店舗名だけ",
-      "店舗名・チャネル",
-      "店舗名・チャネル・都道府県・地方",
-      "すべて（開店日も含む）"
+      "都道府県・地方別も見たい",
+      "開店からの経過年数でも見たい",
+      "店舗の規模や商圏タイプでも見たい",
+      "これで十分"
      ]
     }
    }
@@ -160,13 +311,19 @@
    {
     "name": "mcp__source_catalog__describe_table",
     "input": {
-     "table": "raw.products"
+     "table": "raw.customers"
     }
    },
    {
     "name": "mcp__source_catalog__describe_table",
     "input": {
-     "table": "raw.customers"
+     "table": "raw.products"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__search_columns",
+    "input": {
+     "query": "年収 income rank ランク category カテゴリ"
     }
    },
    {
@@ -184,6 +341,18 @@
     }
    },
    {
+    "name": "mcp__beam__add_gap",
+    "input": {
+     "data": {
+      "kind": "data_unavailable",
+      "description": "顧客の年収別に売上を見たいが、顧客マスタに年収の列がない",
+      "w": "who",
+      "event": "customer_orders_product",
+      "related": "customer.annual_income"
+     }
+    }
+   },
+   {
     "name": "mcp__beam__upsert_event",
     "input": {
      "data": {
@@ -195,10 +364,13 @@
       "story_type": "discrete",
       "table_name": "order_lines",
       "source_tables": [
+       "raw.order_items",
        "raw.orders",
-       "raw.order_items"
+       "raw.stores",
+       "raw.customers",
+       "raw.products"
       ],
-      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain": "注文の中の商品1つ(注文明細1行)",
       "grain_keys": [
        "order_item_id"
       ],
@@ -211,24 +383,15 @@
          "table": "raw.order_items",
          "column": "order_item_id"
         }
-       },
-       {
-        "name": "order_id",
-        "label": "注文ID",
-        "source": {
-         "table": "raw.order_items",
-         "column": "order_id"
-        }
        }
       ],
       "measures": [
        {
         "name": "sales_amount",
         "label": "売上金額(税抜)",
-        "description": "数量×販売単価−値引額(税抜)",
+        "unit": "円",
         "aggregation": "sum",
         "additivity": "additive",
-        "unit": "円",
         "availability": "available",
         "source": {
          "table": "raw.order_items",
@@ -259,6 +422,11 @@
          "table": "raw.orders",
          "column": "store_id"
         },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
         "attributes": [
          {
           "name": "store_name",
@@ -271,12 +439,29 @@
          },
          {
           "name": "channel",
-          "label": "チャネル",
-          "description": "store / online / app",
+          "label": "販売チャネル",
           "availability": "available",
           "source": {
            "table": "raw.stores",
            "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
           }
          }
         ]
@@ -293,7 +478,21 @@
          "table": "raw.order_items",
          "column": "product_id"
         },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
         "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
          {
           "name": "category",
           "label": "商品カテゴリ",
@@ -301,6 +500,15 @@
           "source": {
            "table": "raw.products",
            "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
           }
          }
         ]
@@ -321,69 +529,19 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "description": "bronze / silver / gold / platinum",
           "availability": "available",
           "source": {
            "table": "raw.customers",
            "column": "membership_rank"
           }
-         }
-        ]
-       },
-       {
-        "w": "how",
-        "name": "order_status",
-        "label": "注文ステータス",
-        "business_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "attributes": [
+         },
          {
-          "name": "order_status",
-          "label": "注文ステータス",
-          "description": "completed / cancelled / returned",
-          "availability": "available",
-          "source": {
-           "table": "raw.orders",
-           "column": "order_status"
-          }
+          "name": "annual_income",
+          "label": "年収",
+          "availability": "unavailable"
          }
         ]
        }
-      ]
-     }
-    }
-   },
-   {
-    "name": "mcp__beam__upsert_metric",
-    "input": {
-     "data": {
-      "name": "store_daily_sales",
-      "label": "店舗別日次売上金額",
-      "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
-      "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
-      "event": "customer_orders_product",
-      "type": "simple",
-      "measure": "sales_amount",
-      "filter": "キャンセルされた注文を除く(返品ありは含む)",
-      "filters": [
-       {
-        "ref": "order_status.order_status",
-        "operator": "!=",
-        "values": [
-         "cancelled"
-        ]
-       }
-      ],
-      "group_by": [
-       "ordered_at.day",
-       "store.store_name",
-       "store.channel"
       ]
      }
     }
@@ -391,12 +549,12 @@
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "顧客の会員ランクは途中で変わることがあります。過去の売上は、注文した当時のランクで見たいですか？ それとも現在のランクで見たいですか？",
+     "question": "顧客について、会員ランク以外に見たい切り口はありますか？（データにあるのは、性別、生年月日、居住地、会員登録日です）",
      "options": [
-      "注文当時のランクで見たい",
-      "現在のランクで見たい",
-      "おまかせ",
-      "あとで決める"
+      "年齢層でも見たい",
+      "性別でも見たい",
+      "居住地域でも見たい",
+      "会員ランクだけで十分"
      ]
     }
    }
@@ -405,12 +563,11 @@
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "ここまでの切り口（日付・店舗・チャネル・商品カテゴリ・会員ランク）のほかに、見たいものはありますか？",
+     "question": "会員ランクは、顧客が昇格すると値が変わります。過去の売上は、注文した当時のランクで見たいですか？それとも現在のランクで見ればよいですか？",
      "options": [
-      "今のだけでよい",
-      "プロモーションも見たい",
-      "支払方法も見たい",
-      "その他（自由入力）"
+      "注文した当時のランクで見たい",
+      "現在のランクでよい",
+      "後で決める"
      ]
     }
    }
@@ -423,30 +580,38 @@
     }
    },
    {
-    "name": "mcp__source_catalog__search_columns",
+    "name": "mcp__source_catalog__profile_column",
     "input": {
-     "query": "年収 income 収入 salary"
+     "table": "raw.orders",
+     "column": "promotion_id"
     }
    },
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__beam__present_choices",
     "input": {
-     "table": "raw.promotions",
-     "column": "promotion_name"
+     "question": "プロモーションについて、見たい切り口はありますか？（データに無さそうなものでも構いません）",
+     "options": [
+      "プロモーション名別",
+      "プロモーションの種類別",
+      "適用あり・なしの比較",
+      "プロモーションは見なくてよい"
+     ]
     }
-   },
+   }
+  ],
+  [
    {
     "name": "mcp__source_catalog__profile_column",
     "input": {
-     "table": "raw.promotions",
-     "column": "promotion_type"
+     "table": "raw.orders",
+     "column": "payment_method"
     }
    },
    {
     "name": "mcp__source_catalog__profile_column",
     "input": {
      "table": "raw.orders",
-     "column": "promotion_id"
+     "column": "order_status"
     }
    },
    {
@@ -461,10 +626,14 @@
       "story_type": "discrete",
       "table_name": "order_lines",
       "source_tables": [
+       "raw.order_items",
        "raw.orders",
-       "raw.order_items"
+       "raw.stores",
+       "raw.customers",
+       "raw.products",
+       "raw.promotions"
       ],
-      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain": "注文の中の商品1つ(注文明細1行)",
       "grain_keys": [
        "order_item_id"
       ],
@@ -477,24 +646,15 @@
          "table": "raw.order_items",
          "column": "order_item_id"
         }
-       },
-       {
-        "name": "order_id",
-        "label": "注文ID",
-        "source": {
-         "table": "raw.order_items",
-         "column": "order_id"
-        }
        }
       ],
       "measures": [
        {
         "name": "sales_amount",
         "label": "売上金額(税抜)",
-        "description": "数量×販売単価−値引額(税抜)",
+        "unit": "円",
         "aggregation": "sum",
         "additivity": "additive",
-        "unit": "円",
         "availability": "available",
         "source": {
          "table": "raw.order_items",
@@ -525,6 +685,11 @@
          "table": "raw.orders",
          "column": "store_id"
         },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
         "attributes": [
          {
           "name": "store_name",
@@ -537,12 +702,29 @@
          },
          {
           "name": "channel",
-          "label": "チャネル",
-          "description": "store / online / app",
+          "label": "販売チャネル",
           "availability": "available",
           "source": {
            "table": "raw.stores",
            "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
           }
          }
         ]
@@ -559,7 +741,21 @@
          "table": "raw.order_items",
          "column": "product_id"
         },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
         "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
          {
           "name": "category",
           "label": "商品カテゴリ",
@@ -567,6 +763,15 @@
           "source": {
            "table": "raw.products",
            "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
           }
          }
         ]
@@ -587,7 +792,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "description": "bronze / silver / gold / platinum",
           "availability": "available",
           "history_required": false,
           "source": {
@@ -598,7 +802,6 @@
          {
           "name": "annual_income",
           "label": "年収",
-          "description": "ソースに列がない",
           "availability": "unavailable"
          }
         ]
@@ -607,7 +810,6 @@
         "w": "why",
         "name": "promotion",
         "label": "プロモーション",
-        "description": "適用なしの注文は promotion_id が NULL",
         "business_key": {
          "table": "raw.promotions",
          "column": "promotion_id"
@@ -629,36 +831,19 @@
          {
           "name": "promotion_type",
           "label": "プロモーション種類",
-          "description": "percent_off / point_up / bundle",
           "availability": "available",
           "source": {
            "table": "raw.promotions",
            "column": "promotion_type"
           }
-         }
-        ]
-       },
-       {
-        "w": "how",
-        "name": "order_status",
-        "label": "注文ステータス",
-        "business_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "fact_key": {
-         "table": "raw.orders",
-         "column": "order_status"
-        },
-        "attributes": [
+         },
          {
-          "name": "order_status",
-          "label": "注文ステータス",
-          "description": "completed / cancelled / returned",
+          "name": "is_promoted",
+          "label": "プロモーション適用あり",
           "availability": "available",
           "source": {
            "table": "raw.orders",
-           "column": "order_status"
+           "expr": "promotion_id is not null"
           }
          }
         ]
@@ -668,42 +853,109 @@
     }
    },
    {
-    "name": "mcp__beam__add_gap",
+    "name": "mcp__beam__present_choices",
     "input": {
-     "data": {
-      "kind": "data_unavailable",
-      "description": "顧客の年収別の切り口を希望されたが、ソースに年収の列がない",
-      "w": "who",
-      "event": "customer_orders_product",
-      "related": "customer.annual_income"
-     }
+     "question": "支払方法や注文ステータスなど、「どのように」に当たる切り口で見たいものはありますか？（データに無さそうなものでも構いません）",
+     "options": [
+      "支払方法別で見たい",
+      "注文ステータス別で見たい",
+      "どちらも見たい",
+      "特にない"
+     ]
     }
    }
   ],
   [
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__source_catalog__sample_rows",
     "input": {
-     "table": "raw.order_items",
-     "column": "discount_amount"
+     "table": "raw.orders",
+     "limit": 2
     }
    },
    {
-    "name": "mcp__source_catalog__profile_column",
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.order_items",
+     "where_column": "order_id",
+     "value": "1"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.order_items",
+     "where_column": "order_id",
+     "value": "2"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.stores",
+     "where_column": "store_id",
+     "value": "15"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.stores",
+     "where_column": "store_id",
+     "value": "17"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.customers",
+     "where_column": "customer_id",
+     "value": "4488"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.customers",
+     "where_column": "customer_id",
+     "value": "2561"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
     "input": {
      "table": "raw.products",
-     "column": "product_name"
+     "where_column": "product_id",
+     "value": "110"
+    }
+   },
+   {
+    "name": "mcp__source_catalog__sample_rows",
+    "input": {
+     "table": "raw.products",
+     "where_column": "product_id",
+     "value": "100"
     }
    },
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "この例の店舗は、どのように記録しましょうか？",
+     "question": "この 2 件の内容で、具体例として記録してよいですか？",
      "options": [
-      "ONLINEストア17に差し替える",
-      "店舗を実在の店舗名にして自分で直す",
-      "渋谷店のまま記録する",
-      "おまかせ"
+      "これでよい",
+      "別の例にしたい",
+      "修正がある"
+     ]
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "次の 2 件を具体例として記録してよいですか？ 例1: 2024-11-24 16:40、福岡県15号店（store・九州）、会員ランク bronze、「みなと アウター 0110」（衣料）、1 個、売上 17,100 円（値引き 0）、プロモーション無し、completed。 例2: 2025-02-12 14:20、ONLINEストア17（online）、会員ランク bronze、「つばさ ボトムス 0100」（衣料）、1 個、売上 2,500 円（値引き 0）、プロモーション無し、completed。",
+     "options": [
+      "これでよい",
+      "別の例にしたい",
+      "修正がある"
      ]
     }
    }
@@ -721,10 +973,14 @@
       "story_type": "discrete",
       "table_name": "order_lines",
       "source_tables": [
+       "raw.order_items",
        "raw.orders",
-       "raw.order_items"
+       "raw.stores",
+       "raw.customers",
+       "raw.products",
+       "raw.promotions"
       ],
-      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain": "注文の中の商品1つ(注文明細1行)",
       "grain_keys": [
        "order_item_id"
       ],
@@ -737,24 +993,15 @@
          "table": "raw.order_items",
          "column": "order_item_id"
         }
-       },
-       {
-        "name": "order_id",
-        "label": "注文ID",
-        "source": {
-         "table": "raw.order_items",
-         "column": "order_id"
-        }
        }
       ],
       "measures": [
        {
         "name": "sales_amount",
         "label": "売上金額(税抜)",
-        "description": "数量×販売単価−値引額(税抜)",
+        "unit": "円",
         "aggregation": "sum",
         "additivity": "additive",
-        "unit": "円",
         "availability": "available",
         "source": {
          "table": "raw.order_items",
@@ -785,6 +1032,11 @@
          "table": "raw.orders",
          "column": "store_id"
         },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
         "attributes": [
          {
           "name": "store_name",
@@ -797,12 +1049,29 @@
          },
          {
           "name": "channel",
-          "label": "チャネル",
-          "description": "store / online / app",
+          "label": "販売チャネル",
           "availability": "available",
           "source": {
            "table": "raw.stores",
            "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
           }
          }
         ]
@@ -819,7 +1088,21 @@
          "table": "raw.order_items",
          "column": "product_id"
         },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
         "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
          {
           "name": "category",
           "label": "商品カテゴリ",
@@ -827,6 +1110,15 @@
           "source": {
            "table": "raw.products",
            "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
           }
          }
         ]
@@ -847,7 +1139,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "description": "bronze / silver / gold / platinum",
           "availability": "available",
           "history_required": false,
           "source": {
@@ -858,7 +1149,6 @@
          {
           "name": "annual_income",
           "label": "年収",
-          "description": "ソースに列がない",
           "availability": "unavailable"
          }
         ]
@@ -867,7 +1157,6 @@
         "w": "why",
         "name": "promotion",
         "label": "プロモーション",
-        "description": "適用なしの注文は promotion_id が NULL",
         "business_key": {
          "table": "raw.promotions",
          "column": "promotion_id"
@@ -889,11 +1178,19 @@
          {
           "name": "promotion_type",
           "label": "プロモーション種類",
-          "description": "percent_off / point_up / bundle",
           "availability": "available",
           "source": {
            "table": "raw.promotions",
            "column": "promotion_type"
+          }
+         },
+         {
+          "name": "is_promoted",
+          "label": "プロモーション適用あり",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "expr": "promotion_id is not null"
           }
          }
         ]
@@ -914,7 +1211,6 @@
          {
           "name": "order_status",
           "label": "注文ステータス",
-          "description": "completed / cancelled / returned",
           "availability": "available",
           "source": {
            "table": "raw.orders",
@@ -927,14 +1223,376 @@
       "examples": [
        {
         "values": {
-         "ordered_at": "2026-10-03",
-         "store.store_name": "ONLINEストア17",
+         "ordered_at": "2024-11-24 16:40:00",
+         "store.store_name": "福岡県15号店",
+         "store.channel": "store",
+         "store.region": "九州",
+         "customer.membership_rank": "bronze",
+         "product.product_name": "みなと アウター 0110",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 17100
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
+         "store.store_name": "ONLINEストア26",
          "store.channel": "online",
-         "product.category": "家電",
-         "customer.membership_rank": "gold",
-         "sales_amount": 9000
+         "store.region": null,
+         "customer.membership_rank": "bronze",
+         "product.product_name": "つばさ ボトムス 0100",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 2500
         }
        }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__get_beam",
+    "input": {}
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders",
+       "raw.stores",
+       "raw.customers",
+       "raw.products",
+       "raw.promotions"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "unit": "円",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "販売チャネル",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
+        "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "annual_income",
+          "label": "年収",
+          "availability": "unavailable"
+         }
+        ]
+       },
+       {
+        "w": "why",
+        "name": "promotion",
+        "label": "プロモーション",
+        "business_key": {
+         "table": "raw.promotions",
+         "column": "promotion_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "promotion_id"
+        },
+        "attributes": [
+         {
+          "name": "promotion_name",
+          "label": "プロモーション名",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_name"
+          }
+         },
+         {
+          "name": "promotion_type",
+          "label": "プロモーション種類",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_type"
+          }
+         },
+         {
+          "name": "is_promoted",
+          "label": "プロモーション適用あり",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "expr": "promotion_id is not null"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-11-24 16:40:00",
+         "store.store_name": "福岡県15号店",
+         "store.channel": "store",
+         "store.region": "九州",
+         "customer.membership_rank": "bronze",
+         "product.product_name": "みなと アウター 0110",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 17100
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
+         "store.store_name": "ONLINEストア17",
+         "store.channel": "online",
+         "store.region": null,
+         "customer.membership_rank": "bronze",
+         "product.product_name": "つばさ ボトムス 0100",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 2500
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__present_choices",
+    "input": {
+     "question": "キャンセルされた注文は売上から除くとのことでした。返品ありの注文（returned）は、売上に含めますか？",
+     "options": [
+      "含める（返品も売上に数える）",
+      "除く（completed のみ）",
+      "後で決める",
+      "そのほかのイレギュラーなケースもある"
+     ]
+    }
+   }
+  ],
+  [
+   {
+    "name": "mcp__beam__upsert_metric",
+    "input": {
+     "data": {
+      "name": "sales_amount_by_store",
+      "label": "店舗別売上金額(税抜)",
+      "question": "店舗ごとの売上を見たい",
+      "framed_question": "店舗別の売上金額(税抜)はいくらか(日別・チャネル別・地方別・商品カテゴリ別・会員ランク別・プロモーション適用ありなし別も)",
+      "event": "customer_orders_product",
+      "type": "simple",
+      "measure": "sales_amount",
+      "filter": "キャンセルされた注文を除く（返品ありは當面含める）",
+      "filters": [
+       {
+        "ref": "order_status.order_status",
+        "operator": "!=",
+        "values": [
+         "cancelled"
+        ]
+       }
+      ],
+      "group_by": [
+       "store.store_name",
+       "store.channel",
+       "store.region",
+       "store.prefecture",
+       "product.category",
+       "customer.membership_rank",
+       "promotion.is_promoted",
+       "ordered_at.day"
       ]
      }
     }
@@ -944,33 +1602,13 @@
     "input": {
      "data": {
       "kind": "deferred",
-      "description": "具体例の店舗はモデラーの見積もり（「渋谷店」はソースに無いため実在の ONLINEストア17 に差し替え、商品名「ワイヤレスイヤホン」は記録していない）",
-      "w": "where",
+      "description": "返品ありの注文(returned)を売上に含めるかは未決定。「注文した時点で数える」考え方のため、当面は含める（モデラーの見積もり・要確認）",
+      "w": "how",
       "event": "customer_orders_product",
-      "related": "store.store_name"
+      "related": "order_status.order_status"
      }
     }
    },
-   {
-    "name": "mcp__beam__set_phase",
-    "input": {
-     "phase": "grain"
-    }
-   },
-   {
-    "name": "mcp__beam__present_choices",
-    "input": {
-     "question": "この「店舗別の日次売上」の優先度は、どのくらいですか？",
-     "options": [
-      "高い",
-      "中くらい",
-      "低い",
-      "おまかせ"
-     ]
-    }
-   }
-  ],
-  [
    {
     "name": "mcp__beam__set_phase",
     "input": {
@@ -980,25 +1618,11 @@
    {
     "name": "mcp__beam__present_choices",
     "input": {
-     "question": "この指標が見られるようになったときの、ビジネスへのインパクト（効果の大きさ）はどのくらいですか？",
+     "question": "この「店舗別売上」の優先度はどれくらいですか？",
      "options": [
-      "高い",
-      "中くらい",
-      "低い",
-      "おまかせ"
-     ]
-    }
-   }
-  ],
-  [
-   {
-    "name": "mcp__beam__present_choices",
-    "input": {
-     "question": "データを整える作業量（工数）は、どのくらいを想定しますか？",
-     "options": [
-      "少ない（low）",
-      "中くらい",
-      "多い",
+      "high",
+      "medium",
+      "low",
       "おまかせ"
      ]
     }
@@ -1017,10 +1641,14 @@
       "story_type": "discrete",
       "table_name": "order_lines",
       "source_tables": [
+       "raw.order_items",
        "raw.orders",
-       "raw.order_items"
+       "raw.stores",
+       "raw.customers",
+       "raw.products",
+       "raw.promotions"
       ],
-      "grain": "注文明細1行(注文の中の商品1つ)",
+      "grain": "注文の中の商品1つ(注文明細1行)",
       "grain_keys": [
        "order_item_id"
       ],
@@ -1036,24 +1664,15 @@
          "table": "raw.order_items",
          "column": "order_item_id"
         }
-       },
-       {
-        "name": "order_id",
-        "label": "注文ID",
-        "source": {
-         "table": "raw.order_items",
-         "column": "order_id"
-        }
        }
       ],
       "measures": [
        {
         "name": "sales_amount",
         "label": "売上金額(税抜)",
-        "description": "数量×販売単価−値引額(税抜)",
+        "unit": "円",
         "aggregation": "sum",
         "additivity": "additive",
-        "unit": "円",
         "availability": "available",
         "source": {
          "table": "raw.order_items",
@@ -1084,6 +1703,11 @@
          "table": "raw.orders",
          "column": "store_id"
         },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
         "attributes": [
          {
           "name": "store_name",
@@ -1096,12 +1720,29 @@
          },
          {
           "name": "channel",
-          "label": "チャネル",
-          "description": "store / online / app",
+          "label": "販売チャネル",
           "availability": "available",
           "source": {
            "table": "raw.stores",
            "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
           }
          }
         ]
@@ -1118,7 +1759,21 @@
          "table": "raw.order_items",
          "column": "product_id"
         },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
         "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
          {
           "name": "category",
           "label": "商品カテゴリ",
@@ -1126,6 +1781,15 @@
           "source": {
            "table": "raw.products",
            "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
           }
          }
         ]
@@ -1146,7 +1810,6 @@
          {
           "name": "membership_rank",
           "label": "会員ランク",
-          "description": "bronze / silver / gold / platinum",
           "availability": "available",
           "history_required": false,
           "source": {
@@ -1157,7 +1820,6 @@
          {
           "name": "annual_income",
           "label": "年収",
-          "description": "ソースに列がない",
           "availability": "unavailable"
          }
         ]
@@ -1166,7 +1828,6 @@
         "w": "why",
         "name": "promotion",
         "label": "プロモーション",
-        "description": "適用なしの注文は promotion_id が NULL",
         "business_key": {
          "table": "raw.promotions",
          "column": "promotion_id"
@@ -1188,7 +1849,307 @@
          {
           "name": "promotion_type",
           "label": "プロモーション種類",
-          "description": "percent_off / point_up / bundle",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_type"
+          }
+         },
+         {
+          "name": "is_promoted",
+          "label": "プロモーション適用あり",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "expr": "promotion_id is not null"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "order_status",
+        "label": "注文ステータス",
+        "business_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "order_status"
+        },
+        "attributes": [
+         {
+          "name": "order_status",
+          "label": "注文ステータス",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "column": "order_status"
+          }
+         }
+        ]
+       }
+      ],
+      "examples": [
+       {
+        "values": {
+         "ordered_at": "2024-11-24 16:40:00",
+         "store.store_name": "福岡県15号店",
+         "store.channel": "store",
+         "store.region": "九州",
+         "customer.membership_rank": "bronze",
+         "product.product_name": "みなと アウター 0110",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 17100
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
+         "store.store_name": "ONLINEストア17",
+         "store.channel": "online",
+         "store.region": null,
+         "customer.membership_rank": "bronze",
+         "product.product_name": "つばさ ボトムス 0100",
+         "product.category": "衣料",
+         "promotion.is_promoted": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 2500
+        }
+       }
+      ]
+     }
+    }
+   },
+   {
+    "name": "mcp__beam__set_phase",
+    "input": {
+     "phase": "review"
+    }
+   },
+   {
+    "name": "mcp__beam__upsert_event",
+    "input": {
+     "data": {
+      "name": "customer_orders_product",
+      "label": "顧客が商品を注文する",
+      "subject": "顧客",
+      "verb": "注文する",
+      "object": "商品",
+      "story_type": "discrete",
+      "table_name": "order_lines",
+      "source_tables": [
+       "raw.order_items",
+       "raw.orders",
+       "raw.stores",
+       "raw.customers",
+       "raw.products",
+       "raw.promotions"
+      ],
+      "grain": "注文の中の商品1つ(注文明細1行)",
+      "grain_keys": [
+       "order_item_id"
+      ],
+      "agg_time_dimension": "ordered_at",
+      "priority": "high",
+      "impact": "high",
+      "effort": "medium",
+      "degenerate_dimensions": [
+       {
+        "name": "order_item_id",
+        "label": "注文明細ID",
+        "source": {
+         "table": "raw.order_items",
+         "column": "order_item_id"
+        }
+       }
+      ],
+      "measures": [
+       {
+        "name": "sales_amount",
+        "label": "売上金額(税抜)",
+        "unit": "円",
+        "aggregation": "sum",
+        "additivity": "additive",
+        "availability": "available",
+        "source": {
+         "table": "raw.order_items",
+         "expr": "quantity * unit_price - discount_amount"
+        }
+       }
+      ],
+      "dimensions": [
+       {
+        "w": "when",
+        "name": "ordered_at",
+        "label": "注文日",
+        "time_grain": "day",
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "ordered_at"
+        }
+       },
+       {
+        "w": "where",
+        "name": "store",
+        "label": "店舗",
+        "business_key": {
+         "table": "raw.stores",
+         "column": "store_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "store_id"
+        },
+        "hierarchy": [
+         "region",
+         "prefecture",
+         "store_name"
+        ],
+        "attributes": [
+         {
+          "name": "store_name",
+          "label": "店舗名",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "store_name"
+          }
+         },
+         {
+          "name": "channel",
+          "label": "販売チャネル",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "channel"
+          }
+         },
+         {
+          "name": "prefecture",
+          "label": "都道府県",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "prefecture"
+          }
+         },
+         {
+          "name": "region",
+          "label": "地方",
+          "availability": "available",
+          "source": {
+           "table": "raw.stores",
+           "column": "region"
+          }
+         }
+        ]
+       },
+       {
+        "w": "what",
+        "name": "product",
+        "label": "商品",
+        "business_key": {
+         "table": "raw.products",
+         "column": "product_id"
+        },
+        "fact_key": {
+         "table": "raw.order_items",
+         "column": "product_id"
+        },
+        "hierarchy": [
+         "category",
+         "subcategory",
+         "product_name"
+        ],
+        "attributes": [
+         {
+          "name": "product_name",
+          "label": "商品名",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "product_name"
+          }
+         },
+         {
+          "name": "category",
+          "label": "商品カテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "category"
+          }
+         },
+         {
+          "name": "subcategory",
+          "label": "商品サブカテゴリ",
+          "availability": "available",
+          "source": {
+           "table": "raw.products",
+           "column": "subcategory"
+          }
+         }
+        ]
+       },
+       {
+        "w": "who",
+        "name": "customer",
+        "label": "顧客",
+        "business_key": {
+         "table": "raw.customers",
+         "column": "customer_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "customer_id"
+        },
+        "attributes": [
+         {
+          "name": "membership_rank",
+          "label": "会員ランク",
+          "availability": "available",
+          "history_required": false,
+          "source": {
+           "table": "raw.customers",
+           "column": "membership_rank"
+          }
+         },
+         {
+          "name": "annual_income",
+          "label": "年収",
+          "availability": "unavailable"
+         }
+        ]
+       },
+       {
+        "w": "why",
+        "name": "promotion",
+        "label": "プロモーション",
+        "business_key": {
+         "table": "raw.promotions",
+         "column": "promotion_id"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "column": "promotion_id"
+        },
+        "attributes": [
+         {
+          "name": "promotion_name",
+          "label": "プロモーション名",
+          "availability": "available",
+          "source": {
+           "table": "raw.promotions",
+           "column": "promotion_name"
+          }
+         },
+         {
+          "name": "promotion_type",
+          "label": "プロモーション種類",
           "availability": "available",
           "source": {
            "table": "raw.promotions",
@@ -1213,11 +2174,34 @@
          {
           "name": "order_status",
           "label": "注文ステータス",
-          "description": "completed / cancelled / returned",
           "availability": "available",
           "source": {
            "table": "raw.orders",
            "column": "order_status"
+          }
+         }
+        ]
+       },
+       {
+        "w": "how",
+        "name": "promotion_applied",
+        "label": "プロモーション適用の有無",
+        "business_key": {
+         "table": "raw.orders",
+         "expr": "promotion_id is not null"
+        },
+        "fact_key": {
+         "table": "raw.orders",
+         "expr": "promotion_id is not null"
+        },
+        "attributes": [
+         {
+          "name": "promotion_applied",
+          "label": "プロモーション適用あり",
+          "availability": "available",
+          "source": {
+           "table": "raw.orders",
+           "expr": "promotion_id is not null"
           }
          }
         ]
@@ -1226,12 +2210,30 @@
       "examples": [
        {
         "values": {
-         "ordered_at": "2026-10-03",
+         "ordered_at": "2024-11-24 16:40:00",
+         "store.store_name": "福岡県15号店",
+         "store.channel": "store",
+         "store.region": "九州",
+         "customer.membership_rank": "bronze",
+         "product.product_name": "みなと アウター 0110",
+         "product.category": "衣料",
+         "promotion_applied.promotion_applied": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 17100
+        }
+       },
+       {
+        "values": {
+         "ordered_at": "2025-02-12 14:20:00",
          "store.store_name": "ONLINEストア17",
          "store.channel": "online",
-         "product.category": "家電",
-         "customer.membership_rank": "gold",
-         "sales_amount": 9000
+         "store.region": null,
+         "customer.membership_rank": "bronze",
+         "product.product_name": "つばさ ボトムス 0100",
+         "product.category": "衣料",
+         "promotion_applied.promotion_applied": false,
+         "order_status.order_status": "completed",
+         "sales_amount": 2500
         }
        }
       ]
@@ -1239,27 +2241,17 @@
     }
    },
    {
-    "name": "mcp__beam__add_gap",
-    "input": {
-     "data": {
-      "kind": "deferred",
-      "description": "工数（medium）はモデラーの見積もり",
-      "event": "customer_orders_product"
-     }
-    }
-   },
-   {
     "name": "mcp__beam__upsert_metric",
     "input": {
      "data": {
-      "name": "store_daily_sales",
-      "label": "店舗別日次売上金額",
-      "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
-      "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
+      "name": "sales_amount_by_store",
+      "label": "店舗別売上金額(税抜)",
+      "question": "店舗ごとの売上を見たい",
+      "framed_question": "店舗別の売上金額(税抜)はいくらか(日別・チャネル別・地方別・商品カテゴリ別・会員ランク別・プロモーション適用ありなし別も)",
       "event": "customer_orders_product",
       "type": "simple",
       "measure": "sales_amount",
-      "filter": "キャンセルされた注文を除く(返品ありは含む)",
+      "filter": "キャンセルされた注文を除く（返品ありは当面含める）",
       "filters": [
        {
         "ref": "order_status.order_status",
@@ -1270,24 +2262,20 @@
        }
       ],
       "group_by": [
-       "ordered_at.day",
        "store.store_name",
        "store.channel",
+       "store.region",
+       "store.prefecture",
        "product.category",
        "customer.membership_rank",
-       "promotion.promotion_name"
-      ],
-      "status": "confirmed"
+       "promotion_applied.promotion_applied",
+       "ordered_at.day"
+      ]
      }
     }
-   },
-   {
-    "name": "mcp__beam__set_phase",
-    "input": {
-     "phase": "review"
-    }
    }
-  ]
+  ],
+  []
  ],
  "beam": {
   "schema_version": 1,
@@ -1303,7 +2291,7 @@
     "verb": "注文する",
     "object": "商品",
     "story_type": "discrete",
-    "grain": "注文明細1行(注文の中の商品1つ)",
+    "grain": "注文の中の商品1つ(注文明細1行)",
     "grain_keys": [
      "order_item_id"
     ],
@@ -1311,7 +2299,7 @@
      {
       "name": "sales_amount",
       "label": "売上金額(税抜)",
-      "description": "数量×販売単価−値引額(税抜)",
+      "description": "",
       "aggregation": "sum",
       "additivity": "additive",
       "unit": "円",
@@ -1363,8 +2351,8 @@
        },
        {
         "name": "channel",
-        "label": "チャネル",
-        "description": "store / online / app",
+        "label": "販売チャネル",
+        "description": "",
         "examples": [],
         "source": {
          "table": "raw.stores",
@@ -1373,9 +2361,39 @@
         },
         "availability": "available",
         "history_required": false
+       },
+       {
+        "name": "prefecture",
+        "label": "都道府県",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.stores",
+         "column": "prefecture",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       },
+       {
+        "name": "region",
+        "label": "地方",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.stores",
+         "column": "region",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
        }
       ],
-      "hierarchy": [],
+      "hierarchy": [
+       "region",
+       "prefecture",
+       "store_name"
+      ],
       "time_grain": null,
       "business_key": {
        "table": "raw.stores",
@@ -1396,6 +2414,19 @@
       "role": null,
       "attributes": [
        {
+        "name": "product_name",
+        "label": "商品名",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.products",
+         "column": "product_name",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
+       },
+       {
         "name": "category",
         "label": "商品カテゴリ",
         "description": "",
@@ -1407,9 +2438,26 @@
         },
         "availability": "available",
         "history_required": false
+       },
+       {
+        "name": "subcategory",
+        "label": "商品サブカテゴリ",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.products",
+         "column": "subcategory",
+         "expr": null
+        },
+        "availability": "available",
+        "history_required": false
        }
       ],
-      "hierarchy": [],
+      "hierarchy": [
+       "category",
+       "subcategory",
+       "product_name"
+      ],
       "time_grain": null,
       "business_key": {
        "table": "raw.products",
@@ -1432,7 +2480,7 @@
        {
         "name": "membership_rank",
         "label": "会員ランク",
-        "description": "bronze / silver / gold / platinum",
+        "description": "",
         "examples": [],
         "source": {
          "table": "raw.customers",
@@ -1445,7 +2493,7 @@
        {
         "name": "annual_income",
         "label": "年収",
-        "description": "ソースに列がない",
+        "description": "",
         "examples": [],
         "source": null,
         "availability": "unavailable",
@@ -1469,7 +2517,7 @@
       "w": "why",
       "name": "promotion",
       "label": "プロモーション",
-      "description": "適用なしの注文は promotion_id が NULL",
+      "description": "",
       "role": null,
       "attributes": [
        {
@@ -1488,7 +2536,7 @@
        {
         "name": "promotion_type",
         "label": "プロモーション種類",
-        "description": "percent_off / point_up / bundle",
+        "description": "",
         "examples": [],
         "source": {
          "table": "raw.promotions",
@@ -1522,7 +2570,7 @@
        {
         "name": "order_status",
         "label": "注文ステータス",
-        "description": "completed / cancelled / returned",
+        "description": "",
         "examples": [],
         "source": {
          "table": "raw.orders",
@@ -1545,6 +2593,40 @@
        "column": "order_status",
        "expr": null
       }
+     },
+     {
+      "w": "how",
+      "name": "promotion_applied",
+      "label": "プロモーション適用の有無",
+      "description": "",
+      "role": null,
+      "attributes": [
+       {
+        "name": "promotion_applied",
+        "label": "プロモーション適用あり",
+        "description": "",
+        "examples": [],
+        "source": {
+         "table": "raw.orders",
+         "column": null,
+         "expr": "promotion_id is not null"
+        },
+        "availability": "available",
+        "history_required": false
+       }
+      ],
+      "hierarchy": [],
+      "time_grain": null,
+      "business_key": {
+       "table": "raw.orders",
+       "column": null,
+       "expr": "promotion_id is not null"
+      },
+      "fact_key": {
+       "table": "raw.orders",
+       "column": null,
+       "expr": "promotion_id is not null"
+      }
      }
     ],
     "degenerate_dimensions": [
@@ -1556,27 +2638,36 @@
        "column": "order_item_id",
        "expr": null
       }
-     },
-     {
-      "name": "order_id",
-      "label": "注文ID",
-      "source": {
-       "table": "raw.order_items",
-       "column": "order_id",
-       "expr": null
-      }
      }
     ],
     "agg_time_dimension": "ordered_at",
     "examples": [
      {
       "values": {
-       "ordered_at": "2026-10-03",
+       "ordered_at": "2024-11-24 16:40:00",
+       "store.store_name": "福岡県15号店",
+       "store.channel": "store",
+       "store.region": "九州",
+       "customer.membership_rank": "bronze",
+       "product.product_name": "みなと アウター 0110",
+       "product.category": "衣料",
+       "promotion_applied.promotion_applied": false,
+       "order_status.order_status": "completed",
+       "sales_amount": 17100
+      }
+     },
+     {
+      "values": {
+       "ordered_at": "2025-02-12 14:20:00",
        "store.store_name": "ONLINEストア17",
        "store.channel": "online",
-       "product.category": "家電",
-       "customer.membership_rank": "gold",
-       "sales_amount": 9000
+       "store.region": null,
+       "customer.membership_rank": "bronze",
+       "product.product_name": "つばさ ボトムス 0100",
+       "product.category": "衣料",
+       "promotion_applied.promotion_applied": false,
+       "order_status.order_status": "completed",
+       "sales_amount": 2500
       }
      }
     ],
@@ -1584,17 +2675,21 @@
     "impact": "high",
     "effort": "medium",
     "source_tables": [
+     "raw.order_items",
      "raw.orders",
-     "raw.order_items"
+     "raw.stores",
+     "raw.customers",
+     "raw.products",
+     "raw.promotions"
     ]
    }
   ],
   "metrics": [
    {
-    "name": "store_daily_sales",
-    "label": "店舗別日次売上金額",
-    "question": "店舗ごとの売上を見たい。店舗別の売上金額を日別で見たい。キャンセルされた注文は除いて、税抜で。",
-    "framed_question": "キャンセルを除いた税抜の売上金額は、店舗別・日別でいくらか?",
+    "name": "sales_amount_by_store",
+    "label": "店舗別売上金額(税抜)",
+    "question": "店舗ごとの売上を見たい",
+    "framed_question": "店舗別の売上金額(税抜)はいくらか(日別・チャネル別・地方別・商品カテゴリ別・会員ランク別・プロモーション適用ありなし別も)",
     "type": "simple",
     "event": "customer_orders_product",
     "measure": "sales_amount",
@@ -1602,7 +2697,7 @@
     "denominator": null,
     "expr": null,
     "window": null,
-    "filter": "キャンセルされた注文を除く(返品ありは含む)",
+    "filter": "キャンセルされた注文を除く（返品ありは当面含める）",
     "filters": [
      {
       "ref": "order_status.order_status",
@@ -1613,39 +2708,34 @@
      }
     ],
     "group_by": [
-     "ordered_at.day",
      "store.store_name",
      "store.channel",
+     "store.region",
+     "store.prefecture",
      "product.category",
      "customer.membership_rank",
-     "promotion.promotion_name"
+     "promotion_applied.promotion_applied",
+     "ordered_at.day"
     ],
-    "status": "confirmed"
+    "status": "draft"
    }
   ],
   "gaps": [
    {
     "kind": "data_unavailable",
-    "description": "顧客の年収別の切り口を希望されたが、ソースに年収の列がない",
+    "description": "顧客の年収別に売上を見たいが、顧客マスタに年収の列がない",
     "event": "customer_orders_product",
     "w": "who",
     "related": "customer.annual_income"
    },
    {
     "kind": "deferred",
-    "description": "具体例の店舗はモデラーの見積もり（「渋谷店」はソースに無いため実在の ONLINEストア17 に差し替え、商品名「ワイヤレスイヤホン」は記録していない）",
+    "description": "返品ありの注文(returned)を売上に含めるかは未決定。「注文した時点で数える」考え方のため、当面は含める（モデラーの見積もり・要確認）",
     "event": "customer_orders_product",
-    "w": "where",
-    "related": "store.store_name"
-   },
-   {
-    "kind": "deferred",
-    "description": "工数（medium）はモデラーの見積もり",
-    "event": "customer_orders_product",
-    "w": null,
-    "related": null
+    "w": "how",
+    "related": "order_status.order_status"
    }
   ],
-  "finalized_at": "2026-10-10T10:56:52.208937Z"
+  "finalized_at": "2026-10-16T15:20:13.924928Z"
  }
 }

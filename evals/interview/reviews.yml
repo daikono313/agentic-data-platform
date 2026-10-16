@@ -13,6 +13,7 @@ persona: |
   - 優先度は高い。
 checks:
   - finalizable
+  - min_examples: 2
   - fact_source: raw.reviews
   - has_w: [what, when]
   - metric_group_by_columns: [raw.products.category, raw.reviews.reviewed_at]

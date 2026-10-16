@@ -12,6 +12,7 @@ persona: |
   - 優先度は中くらい。
 checks:
   - finalizable
+  - min_examples: 2
   - has_w: [what, when]
   - metric_type: ratio
   - min_events: 1

@@ -10,6 +10,7 @@ persona: |
   - 優先度は中くらい。
 checks:
   - finalizable
+  - min_examples: 2
   - min_events: 2
   - shared_dimensions: [what, when]
   - has_hierarchy: product

@@ -13,6 +13,7 @@ persona: |
   - 優先度とインパクトは高い。
 checks:
   - finalizable
+  - min_examples: 2
   - has_w: [what, when, where]
   - asks_irregular_cases
   - metric_filter: {column: raw.inventory.movement_type, includes: [receipt, transfer_out, disposal], excludes: [count]}
