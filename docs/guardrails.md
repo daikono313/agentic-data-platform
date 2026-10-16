@@ -33,7 +33,7 @@
 | エラーメッセージからの情報漏れ | DuckDB の例外は定型文に置き換えて返す | 同上 |
 | 整備済みの fact の一覧で値を出さない（#113） | `list_facts`（インタビューのエージェントだけ。取り込みのエージェントには渡さない）は dbt の `manifest.json` / `semantic_manifest.json` のメタデータ（fact の名前・説明・源泉・粒度・列名と説明・結合できる entity・指標の定義）だけを返し、DuckDB の行は読まない | `tests/catalog/test_catalog.py` |
 | 行の実例を出しすぎない（#80） | `sample_rows` はインタビューのエージェントだけに渡す（取り込みのエージェントには渡さない）。1 テーブル・最大 5 行、1 つの値は 100 文字まで。個人情報の列と、自由記述・秘密情報と推定する列（memo・comment・token など）は値を伏せ、それらの列での絞り込み（値の当て推量）は受け付けない。絞り込みの値はパラメータで渡す（SQL に埋め込まない）。列名から推定できない自由記述の列は伏せられないので、実データでは sources の `meta: {pii: true}` で指定する（O10） | `tests/catalog/test_catalog.py` |
-| 個人情報の値を出さない（v3、#81） | 個人情報の列（sources の `meta: {pii: true}`、または列名からの推定: 顧客名・氏名・メール・電話・住所・郵便番号・生年月日など）は、プロファイル（画面）とソースカタログの tool（インタビュー・取り込みのエージェント）で件数だけを出し、値（最小・最大・よく出る値・分布・`sample_rows` の行の値）は出さない。生成するテストの `accepted_values` とチャートの系列数の判定にも使わない。`meta: {pii: false}` で推定を外せる。生成・修復・取り込みのエージェントの `mf query` / `dbt` と、PR に載る画像・dim では伏せない（ADR 0005 の「影響」）。方針は承認済み（ADR 0005）。伏せない経路の制限は O10 | `tests/catalog/test_catalog.py`、`SourceProfile.test.tsx` |
+| 個人情報の値を出さない（v3、#81） | 個人情報の列（sources の `meta: {pii: true}`、または列名からの推定: 顧客名・氏名・メール・電話・住所・郵便番号・生年月日など）は、プロファイル（画面）とソースカタログの tool（インタビュー・取り込みのエージェント）で件数だけを出し、値（最小・最大・よく出る値・分布・`sample_rows` の行の値）は出さない。生成するテストの `accepted_values` とチャートの系列数の判定にも使わない。`meta: {pii: false}` で推定を外せる。生成・修復・取り込みのエージェントの `mf query` / `dbt` と、PR に載る画像・dim では伏せない（ADR 0005 の「結果」）。方針は承認済み（ADR 0005）。伏せない経路の制限は O10 | `tests/catalog/test_catalog.py`、`SourceProfile.test.tsx` |
 | 画面からの参照（源泉のプロファイル、#62） | `GET /sources/{table}/profile` もエージェントと同じ Catalog（同じ識別子・スキーマの制限、読み取り専用）を通す。DuckDB の例外は定型文の 503。NULL 以外の値がすべて違う列（ID・メールアドレスなど）は、画面で上位の値を出さない | `tests/test_datasets.py`、`SourceProfile.test.tsx` |
 
 ## 4. 生成エージェント（自己修復）
