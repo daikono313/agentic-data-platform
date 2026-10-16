@@ -2,7 +2,7 @@
 
 [design-doc.md](../design-doc.md) の確定後に、その決定（Resolved issues）を変える、または新しく重要な決定をするときに書く。書き方は [architecture-decision-record](https://github.com/architecture-decision-record/architecture-decision-record) のベストプラクティス（Nygard と MADR のテンプレート）に沿う。
 
-ADR は人間の決定の記録。誰が書き・承認し、design-doc をどう更新するかは certificate の C9・T3 が正本。Claude Code で書く・直すときの手順（どんなときに使うかを含む）は adr skill（`.claude/skills/adr/SKILL.md`）にある。
+ADR は人間の決定の記録。誰が書き・承認し、design-doc をどう更新するかは certificate の C9・T3 が正本。Claude Code で書く・直すときの手順は adr skill（`.claude/skills/adr/SKILL.md`）にある（いつ書くかの正本はこの README）。
 
 ## 書くとき・書かないとき
 

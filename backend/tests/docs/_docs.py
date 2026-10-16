@@ -14,6 +14,7 @@ DOC_GLOBS = (
     "*/README.md",
     "docs/**/*.md",
     ".github/*.md",
+    ".claude/skills/**/*.md",
 )
 
 _FENCE = re.compile(r"^```[^\n]*\n(.*?)^```[^\n]*$", flags=re.MULTILINE | re.DOTALL)
