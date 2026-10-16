@@ -205,7 +205,7 @@ def drafts(store: Store, out_dir: Path) -> list[Path]:
         state = store.load_session(session_id)
         request = state.beam.request if state else ""
         categories = sorted({c for r in items for c in json.loads(r.categories_json)})
-        checks: list[Any] = ["finalizable"]
+        checks: list[Any] = ["finalizable", {"min_examples": 2}]  # 全シナリオ共通の基準（#164）
         for c in categories:
             checks += [x for x in CATEGORY_CHECKS.get(c) or [] if x not in checks]
         comments = [f"{CATEGORIES.get(c, c)}" for c in categories]

@@ -8,6 +8,11 @@
    "detail": ""
   },
   {
+   "name": "min_examples: 2",
+   "passed": true,
+   "detail": "[2]"
+  },
+  {
    "name": "has_w: ['who', 'what', 'when', 'where']",
    "passed": true,
    "detail": "['how', 'what', 'when', 'where', 'who', 'why']"
@@ -16,11 +21,6 @@
    "name": "has_gap: data_unavailable",
    "passed": true,
    "detail": "['data_unavailable', 'deferred']"
-  },
-  {
-   "name": "min_examples: 1",
-   "passed": true,
-   "detail": "[2]"
   },
   {
    "name": "metric_filter: {'column': 'raw.orders.order_status', 'excludes': ['cancelled']}",

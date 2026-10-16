@@ -8,6 +8,11 @@
    "detail": ""
   },
   {
+   "name": "min_examples: 2",
+   "passed": true,
+   "detail": "[2]"
+  },
+  {
    "name": "metric_aggregation: count_distinct",
    "passed": true,
    "detail": "['customer_count']"

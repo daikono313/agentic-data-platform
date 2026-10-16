@@ -8,6 +8,11 @@
    "detail": ""
   },
   {
+   "name": "min_examples: 2",
+   "passed": true,
+   "detail": "[2, 2]"
+  },
+  {
    "name": "has_w: ['what', 'when']",
    "passed": true,
    "detail": "['how', 'what', 'when', 'why']"
