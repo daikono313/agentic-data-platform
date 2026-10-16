@@ -11,7 +11,7 @@ from adp.generation import generate_models
 from adp.generation.guard import WorkspaceGuard
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer
-from adp.llm import AgentEvent, AgentSpec, LLMSettings, TextDelta, TurnResult
+from adp.llm import AgentEvent, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from tests.generation.test_dbt_codegen import DBT, FIXTURES, _warehouse_copy
 
 
@@ -128,6 +128,24 @@ class FixingRunner:
         self.fix(len(self.models), spec)
         yield TextDelta(f"修正 {len(self.models)}")
         yield TurnResult("s", spec.model, False, 0.0, 0.0)
+
+
+class ChattyRunner:
+    """tool 呼び出しをはさんで本文を書く偽エージェント。"""
+
+    async def run(
+        self, prompt: str, spec: AgentSpec, resume: str | None = None
+    ) -> AsyncIterator[AgentEvent]:
+        yield TextDelta("モデルを読みます。")
+        yield ToolCall("Read", {})
+        yield TextDelta("直しました。")
+        yield TurnResult("s", spec.model, True, 0.0, 0.0, error="上限")
+
+
+async def test_agent_text_across_tool_calls_is_separated(tmp_path: Path) -> None:
+    # tool 呼び出しをまたいだ本文がつながらない（#161）
+    text, _ = await Repairer(ChattyRunner(), LLMSettings(), DBT.parent)._agent(tmp_path, "m", "p")
+    assert text == "モデルを読みます。\n\n直しました。\n\n（エージェントのエラー: 上限）"
 
 
 @pytest.fixture

@@ -7,6 +7,8 @@ from adp.interview.wording import (
     has_example_values,
     hidden_confirmation,
     is_example_confirmation,
+    normalize,
+    prose_sentences,
 )
 
 
@@ -252,3 +254,30 @@ def test_quoted_question_matches_question_loosely() -> None:
     text = "「月ごとの 売上はいくらか」という言い換えで合っているか、上の選択肢からお答えください。"
     question = "『月ごとの売上はいくらか』で合っていますか？"
     assert clean_reply(text, question=question) == ("", [text])
+
+
+def test_quoted_question_keeps_decimals() -> None:
+    """引用した問いの値が質問文と違えば（1.5 と 15）、見えていない問いとして残す（#161）。"""
+    text = "「単価は 1.5 倍か」という言い換えで合っているか、上の選択肢からお答えください。"
+    assert clean_reply(text, question="『単価は 15 倍か』で合っていますか？") == (text, [])
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "same"),
+    [
+        ("返品は（3,699 件）です。", "返品は(3,699件)です", True),  # 全角・半角、空白、句点
+        ("**売上**は `amount` です。", "売上は amount です", True),  # 強調・コード
+        ("ＡＢＣ１２３", "ABC123", True),  # NFKC
+        ("単価は 1.5 倍です。", "単価は 15 倍です。", False),  # 小数点は残す
+        ("1,000 円です。", "1000 円です。", False),  # 桁区切りも残す
+    ],
+)
+def test_normalize(a: str, b: str, same: bool) -> None:
+    assert (normalize(a) == normalize(b)) is same
+
+
+def test_prose_sentences_skip_structure_and_code() -> None:
+    text = (
+        "最初の文です。「引用。」の文です。\n- リストの行です。\n```\nコードです。\n```\n最後です。"
+    )
+    assert prose_sentences(text) == ["最初の文です", "引用の文です", "最後です"]

@@ -24,6 +24,8 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from collections.abc import Iterator
 
 _NOT_WORD = r"(?<![一-龥ァ-ヶー々])"
 _TARGET = r"(質問|選択肢|ボタン|問い)"
@@ -72,8 +74,14 @@ _QUOTED_QUESTION = re.compile(r"「([^」]*?)[？?]?」")
 """引用した部分。問い（「か」で終わる引用）を引用した文は、それが質問文に無ければ、位置の言葉や
 締めの言い方があっても取り除かない（中身がユーザーに見えなくなるため。#170）。数えられる問いか
 （_REFRAMED）は問わない: こちらは文を消してよいかの判定で、言い換えの確認に限らないため。"""
-_LOOSE = re.compile(r"[\s、，『』「」]")
-_SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
+_STRUCTURE_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>|```)")
+
+
+def is_structure_line(line: str) -> bool:
+    """表・リスト・見出し・引用・コードの区切りの行か（文の単位で手を入れない）。"""
+    return bool(_STRUCTURE_LINE.match(line))
+
+
 _EXAMPLE = r"(?<!事)例(?!外|え)[^。？?]{0,20}"
 _EXAMPLE_CONFIRM = re.compile(
     _EXAMPLE + r"((記録して|使って|残して|にして|で)(よい|良い|いい|よろしい)|合って)"
@@ -159,9 +167,9 @@ def hidden_confirmation(question: str, assistant: str, user: str = "") -> str | 
 
 def _quotes_hidden_question(sentence: str, question: str) -> bool:
     """質問文に無い問いを引用しているか。"""
-    shown = _LOOSE.sub("", question)
+    shown = normalize(question)
     return any(
-        q.endswith("か") and _LOOSE.sub("", q) not in shown
+        q.endswith("か") and normalize(q) not in shown
         for q in (m.group(1).strip() for m in _QUOTED_QUESTION.finditer(sentence))
     )
 
@@ -171,11 +179,8 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     戻り値は（本文, 取り除いた文）。"""
     removed: list[str] = []
     lines: list[str] = []
-    in_code = False
-    for line in text.split("\n"):
-        if line.lstrip().startswith("```"):
-            in_code = not in_code
-        if in_code or line.lstrip().startswith("```") or _SKIP_LINE.match(line):
+    for line, prose in _lines(text):
+        if not prose:
             lines.append(line)
             continue
         kept = []
@@ -195,3 +200,32 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     if not out and not question:  # 質問が無いのに全部消えるなら、発言が空にならないよう残す
         return text, []
     return out, removed
+
+
+_PUNCT = re.compile(r"[\s、。!！?？「」『』（）()*`]|[.,](?!\d)")
+"""比べるときに無視する文字。小数点・桁区切り（数字の前の . ,）は残す（1.5 と 15 を分ける）。"""
+
+
+def normalize(text: str) -> str:
+    """同じ文かを比べるための形（全角・半角、空白・句読点・括弧・強調の違いを無視する）。"""
+    return _PUNCT.sub("", unicodedata.normalize("NFKC", text))
+
+
+def _lines(text: str) -> Iterator[tuple[str, bool]]:
+    """行と、地の文の行か（表・リスト・見出し・引用・コードブロックの行は False）。"""
+    in_code = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        yield line, not in_code and not is_structure_line(line)
+
+
+def sentences(text: str) -> list[str]:
+    """文に分ける（行と、「」の外の句点・疑問符で切る）。"""
+    return [x for line in text.split("\n") for x in _SENTENCE.findall(line) if x.strip()]
+
+
+def prose_sentences(text: str) -> list[str]:
+    """地の文（表・リスト・見出し・引用・コードの行を除く）の文を、比べる形（`normalize`）にしたもの。"""
+    found = (normalize(x) for line, prose in _lines(text) if prose for x in sentences(line))
+    return [x for x in found if x]

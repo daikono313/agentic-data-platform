@@ -49,6 +49,9 @@ from adp.interview.wording import (
     hidden_confirmation,
     is_closing_sentence,
     is_position_sentence,
+    normalize,
+    prose_sentences,
+    sentences,
 )
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
@@ -357,7 +360,13 @@ def _fact_source(beam: BeamModel, table: str) -> tuple[bool, str]:
 
 def _sentences(m: Any) -> list[str]:
     """発言の文と、本文から取り除いた文（モデルの振る舞いとして数える）。"""
-    return re.split(r"(?<=[。！？!?\n])", m.text) + list(getattr(m, "removed", None) or [])
+    return sentences(m.text) + list(getattr(m, "removed", None) or [])
+
+
+def _repeated_text(m: Any) -> bool:
+    """画面の本文に同じ地の文（8 文字以上）が 2 回あるか（書き直し。#161）。"""
+    keys = [x for x in prose_sentences(m.text) if len(x) >= 8]
+    return len(keys) != len(set(keys))
 
 
 def _position_words(m: Any) -> bool:
@@ -368,13 +377,6 @@ def _position_words(m: Any) -> bool:
 def _closing_phrase(m: Any) -> bool:
     """質問を出した発言に、回答を促すだけの締めの一言があったか（#158）。"""
     return bool(getattr(m, "question", None)) and any(is_closing_sentence(x) for x in _sentences(m))
-
-
-_PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()]")
-
-
-def _normalize(text: str) -> str:
-    return _PUNCT.sub("", text)
 
 
 # 回答者（データの専門家ではない）にそのまま使うとわかりにくい言葉
@@ -501,7 +503,7 @@ def _repeated_questions(messages: list[Any]) -> list[str]:
         n += 1
         asked_back = "？" in previous_user or "?" in previous_user
         for q in _QUESTION.findall(_shown(m)):
-            normalized = _normalize(q)
+            normalized = normalize(q)
             if len(normalized) >= 8:
                 exempt = asked_back or any(w in q for w in _CONFIRM_WORDS)
                 questions.append((n, normalized, q.strip(), exempt))
@@ -529,6 +531,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "repeated_questions": len(_repeated_questions(messages)),
         "position_words": sum(1 for m in assistant if _position_words(m)),
         "closing_phrases": sum(1 for m in assistant if _closing_phrase(m)),
+        "repeated_text": sum(1 for m in assistant if _repeated_text(m)),
         "effort_questions": len(_questions_matching(messages, _EFFORT)),
     }
 
@@ -545,7 +548,7 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
     repeated = [
         m.text[:60]
         for m in assistant
-        if m.question and _normalize(m.question) and _normalize(m.question) in _normalize(m.text)
+        if m.question and normalize(m.question) and normalize(m.question) in normalize(m.text)
     ]
     jargon = _unexplained_jargon(messages)
     again = _repeated_questions(messages)

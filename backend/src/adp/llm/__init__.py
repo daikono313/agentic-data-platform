@@ -9,6 +9,7 @@ from adp.llm.runner import (
     TextDelta,
     ToolCall,
     TurnResult,
+    join_chunks,
 )
 from adp.llm.settings import LLMSettings, load_settings
 from adp.llm.tools import tool_text
@@ -24,5 +25,6 @@ __all__ = [
     "ToolCall",
     "TurnResult",
     "load_settings",
+    "join_chunks",
     "tool_text",
 ]
