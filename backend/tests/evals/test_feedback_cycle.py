@@ -466,6 +466,9 @@ def test_modeling_checks() -> None:
     assert passed({"story_type": "recurring"})
     event.examples = [EventExample(values={}), EventExample(values={})]
     assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
+    assert not passed("metric_purpose")
+    beam.metrics[0].purpose = "販促の計画に使う"
+    assert passed("metric_purpose")
 
     # 共通ディメンション: 2 つ目の出来事が同じ名前の What・When を持つときだけ
     assert not passed({"shared_dimensions": ["what"]})

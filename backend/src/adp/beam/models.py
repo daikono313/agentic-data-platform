@@ -471,6 +471,10 @@ class MetricRequest(_Base):
     label: str
     question: str = Field(description="ユーザーの元の言葉")
     framed_question: str = Field(description="How many の形に言い換えた問い")
+    purpose: str | None = Field(
+        default=None,
+        description="この数字を見て何を判断・行動するか（目的を聞いたときのユーザーの答え）",
+    )
     type: MetricType = MetricType.SIMPLE
     event: Identifier
     measure: Identifier | None = Field(default=None, description="simple / cumulative のとき")

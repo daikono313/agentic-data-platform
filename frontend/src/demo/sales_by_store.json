@@ -440,6 +440,7 @@
         "label": "売上金額",
         "question": "店舗ごとの売上を見たい",
         "framed_question": "日別・店舗別の売上金額（税抜・値引後）はいくらか",
+        "purpose": null,
         "type": "simple",
         "event": "customer_orders_product",
         "measure": "sales_amount",

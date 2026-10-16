@@ -139,6 +139,11 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             any(g.kind == GapKind(arg) for g in beam.gaps),
             str([g.kind.value for g in beam.gaps]),
         ),
+        # 聞いた目的を指標に記録した（#159）
+        "metric_purpose": lambda: (
+            any(m.purpose for m in beam.metrics),
+            str([m.purpose for m in beam.metrics]),
+        ),
         "metric_type": lambda: (
             any(m.type == MetricType(arg) for m in beam.metrics),
             str([m.type.value for m in beam.metrics]),

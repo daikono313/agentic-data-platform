@@ -302,6 +302,10 @@ export interface MetricRequest {
    * How many の形に言い換えた問い
    */
   framed_question: string;
+  /**
+   * この数字を見て何を判断・行動するか（目的を聞いたときのユーザーの答え）
+   */
+  purpose?: string | null;
   type?: MetricType;
   event: string;
   /**
@@ -353,7 +357,7 @@ export interface MetricFilter {
   /**
    * @minItems 1
    */
-  values: [string, ...string[]];
+  values: [string | number | number | boolean, ...(string | number | number | boolean)[]];
 }
 /**
  * 未解決事項。PR 本文に書かれ、data_unavailable は issue も起票される。

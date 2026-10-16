@@ -19,3 +19,4 @@ checks:
   - has_hierarchy: product
   - min_examples: 2
   - asks_purpose
+  - metric_purpose

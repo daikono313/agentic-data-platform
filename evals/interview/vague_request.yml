@@ -16,3 +16,4 @@ checks:
   - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
   - metric_group_by_columns: [raw.customers.membership_rank, raw.customers.region, raw.orders.ordered_at]
   - asks_purpose
+  - metric_purpose

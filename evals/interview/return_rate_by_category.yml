@@ -20,3 +20,4 @@ checks:
   - ratio_of: {numerator: raw.returns.quantity, denominator: raw.order_items.quantity}
   - metric_group_by_columns: [raw.products.category, raw.returns.return_reason]
   - asks_purpose
+  - metric_purpose

@@ -227,7 +227,7 @@ def metric_definitions(
         base: dict[str, Any] = {
             "name": m.name,
             "label": m.label,
-            "description": m.framed_question,
+            "description": m.framed_question + (f"\n目的: {m.purpose}" if m.purpose else ""),
         }
         flt = _filters(event, fact, m)
         if m.type in (MetricType.SIMPLE, MetricType.CUMULATIVE):

@@ -18,3 +18,4 @@ checks:
   - has_w: [what, when]
   - metric_group_by_columns: [raw.products.category, raw.reviews.reviewed_at]
   - asks_purpose
+  - metric_purpose

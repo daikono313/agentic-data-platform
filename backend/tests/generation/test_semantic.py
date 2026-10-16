@@ -198,3 +198,13 @@ def test_semi_additive_measure_takes_latest_date(setup) -> None:  # type: ignore
     beam.metrics += [MetricRequest.model_validate(common | {"name": "qty", "measure": "quantity"})]
     with pytest.raises(SemanticError, match="agg_time"):
         metric_definitions(beam, design, fact)
+
+
+def test_purpose_goes_to_metric_description(setup) -> None:  # type: ignore[no-untyped-def]
+    """聞いた目的を指標の説明に残す（#159）。無ければ言い換えた問いだけ。"""
+    beam, design, _, fact = setup
+    before = metric_definitions(beam, design, fact).in_model[0]["description"]
+    assert before == beam.metrics[0].framed_question
+    beam.metrics[0].purpose = "売上の伸びない店舗に販促をかける"
+    after = metric_definitions(beam, design, fact).in_model[0]["description"]
+    assert after == f"{before}\n目的: 売上の伸びない店舗に販促をかける"
