@@ -20,9 +20,9 @@
 （「〜はいくつか」。#165）が要る。tool の結果や記録した内容はユーザーに見えないので、中身を書かずに
 「この 2 件で」「この言い換えで」と聞いても確かめられない。
 
-1 ターンの本文は、tool 呼び出しをまたぐとかたまりに分かれる（`join_chunks`）。かたまりは改行で
-区切り、前のかたまりにある文は後のかたまりから取り除く（present_choices がエラーで呼び直しに
-なると、同じ前置きを書き直すことがある。#161）。
+1 ターンの本文は、tool 呼び出しをまたぐとかたまりに分かれる（`join_chunks`）。かたまりは空行で
+区切り、同じ書き出しで書き直したかたまりは後のものだけを残す（present_choices がエラーで呼び直しに
+なったときなどに、モデルが同じ前置きを書き直すことがある。#161）。
 """
 
 from __future__ import annotations
@@ -77,8 +77,14 @@ _QUOTED_QUESTION = re.compile(r"「([^」]*?)[？?]?」")
 """引用した部分。問い（「か」で終わる引用）を引用した文は、それが質問文に無ければ、位置の言葉や
 締めの言い方があっても取り除かない（中身がユーザーに見えなくなるため。#170）。数えられる問いか
 （_REFRAMED）は問わない: こちらは文を消してよいかの判定で、言い換えの確認に限らないため。"""
-_LOOSE = re.compile(r"[\s、，『』「」]")
-_SKIP_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>)")
+_STRUCTURE_LINE = re.compile(r"^\s*(\||[-*+] |\d+[.)] |#|>|```)")
+
+
+def is_structure_line(line: str) -> bool:
+    """表・リスト・見出し・引用・コードの区切りの行か（文の単位で手を入れない）。"""
+    return bool(_STRUCTURE_LINE.match(line))
+
+
 _EXAMPLE = r"(?<!事)例(?!外|え)[^。？?]{0,20}"
 _EXAMPLE_CONFIRM = re.compile(
     _EXAMPLE + r"((記録して|使って|残して|にして|で)(よい|良い|いい|よろしい)|合って)"
@@ -164,9 +170,9 @@ def hidden_confirmation(question: str, assistant: str, user: str = "") -> str | 
 
 def _quotes_hidden_question(sentence: str, question: str) -> bool:
     """質問文に無い問いを引用しているか。"""
-    shown = _LOOSE.sub("", question)
+    shown = normalize(question)
     return any(
-        q.endswith("か") and _LOOSE.sub("", q) not in shown
+        q.endswith("か") and normalize(q) not in shown
         for q in (m.group(1).strip() for m in _QUOTED_QUESTION.finditer(sentence))
     )
 
@@ -180,7 +186,7 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_code = not in_code
-        if in_code or line.lstrip().startswith("```") or _SKIP_LINE.match(line):
+        if in_code or is_structure_line(line):
             lines.append(line)
             continue
         kept = []
@@ -202,41 +208,37 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     return out, removed
 
 
-_KEY_DROP = re.compile(r"[\s、。，．,.!！?？「」『』()*`]")
+_PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()*`]")
 
 
-def _sentence_key(sentence: str) -> str:
+def normalize(text: str) -> str:
     """同じ文かを比べるための形（全角・半角、空白・句読点・括弧・強調の違いを無視する）。"""
-    return _KEY_DROP.sub("", unicodedata.normalize("NFKC", sentence))
+    return _PUNCT.sub("", unicodedata.normalize("NFKC", text))
+
+
+def _prose_sentences(chunk: str) -> list[str]:
+    """かたまりの地の文（表・リスト・見出し・引用・コードの行を除く）を、比べる形にしたもの。"""
+    sentences: list[str] = []
+    in_code = False
+    for line in chunk.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        if not in_code and not is_structure_line(line):
+            sentences += [normalize(x) for x in _SENTENCE.findall(line)]
+    return [x for x in sentences if x]
 
 
 def join_chunks(chunks: list[str]) -> str:
-    """tool 呼び出しで分かれた本文のかたまりを改行でつなぐ。前のかたまりにある文（8 文字以上）は
-    後のかたまりから取り除く。表とコードブロックの行には触れない（一部だけ消すと崩れるため）。"""
-    seen: set[str] = set()
-    out: list[str] = []
-    for chunk in chunks:
-        keys: set[str] = set()
-        lines: list[str] = []
-        in_code = dropped = False
-        for line in chunk.split("\n"):
-            if line.lstrip().startswith("```"):
-                in_code = not in_code
-            if in_code or line.lstrip().startswith(("```", "|")):
-                lines.append(line)
-                continue
-            kept = []
-            for sentence in _SENTENCE.findall(line):
-                key = _sentence_key(sentence)
-                if len(key) >= 8 and key in seen:
-                    dropped = True
-                    continue
-                keys.add(key)
-                kept.append(sentence)
-            joined = "".join(kept)
-            lines.append(joined if joined == line else joined.rstrip())
-        seen |= keys
-        text = "\n".join(lines)
-        if text := (re.sub(r"\n{3,}", "\n\n", text) if dropped else text).strip():
-            out.append(text)
-    return "\n".join(out)
+    """tool 呼び出しで分かれた本文のかたまりを空行でつなぐ。後のかたまりの書き出し（最初の 2 つの
+    地の文のうち 8 文字以上のもの）が前のかたまりの地の文にあれば、書き直したものとみなし、前の
+    かたまりを捨てる（語尾などを少し変えて書き直すことが多く、文の単位では消しきれないため。後の
+    かたまりが最後の質問に対応する）。"""
+    kept: list[str] = []
+    for chunk in (c.strip() for c in chunks):
+        if not chunk:
+            continue
+        opening = [x for x in _prose_sentences(chunk)[:2] if len(x) >= 8]
+        if opening:
+            kept = [c for c in kept if not set(opening) & set(_prose_sentences(c))]
+        kept.append(chunk)
+    return "\n\n".join(kept)

@@ -25,7 +25,7 @@ from adp.generation.guard import (
     allowed_patterns,
 )
 from adp.generation.semantic import MetricQuery
-from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, TurnResult
+from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
 from adp.warehouse import tool_env
 
@@ -252,6 +252,8 @@ class Repairer:
             async for event in self.runner.run(prompt, spec):
                 if isinstance(event, TextDelta):
                     text.append(event.text)
+                elif isinstance(event, ToolCall) and text and not text[-1].endswith("\n"):
+                    text.append("\n")  # tool 呼び出しをまたいだ本文がつながらないように（#161）
                 elif isinstance(event, TurnResult) and event.is_error:
                     text.append(f"\n（エージェントのエラー: {event.error}）")
         except Exception as e:  # CLI の異常終了など。修正の試行は失敗として続ける

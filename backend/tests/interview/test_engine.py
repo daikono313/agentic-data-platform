@@ -109,7 +109,7 @@ async def test_successful_edit_reports_remaining_issues() -> None:
 
 
 async def test_text_across_tool_calls_is_separated_and_not_repeated() -> None:
-    # tool 呼び出しをまたいだ本文は改行で区切り、書き直した文は 1 回だけ残す（#161）
+    # tool 呼び出しをまたいだ本文は空行で区切り、書き直したかたまりは後のものだけを残す（#161）
     runner = ScriptedRunner(
         [
             [
@@ -124,8 +124,17 @@ async def test_text_across_tool_calls_is_separated_and_not_repeated() -> None:
     state = new_state("売上")
     events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
     streamed = "".join(e.text for e in events if isinstance(e, TextDelta))
-    assert streamed == "- 数量: 54 個\n次のように整理しました。\n次のように整理しました。続けます。"
-    assert state.messages[-1].text == "- 数量: 54 個\n次のように整理しました。\n続けます。"
+    assert (
+        streamed
+        == "- 数量: 54 個\n\n次のように整理しました。\n\n次のように整理しました。続けます。"
+    )
+    assert state.messages[-1].text == "- 数量: 54 個\n\n次のように整理しました。続けます。"
+
+
+async def test_tool_call_first_does_not_stream_separator() -> None:
+    runner = ScriptedRunner([[("set_overview", {"name": "sales", "title": "売上"}), "本文です。"]])
+    events = await collect(Interviewer(runner, LLMSettings()), new_state("売上"), "売上")
+    assert [e.text for e in events if isinstance(e, TextDelta)] == ["本文です。"]
 
 
 async def test_finalize_requires_complete_beam() -> None:

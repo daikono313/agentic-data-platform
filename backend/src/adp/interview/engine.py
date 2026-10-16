@@ -120,7 +120,7 @@ class Interviewer:
         seen = "\n".join([previous.text, previous.question or ""] if previous else [])
 
         def shown() -> tuple[str, str]:
-            return seen + "\n" + "\n".join(reply), text
+            return seen + "\n" + "\n\n".join(reply), text
 
         result: TurnResult | None = None
         try:
@@ -130,8 +130,8 @@ class Interviewer:
                 for change in snapshot.diff(state):
                     yield change
                 if isinstance(event, TextDelta):
-                    if not reply[-1] and any(reply):  # tool 呼び出しの後の本文は改行で区切る
-                        yield TextDelta("\n")
+                    if not reply[-1] and any(reply):  # tool 呼び出しの後の本文は空行で区切る
+                        yield TextDelta("\n\n")
                     reply[-1] += event.text
                     yield event
                 elif isinstance(event, ToolCall):
