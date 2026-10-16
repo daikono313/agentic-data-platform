@@ -119,11 +119,8 @@ def _metrics_events(beam: BeamModel) -> list[tuple[Any, Any]]:
 
 def _requested_metrics(beam: BeamModel) -> list[Any]:
     """要求した指標（ほかの指標の分子・分母・式に使われていないもの。比率なら比率の指標）。"""
-    used = {n for m in beam.metrics for n in (m.numerator, m.denominator) if n}
-    exprs = " ".join(m.expr or "" for m in beam.metrics)
-    return [
-        m for m in beam.metrics if m.name not in used and not re.search(rf"\b{m.name}\b", exprs)
-    ] or beam.metrics
+    used = {n for m in beam.metrics for n in m.inputs}
+    return [m for m in beam.metrics if m.name not in used] or beam.metrics
 
 
 def _metric_event_list(beam: BeamModel) -> list[Any]:
