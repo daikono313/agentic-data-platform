@@ -182,8 +182,9 @@ async def test_example_confirmation_needs_values_the_user_can_see() -> None:
     state = new_state("売上")
     first = await collect(interviewer, state, "売上")
     assert runner.tool_results[0].get("is_error") is True
-    # 中身を本文に書かせるときも、本文で画面の位置を指さないよう伝える（#168）
-    assert "画面の位置" in runner.tool_results[0]["content"][0]["text"]
+    # 具体例の値も question に書かせ、具体例の形の例を示す（#170）
+    error = runner.tool_results[0]["content"][0]["text"]
+    assert "question の中に" in error and "具体例として記録してよいですか" in error
     done = first[-1]
     assert isinstance(done, TurnDone) and done.message.question is None
     assert not any(isinstance(e, ChoicesPresented) for e in first)
