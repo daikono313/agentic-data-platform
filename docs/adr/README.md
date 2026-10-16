@@ -2,8 +2,7 @@
 
 [design-doc.md](../design-doc.md) の確定後に、その決定（Resolved issues）を変える、または新しく重要な決定をするときに書く。書き方は [architecture-decision-record](https://github.com/architecture-decision-record/architecture-decision-record) のベストプラクティス（Nygard と MADR のテンプレート）に沿う。
 
-- **ADR は人間の決定の記録。** AI が `Proposed` で下書きしてよいが、`Accepted` にするのはオーナー（certificate の T3）。
-- 書いたら、design-doc の Resolved issues / Open issues も更新する。
+ADR は人間の決定の記録。誰が書き・承認し、design-doc をどう更新するかは certificate の C9・T3 が正本。
 
 ## 書くとき・書かないとき
 
@@ -26,12 +25,14 @@
 Proposed → Accepted → Superseded by NNNN / Deprecated
 ```
 
-- `Proposed`: 下書き。AI が書いてよい。
-- `Accepted`: オーナーが承認した。承認の前に、問題がはっきり書かれているか、選択肢を比べたか、トレードオフと守らせ方が書かれているかを確かめる。
+- `Proposed`: 下書き。AI が書いてよい（certificate の C9）。
+- `Accepted`: オーナーが承認した（T3）。承認の前に、問題がはっきり書かれているか、選択肢を比べたか、トレードオフと守らせ方が書かれているかを確かめる。
 - `Superseded by NNNN`: 決定を変えた。**新しい ADR を書き**、古い ADR のステータスをこれにする（本文は残す）。
 - `Deprecated`: 決定が要らなくなった（機能を消したなど）。理由を「追記」に書く。
 
 Accepted の後は、**本文（背景・選択肢・決定）を書き換えない。** 決定の後にわかったこと（実際に使った結果、バージョンを上げた、後の ADR が一部を変えた、など）は、末尾の「追記」に日付を付けて足す。決定そのものを変えるときは、新しい ADR にする。
+
+例外: テンプレートを変えたときに、既存の ADR を新しい構成に移すこと（2026-10-16 の 0001〜0005 など）。決定の中身は変えず、オーナーの承認を得て、何を移し・何を補ったかを追記に書く。承認の日付・承認した人の記録が無い既存の ADR は、ステータスを `Accepted` のままにする（補わない）。
 
 ## 見直し
 

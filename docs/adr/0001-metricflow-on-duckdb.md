@@ -29,7 +29,7 @@ design-doc R12 で、Semantic Layer は OSS の MetricFlow を latest spec で�
 
 ### 案 A: latest spec + DuckDB、取得は `mf` CLI（採用）
 
-- 良い点: R12 に沿う。必要な指標の型が DuckDB で動く。CLI は利用者向けのインターフェースで、バージョン間で安定している。
+- 良い点: R12 に沿う。必要な指標の型が DuckDB で動く。取得は CLI で、内部 API に依存しない。
 - 悪い点: cumulative の `window` にフラグが要る。CLI はプロセス起動のコストがかかる。
 
 ### 案 B: legacy spec（`semantic_models:` と `measures:`）
@@ -64,4 +64,4 @@ design-doc R12 で、Semantic Layer は OSS の MetricFlow を latest spec で�
 ## 追記
 
 - 2026-10-11: 描画画面とデータ一覧の切り口は、速さのために MetricFlow をプロセス内で使うことにした（決定の 3 を一部変更。[ADR 0003](0003-chart-view-in-process.md)）。生成パイプライン・`adp.charts compile / check`・検証は CLI のまま。
-- 2026-10-16: ADR のテンプレートの変更に合わせて構成を直した（決定の中身は変えていない）。
+- 2026-10-16: ADR のテンプレートの変更に合わせて構成を直した（決定の中身は変えていない。オーナーの承認つき、#171）。もとの決定 2 の「dbt-core のパーサーが直ったらフラグを外す」は「見直し」に、決定 3 の ADR 0003 の注記は上の追記に、「影響」は「結果」に移した。「判断の基準」「守らせ方」と、選択肢の良い点・悪い点の一部は、このときに補ったもの（決定した当時の記述ではない）。

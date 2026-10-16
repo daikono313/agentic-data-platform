@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-10
 - ステータス: Accepted（2026-10-10、#40 の PoC で確認）
-- 関連: #37, #40, #41, #43、design-doc の Goals 6、Non-goals、O4、O5（→ R17・R18）、ADR 0001、ADR 0003
+- 関連: #37, #40, #41, #42, #43、design-doc の Goals 6、Non-goals、O4（→ R18）、O6・O9（→ R17）、O5（→ ADR 0003・R20）、ADR 0001
 - 見直し: dbt Charts が 1.0 になったとき、または Semantic Layer に対応したとき（0.9.x の固定と、SQL を埋め込む方式を見直す）
 
 ## 背景
@@ -40,7 +40,7 @@ v2 では、作った指標をその場でチャートで見られるように�
 #### 案 B: Evidence / Rill
 
 - 良い点: コードで定義する BI。
-- 悪い点: dbt プロジェクトとの一体感と、YAML による生成のしやすさで dbt Charts に劣る。
+- 悪い点: dbt プロジェクトとの一体感と、YAML による生成のしやすさで dbt Charts に劣る。dbt Charts の PoC で問題が出たら再検討する。
 
 #### 案 C: Lightdash
 
@@ -50,7 +50,7 @@ v2 では、作った指標をその場でチャートで見られるように�
 #### 案 D: 自前の React チャート（recharts など）
 
 - 良い点: 実装は簡単。
-- 悪い点: チャートの定義が dbt プロジェクトの外に出て、PR でレビューしにくい。
+- 悪い点: チャートの定義が dbt プロジェクトの外に出て、PR でレビューしにくい。O5 の表示方法として、結果データだけを React で描く選択肢は残す。
 
 ### Semantic Layer の指標を使う方式（O4、#41）
 
@@ -76,7 +76,7 @@ v2 では、作った指標をその場でチャートで見られるように�
 3. **書き出し**: `python -m adp.charts compile` が各クエリを MetricFlow で SQL にし（`mf query --explain`）、カタログ名（DB ファイル名）を外して dbt Charts のボード `warehouse/charts/<board>.yml` に埋め込む。
 4. **DuckDB の外の経路を塞ぐ**:
    - `dbt_charts.yml` は生成エージェントのガードで書き換え不可にし、ソースは `warehouse`（dbt_profile）の 1 つだけにする。
-   - 元ファイルは許可リストで検査する。使えるキーは `title / metric_queries / charts / rows / cols` だけで、チャートの `query` は `metric_queries` の名前に限る。チャートの種類・属性も許可リストに限り、`extends`、レイアウト中のボードの入れ子や別ファイルの読み込み（`.yml` で終わる名前）、HTML（`text`、`html_policy`）、地図（`geo_source` など）、URL、`type: http` は使えない。
+   - 元ファイルは許可リストで検査する（ボードの生成 #41 / #42 に入れる）。使えるキーは `title / metric_queries / charts / rows / cols` だけで、チャートの `query` は `metric_queries` の名前に限る。チャートの種類・属性も許可リストに限り、`extends`、レイアウト中のボードの入れ子や別ファイルの読み込み（`.yml` で終わる名前）、HTML（`text`、`html_policy`）、地図（`geo_source` など）、URL、`type: http` は使えない。
    - dbt Charts は `charts/` の下の `.yml / .yaml / .md / .markdown` をすべて配信し、シンボリックリンクもたどるので、元ファイルは `charts/` の外（`warehouse/chart_specs/`）に置く。`charts/` と `chart_specs/` の直下には `<名前>.yml` 以外（サブディレクトリ、シンボリックリンク、他の形式）を置けない。`charts/` が無いときに配信される `faces/` も置けない。
    - `dct serve` はブラウザから直接使わない（表示方法は O5、ADR 0003）。
 
@@ -94,4 +94,5 @@ v2 では、作った指標をその場でチャートで見られるように�
 
 ## 追記
 
-- 2026-10-16: ADR のテンプレートの変更に合わせて構成を直した（決定の中身は変えていない）。もとは「決定（案）」「PoC の結果」「Semantic Layer の指標を使う方式」の節に分かれていた。
+- 2026-10-11: O5 の表示方法は、結果データを React で描く案を採らず、backend のプロセス内で dbt Charts を使って SVG を描くことにした（[ADR 0003](0003-chart-view-in-process.md)）。
+- 2026-10-16: ADR のテンプレートの変更に合わせて構成を直した（決定の中身は変えていない。オーナーの承認つき、#171）。もとは「決定（案）」「PoC の結果」「Semantic Layer の指標を使う方式」の節に分かれていた。PoC の結果は背景に、方式の案 (b)・(c) は選択肢に、検査は守らせ方に移した。「判断の基準」「見直し」と、選択肢の良い点・悪い点の一部は、このときに補ったもの（決定した当時の記述ではない）。
