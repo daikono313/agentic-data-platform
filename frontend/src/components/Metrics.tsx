@@ -20,7 +20,7 @@ function MetricCard({ metric, bus }: { metric: MetricInfo; bus?: BusMatrix | nul
           チャートで見る
         </a>
       </div>
-      {metric.description && <p className="text-xs text-muted-foreground">{metric.description}</p>}
+      {metric.description && <p className="whitespace-pre-line text-xs text-muted-foreground">{metric.description}</p>}
       {groups.length > 0 && (
         <div className="space-y-0.5 text-xs">
           <p className="font-medium">切り口</p>

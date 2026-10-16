@@ -15,3 +15,4 @@ checks:
   - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
   - metric_group_by_columns: [raw.orders.payment_method, raw.orders.ordered_at]
   - asks_purpose
+  - metric_purpose

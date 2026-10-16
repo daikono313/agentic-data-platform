@@ -250,3 +250,13 @@ def test_long_body_uses_file_and_is_truncated(repo: Path) -> None:
 
     GitHub(repo, "daikono313", fake).create_pr(Worktree(repo, "b"), "t", "x" * 100000)
     assert len(seen["body"]) <= MAX_BODY and "省略" in seen["body"]
+
+
+def test_pr_body_records_purpose() -> None:
+    """聞いた目的を PR 本文の要求に残す（#159）。"""
+    beam = load(FIXTURE)
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert "  - 目的:" not in pr_body(beam, design, [], Verification(True))
+    beam.metrics[0].purpose = "売上の伸びない店舗に | 販促をかける"
+    body = pr_body(beam, design, [], Verification(True))
+    assert "  - 目的: 売上の伸びない店舗に \\| 販促をかける" in body

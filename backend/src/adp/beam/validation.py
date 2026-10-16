@@ -201,7 +201,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
             if not metric.expr or not _DERIVED_EXPR.match(metric.expr):
                 issues.append(f"{p} derived の expr は metric 名の四則演算にしてください")
             else:
-                names = set(re.findall(r"[a-z_][a-z0-9_]*", metric.expr))
+                names = set(metric.inputs)
                 unknown = names - set(metrics) or ({metric.name} & names)
                 if unknown:
                     issues.append(
@@ -226,13 +226,8 @@ def _metric_issues(model: BeamModel) -> list[str]:
             )
         if metric.type in (MetricType.RATIO, MetricType.DERIVED):
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
-            inputs = (
-                [metric.numerator, metric.denominator]
-                if metric.type == MetricType.RATIO
-                else re.findall(r"[a-z_][a-z0-9_]*", metric.expr or "")
-            )
-            for name in inputs:
-                src = metrics.get(name or "")
+            for name in metric.inputs:
+                src = metrics.get(name)
                 src_event = model.event(src.event) if src else None
                 if src_event is None or src_event.name == event.name:
                     continue

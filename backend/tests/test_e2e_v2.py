@@ -33,7 +33,8 @@ from tests.generation.test_repair import FixingRunner
 from tests.test_pipeline import FakeGh, repo  # noqa: F401  （fixture）
 from tests.vcs.test_vcs import git
 
-RECORD = Path(__file__).parent / "fixtures" / "evals" / "return_rate_by_category.json"
+# 生成まで通すので、生成できる記録に固定する（eval の記録は取り直すと中身が変わる。#178）
+RECORD = Path(__file__).parent / "fixtures" / "recorded" / "return_rate_by_category.json"
 
 
 def test_v2_end_to_end(repo: Path) -> None:  # noqa: F811

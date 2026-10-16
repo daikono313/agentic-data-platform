@@ -23,6 +23,7 @@
 | `has_w: [what, when, …]` | 出来事に、その W のディメンションがある |
 | `metric_aggregation: <sum など>` | 指標の measure が、その集計方法でデータがある |
 | `metric_type: <simple など>` | 指標の種類 |
+| `metric_purpose` | どれか 1 つの指標に、聞いた目的（purpose）が記録されている（#159） |
 | `has_gap: <種類>` / `min_events: N` | 足りないもの・出来事の数 |
 | `fact: <fct の名前>` | 出来事の fact がその名前になる（既存の fact を再利用したか。#113） |
 | `story_type: <discrete / recurring / evolving>` | 指標の出来事が、その種類（出来事・定期的な状態・進んでいく状態）になっている（#135） |

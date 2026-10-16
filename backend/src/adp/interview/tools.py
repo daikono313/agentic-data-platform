@@ -118,7 +118,15 @@ def build_tools(
         _schema(MetricRequest),
     )
     async def upsert_metric(args: dict[str, Any]) -> dict[str, Any]:
-        return apply(lambda d: upsert(d["metrics"], "name", args["data"]))
+        def mutate(d: dict[str, Any]) -> None:
+            item = args["data"]
+            old = next((m for m in d["metrics"] if m["name"] == item.get("name")), None)
+            # 目的は framing で 1 回だけ聞くので、後の置き換えで渡し忘れても消さない（#159）
+            if old and old.get("purpose") and not item.get("purpose"):
+                item = item | {"purpose": old["purpose"]}
+            upsert(d["metrics"], "name", item)
+
+        return apply(mutate)
 
     @tool("remove_metric", "指標の要求を削除する", {"name": str})
     async def remove_metric(args: dict[str, Any]) -> dict[str, Any]:

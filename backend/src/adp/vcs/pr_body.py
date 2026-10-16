@@ -89,6 +89,8 @@ def pr_body(
     lines += ["## 要求", "", f"> {cell(beam.request)}", ""]
     for m in beam.metrics:
         lines.append(f"- **{cell(m.label)}**（`{m.name}`）: {cell(m.framed_question)}")
+        if m.purpose:
+            lines.append(f"  - 目的: {cell(m.purpose)}")
         if m.group_by:
             lines.append(f"  - 切り口: {', '.join(f'`{g}`' for g in m.group_by)}")
         if m.filter:

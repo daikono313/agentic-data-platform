@@ -173,6 +173,25 @@ async def test_edit_after_review_clears_finalized_at(expected: dict[str, Any]) -
     assert state.beam.finalized_at is None
 
 
+async def test_upsert_metric_keeps_purpose(expected: dict[str, Any]) -> None:
+    """目的は framing で 1 回だけ聞くので、後の置き換えで渡し忘れても残す（#159）。"""
+    metric = expected["metrics"][0]
+    runner = ScriptedRunner(
+        [
+            [("upsert_metric", {"data": metric | {"purpose": "販促の計画に使う"}})],
+            [("upsert_metric", {"data": metric | {"label": "売上"}})],
+            [("upsert_metric", {"data": metric | {"purpose": "人員配置に使う"}})],
+        ]
+    )
+    interviewer, state = Interviewer(runner, LLMSettings()), new_state("売上")
+    await collect(interviewer, state, "1")
+    await collect(interviewer, state, "2")
+    [m] = state.beam.metrics
+    assert m.label == "売上" and m.purpose == "販促の計画に使う"
+    await collect(interviewer, state, "3")
+    assert state.beam.metrics[0].purpose == "人員配置に使う"
+
+
 def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:
     """SDK は input_schema で入力を検証する。$ref が解決できないと全ての呼び出しが失敗する。"""
     import jsonschema

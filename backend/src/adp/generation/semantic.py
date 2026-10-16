@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -227,7 +226,7 @@ def metric_definitions(
         base: dict[str, Any] = {
             "name": m.name,
             "label": m.label,
-            "description": m.framed_question,
+            "description": m.framed_question + (f"\n目的: {m.purpose}" if m.purpose else ""),
         }
         flt = _filters(event, fact, m)
         if m.type in (MetricType.SIMPLE, MetricType.CUMULATIVE):
@@ -268,7 +267,7 @@ def metric_definitions(
             top.append(ratio)
         elif m.type == MetricType.DERIVED:
             assert m.expr is not None
-            inputs = sorted(set(re.findall(r"[a-z_][a-z0-9_]*", m.expr)))
+            inputs = sorted(set(m.inputs))
             derived = base | {
                 "type": "derived",
                 "expr": m.expr,

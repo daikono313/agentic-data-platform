@@ -117,6 +117,12 @@ def _metrics_events(beam: BeamModel) -> list[tuple[Any, Any]]:
     return [(m, beam.event(m.event)) for m in beam.metrics]
 
 
+def _requested_metrics(beam: BeamModel) -> list[Any]:
+    """要求した指標（ほかの指標の分子・分母・式に使われていないもの。比率なら比率の指標）。"""
+    used = {n for m in beam.metrics for n in m.inputs}
+    return [m for m in beam.metrics if m.name not in used] or beam.metrics
+
+
 def _metric_event_list(beam: BeamModel) -> list[Any]:
     """指標の出来事（重複なし）。"""
     names = dict.fromkeys(m.event for m in beam.metrics)
@@ -138,6 +144,11 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "has_gap": lambda: (
             any(g.kind == GapKind(arg) for g in beam.gaps),
             str([g.kind.value for g in beam.gaps]),
+        ),
+        # 聞いた目的を指標に記録した（#159）
+        "metric_purpose": lambda: (
+            bool(beam.metrics) and all(m.purpose for m in _requested_metrics(beam)),
+            str([m.purpose for m in beam.metrics]),
         ),
         "metric_type": lambda: (
             any(m.type == MetricType(arg) for m in beam.metrics),

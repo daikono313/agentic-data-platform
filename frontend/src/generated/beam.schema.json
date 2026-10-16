@@ -739,7 +739,20 @@
         },
         "values": {
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
           },
           "minItems": 1,
           "type": "array"
@@ -771,6 +784,18 @@
         "framed_question": {
           "description": "How many の形に言い換えた問い",
           "type": "string"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "この数字を見て何を判断・行動するか（目的を聞いたときのユーザーの答え）"
         },
         "type": {
           "$ref": "#/$defs/MetricType",

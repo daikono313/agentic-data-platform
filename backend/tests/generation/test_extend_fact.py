@@ -19,7 +19,10 @@ from adp.generation.project import ProjectInfo
 from adp.generation.semantic import MetricQuery
 from tests.generation.test_dbt_codegen import FIXTURES, _dbt, _warehouse_copy, mf_query
 
-RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "evals" / "return_rate_by_category.json"
+# 生成のテストは固定の記録（#164 で取った 20261016-224137）を使う（eval の記録は取り直すと中身が
+# 変わる）。tests/test_e2e_v2.py と同じもの
+RETURN_RATE = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+EVAL_RECORD = Path(__file__).parents[1] / "fixtures" / "evals" / "return_rate_by_category.json"
 
 
 def _return_rate() -> BeamModel:
@@ -93,3 +96,15 @@ def test_hand_written_fact_is_left_to_the_agent(after_s1: Path) -> None:
     assert "既存の列と指標は変更・削除しない" in task.instruction
     assert "quantity_sold = t0.quantity" in task.instruction
     assert not any(f.replaces for f in generation.files)
+
+
+@pytest.mark.xfail(strict=True, reason="比率の指標そのものの絞り込みを解決できない（#178）")
+def test_current_eval_record_can_be_queried(after_s1: Path) -> None:
+    """今の eval の記録（比率の指標にキャンセル除外がある）から生成した指標を問い合わせられる。"""
+    wh = after_s1
+    beam = BeamModel.model_validate(json.loads(EVAL_RECORD.read_text())["beam"])
+    info, generation = _generate(wh, beam)
+    info.write(generation.files)
+    assert _dbt(wh, "build").returncode == 0
+    for q in generation.queries:
+        assert mf_query(wh, q).returncode == 0, q
