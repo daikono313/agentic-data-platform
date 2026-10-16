@@ -114,14 +114,15 @@ def _input(
     """比率・派生の指標の元の指標。絞り込みは元の指標ごとに、その出来事の名前で書く。
 
     指標の filter は元の指標すべてに効くが、名前は 1 つの出来事でしか解決できない（返品の出来事の
-    return__order_status は、注文の指標には無い。#178）。どの出来事でも解決できることは検証で
-    確かめている（adp.beam.validation）。
+    return__order_status は、注文の指標には無い。#178）。直接の元の指標の出来事で解決できることは
+    検証で確かめている（adp.beam.validation）。元の指標がさらに比率・派生で、その下の指標が別の
+    出来事にある場合（入れ子）は確かめていない（#180）。
     """
+    if not m.filters:
+        return {"name": name} if named else name
     src = next((x for x in beam.metrics if x.name == name), None)
     event = beam.event(src.event) if src else None
     fact = next((f for f in design.facts if event and f.event == event.name), None)
-    if not m.filters:
-        return {"name": name} if named else name
     if event is None or fact is None:
         raise SemanticError(f"metric {m.name} の元の指標 {name} の fact が見つかりません")
     return {"name": name, "filter": _filters(event, fact, m)}
