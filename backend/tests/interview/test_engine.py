@@ -109,7 +109,7 @@ async def test_successful_edit_reports_remaining_issues() -> None:
 
 
 async def test_text_across_tool_calls_is_separated_and_not_repeated() -> None:
-    # tool 呼び出しをまたいだ本文は空行で区切り、書き直したかたまりは後のものだけを残す（#161）
+    # tool 呼び出しをまたいだ本文は空行で区切り、中身がすべて後にあるかたまりは捨てる（#161）
     runner = ScriptedRunner(
         [
             [
@@ -129,6 +129,42 @@ async def test_text_across_tool_calls_is_separated_and_not_repeated() -> None:
         == "- 数量: 54 個\n\n次のように整理しました。\n\n次のように整理しました。続けます。"
     )
     assert state.messages[-1].text == "- 数量: 54 個\n\n次のように整理しました。続けます。"
+
+
+async def test_rejected_confirmation_is_checked_against_saved_text() -> None:
+    # 捨てるかたまりにだけ言い換えた問いがあるなら、確認は見えていないとして拒む（#161 レビュー）
+    runner = ScriptedRunner(
+        [
+            [
+                "次のように言い換えました。「月ごとの売上はいくらか」",
+                ("set_overview", {"name": "sales", "title": "売上"}),
+                "次のように言い換えました。「月ごとの売上はいくらか」",
+                (
+                    "present_choices",
+                    {"question": "この言い換えで合っていますか？", "options": ["はい"]},
+                ),
+            ],
+        ]
+    )
+    state = new_state("売上")
+    await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    assert not runner.tool_results[-1].get("is_error")
+    runner2 = ScriptedRunner(
+        [
+            [
+                "次のように言い換えました。「月ごとの売上はいくらか」",
+                ("set_overview", {"name": "sales", "title": "売上"}),
+                "次のように言い換えました。",
+                ("set_overview", {"name": "sales", "title": "売上"}),
+                (
+                    "present_choices",
+                    {"question": "この言い換えで合っていますか？", "options": ["はい"]},
+                ),
+            ],
+        ]
+    )
+    await collect(Interviewer(runner2, LLMSettings()), new_state("売上"), "売上")
+    assert not runner2.tool_results[-1].get("is_error")  # 前のかたまりは捨てないので見えている
 
 
 async def test_tool_call_first_does_not_stream_separator() -> None:

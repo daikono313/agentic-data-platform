@@ -21,8 +21,8 @@
 「この 2 件で」「この言い換えで」と聞いても確かめられない。
 
 1 ターンの本文は、tool 呼び出しをまたぐとかたまりに分かれる（`join_chunks`）。かたまりは空行で
-区切り、同じ書き出しで書き直したかたまりは後のものだけを残す（present_choices がエラーで呼び直しに
-なったときなどに、モデルが同じ前置きを書き直すことがある。#161）。
+区切り、中身がすべて後のかたまりにある（書き直した）かたまりは捨てる（present_choices がエラーで
+呼び直しになったときなどに、モデルが同じ前置きを書き直すことがある。#161）。
 """
 
 from __future__ import annotations
@@ -216,11 +216,11 @@ def normalize(text: str) -> str:
     return _PUNCT.sub("", unicodedata.normalize("NFKC", text))
 
 
-def _prose_sentences(chunk: str) -> list[str]:
-    """かたまりの地の文（表・リスト・見出し・引用・コードの行を除く）を、比べる形にしたもの。"""
+def prose_sentences(text: str) -> list[str]:
+    """地の文（表・リスト・見出し・引用・コードの行を除く）の文を、比べる形（`normalize`）にしたもの。"""
     sentences: list[str] = []
     in_code = False
-    for line in chunk.split("\n"):
+    for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_code = not in_code
         if not in_code and not is_structure_line(line):
@@ -228,17 +228,21 @@ def _prose_sentences(chunk: str) -> list[str]:
     return [x for x in sentences if x]
 
 
+def _contents(chunk: str) -> set[str]:
+    """かたまりの中身: 8 文字以上の地の文と、構造の行（比べる形）。"""
+    lines = {normalize(x) for x in chunk.split("\n") if is_structure_line(x)}
+    return {x for x in prose_sentences(chunk) if len(x) >= 8} | {x for x in lines if x}
+
+
 def join_chunks(chunks: list[str]) -> str:
-    """tool 呼び出しで分かれた本文のかたまりを空行でつなぐ。後のかたまりの書き出し（最初の 2 つの
-    地の文のうち 8 文字以上のもの）が前のかたまりの地の文にあれば、書き直したものとみなし、前の
-    かたまりを捨てる（語尾などを少し変えて書き直すことが多く、文の単位では消しきれないため。後の
-    かたまりが最後の質問に対応する）。"""
+    """tool 呼び出しで分かれた本文のかたまりを空行でつなぐ。前のかたまりの中身がすべて後のかたまりに
+    あれば、書き直したものとみなして前のかたまりを捨てる（中身が残るものだけを捨てる。言い回しを
+    変えた書き直しは残る）。"""
     kept: list[str] = []
     for chunk in (c.strip() for c in chunks):
         if not chunk:
             continue
-        opening = [x for x in _prose_sentences(chunk)[:2] if len(x) >= 8]
-        if opening:
-            kept = [c for c in kept if not set(opening) & set(_prose_sentences(c))]
+        contents = _contents(chunk)
+        kept = [c for c in kept if not (_contents(c) and _contents(c) <= contents)]
         kept.append(chunk)
     return "\n\n".join(kept)

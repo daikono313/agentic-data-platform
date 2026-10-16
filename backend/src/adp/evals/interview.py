@@ -49,8 +49,8 @@ from adp.interview.wording import (
     hidden_confirmation,
     is_closing_sentence,
     is_position_sentence,
-    is_structure_line,
     normalize,
+    prose_sentences,
 )
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
@@ -363,14 +363,8 @@ def _sentences(m: Any) -> list[str]:
 
 
 def _repeated_text(m: Any) -> bool:
-    """本文に同じ文（8 文字以上の地の文）が 2 回出たか（tool 呼び出しをまたいだ書き直し。#161）。"""
-    keys = [
-        normalize(x)
-        for line in m.text.split("\n")
-        if not is_structure_line(line)
-        for x in re.split(r"(?<=[。！？!?])", line)
-    ]
-    keys = [k for k in keys if len(k) >= 8]
+    """画面に出た本文に同じ地の文（8 文字以上）が 2 回あるか（言い回しを変えた書き直し。#161）。"""
+    keys = [x for x in prose_sentences(m.text) if len(x) >= 8]
     return len(keys) != len(set(keys))
 
 

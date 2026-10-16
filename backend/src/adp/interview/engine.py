@@ -120,7 +120,7 @@ class Interviewer:
         seen = "\n".join([previous.text, previous.question or ""] if previous else [])
 
         def shown() -> tuple[str, str]:
-            return seen + "\n" + "\n\n".join(reply), text
+            return seen + "\n" + join_chunks(reply), text
 
         result: TurnResult | None = None
         try:
