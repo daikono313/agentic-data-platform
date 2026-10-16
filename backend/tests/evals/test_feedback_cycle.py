@@ -440,7 +440,7 @@ def test_onboarded_ontology_for_scenarios_with_a_new_source(tmp_path: Path) -> N
 
 def test_modeling_checks() -> None:
     """出来事か状態か・粒度・加法性・階層・具体例・共通ディメンションのチェック（#135）。"""
-    from adp.beam import Additivity, BeamModel, EventExample, StoryType
+    from adp.beam import Additivity, BeamModel, EventExample, MetricRequest, StoryType
     from adp.beam import load as load_beam
     from adp.evals.interview import _check
 
@@ -468,6 +468,15 @@ def test_modeling_checks() -> None:
     assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
     assert not passed("metric_purpose")
     beam.metrics[0].purpose = "販促の計画に使う"
+    assert passed("metric_purpose")
+    # 比率の指標を求めたときは、分子・分母ではなく比率の指標に目的が要る
+    first = beam.metrics[0]
+    rate = {"name": "rate", "type": "ratio", "numerator": first.name, "denominator": "x"}
+    common = {"label": "x", "question": "q", "framed_question": "q", "event": first.event}
+    beam.metrics.append(MetricRequest.model_validate(common | rate))
+    assert not passed("metric_purpose")
+    beam.metrics[-1].purpose = "販促の計画に使う"
+    beam.metrics[0].purpose = None
     assert passed("metric_purpose")
 
     # 共通ディメンション: 2 つ目の出来事が同じ名前の What・When を持つときだけ
