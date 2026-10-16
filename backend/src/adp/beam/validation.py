@@ -19,7 +19,7 @@ from adp.beam.models import (
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent
+    from adp.beam.models import BeamModel, BusinessEvent, MetricRequest
 
 TIME_GRAINS = {g.value for g in TimeGrain}
 # 集計方法ごとに、宣言できる加法性
@@ -226,7 +226,9 @@ def _metric_issues(model: BeamModel) -> list[str]:
             )
         if metric.type in (MetricType.RATIO, MetricType.DERIVED):
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
-            for name in metric.inputs:
+            # （元の指標がさらに比率・派生なら、その下の指標まで。MetricFlow は filter を下へ渡す。
+            # #180）
+            for name in _all_inputs(metric, metrics):
                 src = metrics.get(name)
                 src_event = model.event(src.event) if src else None
                 if src_event is None or src_event.name == event.name:
@@ -243,6 +245,20 @@ def _metric_issues(model: BeamModel) -> list[str]:
             elif kind == "attribute" and _attribute_unavailable(event, ref):
                 issues.append(f"{p} group_by {ref} はデータなしです")
     return issues
+
+
+def _all_inputs(metric: MetricRequest, metrics: dict[str, MetricRequest]) -> list[str]:
+    """元になる指標の名前を、比率・派生の入れ子をたどってすべて（循環しても止まる）。"""
+    seen: list[str] = []
+    todo = list(metric.inputs)
+    while todo:
+        name = todo.pop(0)
+        if name in seen or name == metric.name:
+            continue
+        seen.append(name)
+        if (src := metrics.get(name)) is not None:
+            todo += src.inputs
+    return seen
 
 
 def _conformance_issues(model: BeamModel) -> list[str]:

@@ -321,3 +321,33 @@ def test_time_grain_only_on_when() -> None:
         Dimension.model_validate(
             {"w": W.WHO, "name": "customer", "label": "顧客", "time_grain": "day"}
         )
+
+
+def test_nested_inputs_must_resolve_refs() -> None:
+    """元の指標がさらに比率で、その下の指標が別の出来事にあるときも、切り口・絞り込みを確かめる
+    （#180）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    assert model.finalize_issues() == []
+    base = {"label": "x", "question": "q", "framed_question": "q"}
+    # 返品の出来事の派生の指標が、返品率（返品の出来事。分母は注文の出来事）を使う。
+    # 返品理由は注文の出来事に無いので、MetricFlow が分母の指標に渡すと解決できない
+    model.metrics.append(
+        MetricRequest.model_validate(
+            base
+            | {
+                "name": "rate_pct",
+                "event": "customer_returns_product",
+                "type": "derived",
+                "expr": "return_rate_by_category * 100",
+                "filters": [
+                    {"ref": "return_reason.return_reason", "operator": "!=", "values": ["other"]}
+                ],
+            }
+        )
+    )
+    issues = model.finalize_issues()
+    assert any(
+        "[metric rate_pct] return_reason.return_reason は元の指標 sold_qty_excl_cancelled" in i
+        for i in issues
+    ), issues
