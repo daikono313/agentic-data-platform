@@ -108,6 +108,26 @@ async def test_successful_edit_reports_remaining_issues() -> None:
     assert any(isinstance(e, TextDelta) for e in events)
 
 
+async def test_text_across_tool_calls_is_separated_and_not_repeated() -> None:
+    # tool 呼び出しをまたいだ本文は改行で区切り、書き直した文は 1 回だけ残す（#161）
+    runner = ScriptedRunner(
+        [
+            [
+                "- 数量: 54 個",
+                ("set_overview", {"name": "sales", "title": "売上"}),
+                "次のように整理しました。",
+                ("set_overview", {"name": "sales", "title": "売上"}),
+                "次のように整理しました。続けます。",
+            ]
+        ]
+    )
+    state = new_state("売上")
+    events = await collect(Interviewer(runner, LLMSettings()), state, "売上")
+    streamed = "".join(e.text for e in events if isinstance(e, TextDelta))
+    assert streamed == "- 数量: 54 個\n次のように整理しました。\n次のように整理しました。続けます。"
+    assert state.messages[-1].text == "- 数量: 54 個\n次のように整理しました。\n続けます。"
+
+
 async def test_finalize_requires_complete_beam() -> None:
     runner = ScriptedRunner([])
     interviewer = Interviewer(runner, LLMSettings())

@@ -7,6 +7,7 @@ from adp.interview.wording import (
     has_example_values,
     hidden_confirmation,
     is_example_confirmation,
+    join_chunks,
 )
 
 
@@ -252,3 +253,34 @@ def test_quoted_question_matches_question_loosely() -> None:
     text = "「月ごとの 売上はいくらか」という言い換えで合っているか、上の選択肢からお答えください。"
     question = "『月ごとの売上はいくらか』で合っていますか？"
     assert clean_reply(text, question=question) == ("", [text])
+
+
+_RETURNS = "返品のデータは `raw.returns` にあります（3,699 件）。"
+_REFRAME = "次のように言い換えました。\n\n「商品カテゴリごとの販売数量はいくつか？」"
+_ARRIVAL = "入荷の日時は 15 分刻みで記録されています。"
+_TABLE = "| 列 | 値 |\n|---|---|"
+
+
+@pytest.mark.parametrize(
+    ("chunks", "expected"),
+    [
+        # tool 呼び出しをまたいだかたまりは改行で区切る（#161）
+        (["- 数量: 54 個", "次は店舗です。"], "- 数量: 54 個\n次は店舗です。"),
+        # 呼び直しで書き直した前置きは、後のかたまりから取り除く（全角・半角の違いは無視）
+        (
+            [_RETURNS, _RETURNS.replace("（", "(").replace("）", ")") + "\n\nどう使いますか？"],
+            _RETURNS + "\nどう使いますか？",
+        ),
+        ([_REFRAME, _REFRAME], _REFRAME),
+        (
+            [_ARRIVAL + "月別のほかに見られます。", _ARRIVAL + "日別も使えます。"],
+            _ARRIVAL + "月別のほかに見られます。\n日別も使えます。",
+        ),
+        # 同じかたまりの中の繰り返し・短い文・表の行は残す
+        (["はい。はい。", "はい。"], "はい。はい。\nはい。"),
+        ([_TABLE, _TABLE], _TABLE + "\n" + _TABLE),
+        (["", "  前置きだけ。  ", ""], "前置きだけ。"),
+    ],
+)
+def test_join_chunks(chunks: list[str], expected: str) -> None:
+    assert join_chunks(chunks) == expected

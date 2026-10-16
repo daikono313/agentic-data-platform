@@ -19,11 +19,16 @@
 具体例を記録してよいかの確認には値（日付・数量など。#163）、言い換えの確認には言い換えた問い
 （「〜はいくつか」。#165）が要る。tool の結果や記録した内容はユーザーに見えないので、中身を書かずに
 「この 2 件で」「この言い換えで」と聞いても確かめられない。
+
+1 ターンの本文は、tool 呼び出しをまたぐとかたまりに分かれる（`join_chunks`）。かたまりは改行で
+区切り、前のかたまりにある文は後のかたまりから取り除く（present_choices がエラーで呼び直しに
+なると、同じ前置きを書き直すことがある。#161）。
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _NOT_WORD = r"(?<![一-龥ァ-ヶー々])"
 _TARGET = r"(質問|選択肢|ボタン|問い)"
@@ -195,3 +200,43 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     if not out and not question:  # 質問が無いのに全部消えるなら、発言が空にならないよう残す
         return text, []
     return out, removed
+
+
+_KEY_DROP = re.compile(r"[\s、。，．,.!！?？「」『』()*`]")
+
+
+def _sentence_key(sentence: str) -> str:
+    """同じ文かを比べるための形（全角・半角、空白・句読点・括弧・強調の違いを無視する）。"""
+    return _KEY_DROP.sub("", unicodedata.normalize("NFKC", sentence))
+
+
+def join_chunks(chunks: list[str]) -> str:
+    """tool 呼び出しで分かれた本文のかたまりを改行でつなぐ。前のかたまりにある文（8 文字以上）は
+    後のかたまりから取り除く。表とコードブロックの行には触れない（一部だけ消すと崩れるため）。"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for chunk in chunks:
+        keys: set[str] = set()
+        lines: list[str] = []
+        in_code = dropped = False
+        for line in chunk.split("\n"):
+            if line.lstrip().startswith("```"):
+                in_code = not in_code
+            if in_code or line.lstrip().startswith(("```", "|")):
+                lines.append(line)
+                continue
+            kept = []
+            for sentence in _SENTENCE.findall(line):
+                key = _sentence_key(sentence)
+                if len(key) >= 8 and key in seen:
+                    dropped = True
+                    continue
+                keys.add(key)
+                kept.append(sentence)
+            joined = "".join(kept)
+            lines.append(joined if joined == line else joined.rstrip())
+        seen |= keys
+        text = "\n".join(lines)
+        if text := (re.sub(r"\n{3,}", "\n\n", text) if dropped else text).strip():
+            out.append(text)
+    return "\n".join(out)

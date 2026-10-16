@@ -14,7 +14,7 @@ from adp.beam import BeamModel, EventMatrix, build_event_matrix
 from adp.interview import tools as beam_tools
 from adp.interview.prompts import prompt_version, system_prompt
 from adp.interview.state import ChatMessage, InterviewState, Phase
-from adp.interview.wording import clean_reply
+from adp.interview.wording import clean_reply, join_chunks
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 
 
@@ -113,13 +113,14 @@ class Interviewer:
         state.question = None
         snapshot = _Snapshot.of(state, self.issues)
 
-        reply: list[str] = []
+        # 本文のかたまり（tool 呼び出しで区切る。#161）
+        reply: list[str] = [""]
         # ユーザーに見えている直近の文（アシスタントの直前の発言と今の発言の本文、ユーザーの発言。
         # 確認の質問で中身が見えているかに使う。#163・#165）
         seen = "\n".join([previous.text, previous.question or ""] if previous else [])
 
         def shown() -> tuple[str, str]:
-            return seen + "\n" + "".join(reply), text
+            return seen + "\n" + "\n".join(reply), text
 
         result: TurnResult | None = None
         try:
@@ -129,15 +130,19 @@ class Interviewer:
                 for change in snapshot.diff(state):
                     yield change
                 if isinstance(event, TextDelta):
-                    reply.append(event.text)
+                    if not reply[-1] and any(reply):  # tool 呼び出しの後の本文は改行で区切る
+                        yield TextDelta("\n")
+                    reply[-1] += event.text
                     yield event
                 elif isinstance(event, ToolCall):
+                    if reply[-1]:
+                        reply.append("")
                     yield event
                 else:
                     result = event
         except asyncio.CancelledError:
             # クライアントの切断など。途中までの応答を残してから中断する
-            partial, removed = clean_reply("".join(reply))
+            partial, removed = clean_reply(join_chunks(reply))
             state.messages.append(
                 ChatMessage(
                     role="assistant",
@@ -169,7 +174,7 @@ class Interviewer:
             )
         if result.session_id:
             state.agent_session_id = result.session_id
-        text = "".join(reply).strip()
+        text = join_chunks(reply)
         if result.is_error and not text:
             text = "（応答を作れませんでした。もう一度送ってください）"
         # 画面の位置を指す文（「上の質問にお答えください」など。#77）と、質問を出したときの
