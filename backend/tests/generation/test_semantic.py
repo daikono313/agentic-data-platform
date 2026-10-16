@@ -76,6 +76,7 @@ def test_metric_types(setup) -> None:  # type: ignore[no-untyped-def]
     assert revenue["filter"] == "{{ Dimension('order_line__order_status') }} <> 'cancelled'"
     top = {m["name"]: m for m in defs.top_level}
     assert top["avg_price"]["type"] == "ratio"
+    assert top["avg_price"]["numerator"] == "revenue"  # 絞り込みが無ければ名前だけ
     assert top["rev_7d"] | {} == top["rev_7d"] and top["rev_7d"]["window"] == "7 days"
     assert top["rev_7d"]["period_agg"] == "last" and top["rev_7d"]["input_metric"] == "rev_7d_input"
     assert top["diff"]["input_metrics"] == [{"name": "qty"}, {"name": "revenue"}]
@@ -110,8 +111,16 @@ def test_ratio_and_derived_keep_filters(setup) -> None:  # type: ignore[no-untyp
         ),
     ]
     top = {m["name"]: m for m in metric_definitions(beam, design, fact).top_level}
-    assert top["aov_online"]["filter"] == "{{ Dimension('store__channel') }} in ('online', 1)"
-    assert top["diff"]["filter"] == "{{ Dimension('store__channel') }} = true"
+    # 絞り込みは元の指標ごとに書く（出来事が分かれていても、それぞれの名前で解決する。#178）
+    online = "{{ Dimension('store__channel') }} in ('online', 1)"
+    assert "filter" not in top["aov_online"]
+    assert top["aov_online"]["numerator"] == {"name": "revenue", "filter": online}
+    assert top["aov_online"]["denominator"] == {"name": "qty", "filter": online}
+    assert "filter" not in top["diff"]
+    channel = "{{ Dimension('store__channel') }} = true"
+    assert top["diff"]["input_metrics"] == [
+        {"name": n, "filter": channel} for n in ("qty", "revenue")
+    ]
 
 
 def test_grain_key_maps_to_entity(setup) -> None:  # type: ignore[no-untyped-def]

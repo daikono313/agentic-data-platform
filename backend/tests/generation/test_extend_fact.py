@@ -98,9 +98,9 @@ def test_hand_written_fact_is_left_to_the_agent(after_s1: Path) -> None:
     assert not any(f.replaces for f in generation.files)
 
 
-@pytest.mark.xfail(strict=True, reason="比率の指標そのものの絞り込みを解決できない（#178）")
 def test_current_eval_record_can_be_queried(after_s1: Path) -> None:
-    """今の eval の記録（比率の指標にキャンセル除外がある）から生成した指標を問い合わせられる。"""
+    """今の eval の記録（比率の指標そのものにキャンセル除外がある）から生成した指標を
+    問い合わせられる（返品と注文で出来事が分かれていても、絞り込みを元の指標ごとに解決する。#178）。"""
     wh = after_s1
     beam = BeamModel.model_validate(json.loads(EVAL_RECORD.read_text())["beam"])
     info, generation = _generate(wh, beam)
