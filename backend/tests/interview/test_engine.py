@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from adp.interview import (
     TurnDone,
     new_state,
 )
-from adp.llm import LLMSettings, ScriptedRunner, TextDelta
+from adp.llm import LLMSettings, ScriptedRunner, TextDelta, ToolCall
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml"
 
@@ -129,6 +130,23 @@ async def test_text_across_tool_calls_is_separated() -> None:
         == "- 数量: 54 個\n\n次のように整理しました。\n\n次のように整理しました。続けます。"
     )
     assert state.messages[-1].text == streamed
+
+
+class _CancelledRunner:
+    """本文と tool 呼び出しの途中で中断される偽エージェント。"""
+
+    async def run(self, prompt: str, spec: Any, resume: str | None = None) -> Any:
+        yield TextDelta("前半です。")
+        yield ToolCall("set_phase", {})
+        yield TextDelta("後半です。")
+        raise asyncio.CancelledError
+
+
+async def test_cancelled_reply_keeps_chunks_separated() -> None:
+    state = new_state("売上")
+    with pytest.raises(asyncio.CancelledError):
+        await collect(Interviewer(_CancelledRunner(), LLMSettings()), state, "売上")  # type: ignore[arg-type]
+    assert state.messages[-1].text == "前半です。\n\n後半です。\n（中断されました）"
 
 
 async def test_tool_call_first_does_not_stream_separator() -> None:

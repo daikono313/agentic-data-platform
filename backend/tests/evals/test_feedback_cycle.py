@@ -342,10 +342,11 @@ def test_closing_phrases_are_counted() -> None:
 def test_repeated_text_is_counted() -> None:
     """本文に同じ地の文が 2 回ある発言を数える。リストの行と短い文は数えない（#161）。"""
     twice = _msg("次のように言い換えました。合っていますか？次のように言い換えました（再掲）。")
+    width = _msg("返品は（3,699 件）です。\n\n**返品は(3,699件)です**")
     twice2 = _msg("次のように言い換えました。\n\n次のように言い換えました。")
     lists = _msg("- 1月中はほかの動きがありません。\n- 1月中はほかの動きがありません。")
     short = _msg("はい。はい。")
-    assert transcript_metrics([twice, twice2, lists, short])["repeated_text"] == 1
+    assert transcript_metrics([twice, twice2, width, lists, short])["repeated_text"] == 2
 
 
 def test_effort_and_irregular_case_questions() -> None:

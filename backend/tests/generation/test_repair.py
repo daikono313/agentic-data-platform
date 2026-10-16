@@ -139,13 +139,13 @@ class ChattyRunner:
         yield TextDelta("モデルを読みます。")
         yield ToolCall("Read", {})
         yield TextDelta("直しました。")
-        yield TurnResult("s", spec.model, False, 0.0, 0.0)
+        yield TurnResult("s", spec.model, True, 0.0, 0.0, error="上限")
 
 
 async def test_agent_text_across_tool_calls_is_separated(tmp_path: Path) -> None:
     # tool 呼び出しをまたいだ本文がつながらない（#161）
     text, _ = await Repairer(ChattyRunner(), LLMSettings(), DBT.parent)._agent(tmp_path, "m", "p")
-    assert text == "モデルを読みます。\n\n直しました。"
+    assert text == "モデルを読みます。\n\n直しました。\n\n（エージェントのエラー: 上限）"
 
 
 @pytest.fixture

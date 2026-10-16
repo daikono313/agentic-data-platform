@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterator
 
 _NOT_WORD = r"(?<![一-龥ァ-ヶー々])"
 _TARGET = r"(質問|選択肢|ボタン|問い)"
@@ -178,11 +179,8 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     戻り値は（本文, 取り除いた文）。"""
     removed: list[str] = []
     lines: list[str] = []
-    in_code = False
-    for line in text.split("\n"):
-        if line.lstrip().startswith("```"):
-            in_code = not in_code
-        if in_code or is_structure_line(line):
+    for line, prose in _lines(text):
+        if not prose:
             lines.append(line)
             continue
         kept = []
@@ -204,7 +202,8 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
     return out, removed
 
 
-_PUNCT = re.compile(r"[\s、。，．,.!！?？「」『』（）()*`]")
+_PUNCT = re.compile(r"[\s、。!！?？「」『』（）()*`]|[.,](?!\d)")
+"""比べるときに無視する文字。小数点・桁区切り（数字の前の . ,）は残す（1.5 と 15 を分ける）。"""
 
 
 def normalize(text: str) -> str:
@@ -212,13 +211,21 @@ def normalize(text: str) -> str:
     return _PUNCT.sub("", unicodedata.normalize("NFKC", text))
 
 
-def prose_sentences(text: str) -> list[str]:
-    """地の文（表・リスト・見出し・引用・コードの行を除く）の文を、比べる形（`normalize`）にしたもの。"""
-    sentences: list[str] = []
+def _lines(text: str) -> Iterator[tuple[str, bool]]:
+    """行と、地の文の行か（表・リスト・見出し・引用・コードブロックの行は False）。"""
     in_code = False
     for line in text.split("\n"):
         if line.lstrip().startswith("```"):
             in_code = not in_code
-        if not in_code and not is_structure_line(line):
-            sentences += [normalize(x) for x in _SENTENCE.findall(line)]
-    return [x for x in sentences if x]
+        yield line, not in_code and not is_structure_line(line)
+
+
+def sentences(text: str) -> list[str]:
+    """文に分ける（行と、「」の外の句点・疑問符で切る）。"""
+    return [x for line in text.split("\n") for x in _SENTENCE.findall(line) if x.strip()]
+
+
+def prose_sentences(text: str) -> list[str]:
+    """地の文（表・リスト・見出し・引用・コードの行を除く）の文を、比べる形（`normalize`）にしたもの。"""
+    found = (normalize(x) for line, prose in _lines(text) if prose for x in sentences(line))
+    return [x for x in found if x]

@@ -51,6 +51,7 @@ from adp.interview.wording import (
     is_position_sentence,
     normalize,
     prose_sentences,
+    sentences,
 )
 from adp.llm import AgentRunner, AgentSpec, LLMSettings, TextDelta, ToolCall, TurnResult
 from adp.llm.settings import REPO_ROOT
@@ -359,11 +360,11 @@ def _fact_source(beam: BeamModel, table: str) -> tuple[bool, str]:
 
 def _sentences(m: Any) -> list[str]:
     """発言の文と、本文から取り除いた文（モデルの振る舞いとして数える）。"""
-    return re.split(r"(?<=[。！？!?\n])", m.text) + list(getattr(m, "removed", None) or [])
+    return sentences(m.text) + list(getattr(m, "removed", None) or [])
 
 
 def _repeated_text(m: Any) -> bool:
-    """画面に出た本文に同じ地の文（8 文字以上）が 2 回あるか（言い回しを変えた書き直し。#161）。"""
+    """画面の本文に同じ地の文（8 文字以上）が 2 回あるか（書き直し。#161）。"""
     keys = [x for x in prose_sentences(m.text) if len(x) >= 8]
     return len(keys) != len(set(keys))
 

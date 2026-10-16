@@ -138,7 +138,8 @@ class Interviewer:
                 for change in snapshot.diff(state):
                     yield change
                 if isinstance(event, TextDelta):
-                    if not reply[-1] and any(reply):  # tool 呼び出しの後の本文は空行で区切る
+                    # tool 呼び出しの後の本文は空行で区切る
+                    if event.text and not reply[-1] and any(c.strip() for c in reply):
                         yield TextDelta("\n\n")
                     reply[-1] += event.text
                     yield event
