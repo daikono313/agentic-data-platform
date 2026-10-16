@@ -145,7 +145,7 @@ class _CancelledRunner:
 async def test_cancelled_reply_keeps_chunks_separated() -> None:
     state = new_state("売上")
     with pytest.raises(asyncio.CancelledError):
-        await collect(Interviewer(_CancelledRunner(), LLMSettings()), state, "売上")  # type: ignore[arg-type]
+        await collect(Interviewer(_CancelledRunner(), LLMSettings()), state, "売上")
     assert state.messages[-1].text == "前半です。\n\n後半です。\n（中断されました）"
 
 
