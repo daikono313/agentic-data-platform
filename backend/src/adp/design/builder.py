@@ -231,6 +231,7 @@ class DesignBuilder:
         facts = [f for e in beam.events if (f := self._fact(e)) is not None]
         dims = self._dims(beam)
         self._check_ontology(dims)
+        self._check_ontology_words(beam)
         self._check_ontology_sources(facts, dims)
         self._check_duplicate_facts(beam, facts)
         self._check_linkable(facts, dims)
@@ -267,6 +268,27 @@ class DesignBuilder:
                     f"ディメンションの名前を {name} にして、{concept.model} を再利用してください",
                     dim.dimension,
                 )
+
+    def _check_ontology_words(self, beam: BeamModel) -> None:
+        """属性のラベルが、同じ源泉の列のオントロジーの属性と同じか（#137）。
+
+        オントロジーが業務の言葉の正本。違うまま確定すると、生成した PR が `make ontology` の
+        検査（beam/ との照合）で落ちるので、確定の前に止める。
+        """
+        if self.ontology is None:
+            return
+        seen: set[tuple[str, str]] = set()  # 出来事をまたいで共通のディメンションは 1 回だけ
+        for event in beam.events:
+            for dim in event.dimensions:
+                for a in dim.attributes:
+                    if a.source is None or a.source.column is None or (dim.name, a.name) in seen:
+                        continue
+                    seen.add((dim.name, a.name))
+                    mismatch = self.ontology.word_mismatch(a.source.table, a.source.column, a.label)
+                    if mismatch:
+                        self._blocker(
+                            f"属性 {dim.name}.{a.name}: {mismatch}", f"{dim.name}.{a.name}"
+                        )
 
     def _check_linkable(self, facts: list[FactTable], dims: list[DimTable]) -> None:
         """新しく作る fct / dim が、オントロジーのどれかの概念に結び付くか（#114）。

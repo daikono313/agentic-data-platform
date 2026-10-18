@@ -16,13 +16,16 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from adp.catalog.catalog import Catalog, CatalogUnavailable, TableProfile
 from adp.charts import ChartError, MetricFlowCompiler
 from adp.yaml_docs import load_yaml_docs
+
+if TYPE_CHECKING:
+    from adp.ontology.models import Concept, Ontology
 
 
 class Dimension(BaseModel):
@@ -303,50 +306,41 @@ class DatasetIndex:
             )
         return sorted(result, key=lambda m: (m.kind != "fct", m.name))
 
-    def _source_labels(self) -> dict[str, tuple[str, dict[str, str]]] | None:
-        """源泉 → (表のラベル, 列 → 属性のラベル)。オントロジーの日本語のラベル（#148）。
-
-        説明の無い源泉・列（取り込んだ直後の源泉など）を画面に出すとき、英語の識別子の代わりに使う。
-        同じ源泉に概念が複数あれば、表のラベルは最初の概念、属性はすべての概念から取る。
-        オントロジーが無い・読めなければ None。
-        """
+    def _ontology(self) -> Ontology | None:
+        """オントロジー。日本語のラベル（#148）を、説明の無い源泉・列（取り込んだ直後の源泉など）を
+        画面に出すとき、英語の識別子の代わりに使う。無い・読めなければ None。"""
         from adp.ontology import load
 
         try:
-            ontology = load(self.repo_root / "ontology" / "ontology.yml")
+            return load(self.repo_root / "ontology" / "ontology.yml")
         except (OSError, ValueError):
             return None
-        labels: dict[str, tuple[str, dict[str, str]]] = {}
-        for c in ontology.concepts:
-            table, columns = labels.setdefault(c.source, (c.label, {}))
-            for a in c.attributes:
-                columns.setdefault(a.column, a.label)
-        return labels
 
     def sources(self, errors: list[str]) -> list[SourceInfo]:
         if self.catalog is None:
             return []
-        labels = self._source_labels()
+        ontology = self._ontology()
         manifest = self._manifest()
         try:
             tables = self.catalog.list_sources()
             result = []
             for t in tables:
-                table_label, column_labels = (labels or {}).get(t.qualified, ("", {}))
+                concept = _concept_of(ontology, t.qualified)
                 result.append(
                     SourceInfo(
                         name=t.qualified,
-                        description=t.description or table_label,
+                        description=t.description or (concept.label if concept else ""),
                         row_count=t.row_count,
                         columns=[
                             ColumnInfo(
                                 name=c.name,
-                                description=c.description or column_labels.get(c.name, ""),
+                                description=c.description
+                                or _column_label(ontology, t.qualified, c.name),
                                 data_type=c.data_type,
                             )
                             for c in self.catalog.columns(t.qualified)
                         ],
-                        unmapped=labels is not None and t.qualified not in labels,
+                        unmapped=ontology is not None and concept is None,
                         used_by=None
                         if manifest is None
                         else self._used_by(t.schema_name, t.name, manifest),
@@ -388,11 +382,14 @@ class DatasetIndex:
             raise CatalogUnavailable("元データのカタログが使えません")
         profile = self.catalog.profile_table(table, detail=True)
         # 開始画面（sources）と同じく、説明の無い源泉・列はオントロジーのラベルで埋める（#148）
-        table_label, column_labels = (self._source_labels() or {}).get(profile.qualified, ("", {}))
+        ontology = self._ontology()
+        concept = _concept_of(ontology, profile.qualified)
         data = profile.model_dump()
-        data["description"] = profile.description or table_label
+        data["description"] = profile.description or (concept.label if concept else "")
         for c in data["columns"]:
-            c["description"] = c.get("description") or column_labels.get(c["name"], "")
+            c["description"] = c.get("description") or _column_label(
+                ontology, profile.qualified, c["name"]
+            )
         return SourceProfile(**data, used_by=self._used_by(profile.schema_name, profile.name))
 
     def _manifest(self) -> dict[str, Any] | None:
@@ -623,3 +620,15 @@ def model_sources(manifest: dict[str, Any]) -> dict[str, list[str]]:
                     stack.append(p)
         result[node["name"]] = sorted(found)
     return result
+
+
+def _concept_of(ontology: Ontology | None, table: str) -> Concept | None:
+    """源泉の概念。同じ源泉に概念が複数あれば最初のもの（表のラベルに使う）。"""
+    if ontology is None:
+        return None
+    return next((c for c in ontology.concepts if c.source == table), None)
+
+
+def _column_label(ontology: Ontology | None, table: str, column: str) -> str:
+    found = ontology.attribute_at(table, column) if ontology else None
+    return found[1].label if found else ""

@@ -35,7 +35,7 @@ events:
         fact_key: {table: raw.inventory, column: product_id}
         attributes:
           - name: category
-            label: カテゴリ
+            label: 商品カテゴリ
             examples: [食品]
             source: {table: raw.products, column: category}
             availability: available

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from adp.catalog.catalog import Catalog
 from adp.ontology.models import Ontology
+from adp.yaml_docs import load_yaml_docs, named
 
 
 class CheckResult(BaseModel):
@@ -19,14 +20,24 @@ class CheckResult(BaseModel):
     unmapped_models: list[str] = []
     """どの概念にも対応していない共通のモデル（dim_date）。ほかの dim / fct は errors に出る
     （#114）。"""
+    unmodeled_attributes: list[str] = []
+    """もの・人・場所の概念の属性のうち、その dim に列が無いもの（`<dim>.<列>（ラベル）`。#137）。
+    要求で使われたときに生成が dim に列を足すので、食い違いではなく表示だけ。"""
 
 
 SHARED_MODELS = frozenset({"dim_date"})
 """どの概念にも属さない共通のモデル（暦）。"""
 
 
-def _model_sources(manifest_path: Path) -> dict[str, set[str]] | None:
-    """モデル名 → そのモデルが（staging などを経由して）読んでいる源泉（`<schema>.<table>`）。"""
+class _DbtModel(BaseModel):
+    sources: set[str]
+    """（staging などを経由して）読んでいる源泉（`<schema>.<table>`）。"""
+    columns: set[str]
+    """yml に書いた列。"""
+
+
+def _dbt_models(manifest_path: Path) -> dict[str, _DbtModel] | None:
+    """モデル名 → そのモデルが読んでいる源泉と列。"""
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -53,7 +64,11 @@ def _model_sources(manifest_path: Path) -> dict[str, set[str]] | None:
                     stack.append(p)
         return found
 
-    return {n["name"]: upstream(k) for k, n in nodes.items() if n.get("resource_type") == "model"}
+    return {
+        n["name"]: _DbtModel(sources=upstream(k), columns=set(n.get("columns") or {}))
+        for k, n in nodes.items()
+        if n.get("resource_type") == "model"
+    }
 
 
 def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> CheckResult:
@@ -97,8 +112,9 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
             )
 
     unmapped_models: list[str] = []
+    unmodeled: list[str] = []
     if manifest_path is not None:
-        models = _model_sources(manifest_path)
+        models = _dbt_models(manifest_path)
         if models is None:
             errors.append("dbt の manifest を読めない（make dbt-build を実行する）")
         else:
@@ -107,11 +123,19 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                     continue
                 if c.model not in models:
                     errors.append(f"概念 {c.name}: モデル {c.model} が dbt に無い")
-                elif c.source not in models[c.model]:
+                elif c.source not in models[c.model].sources:
+                    read = ", ".join(sorted(models[c.model].sources)) or "なし"
                     errors.append(
                         f"概念 {c.name}: モデル {c.model} は源泉 {c.source} を読んでいない"
-                        f"（読んでいる源泉: {', '.join(sorted(models[c.model])) or 'なし'}）"
+                        f"（読んでいる源泉: {read}）"
                     )
+                elif c.kind == "entity":
+                    # fct の列は measure の名前（数量 → movement_qty など）になるので、dim だけ見る
+                    unmodeled += [
+                        f"{c.model}.{a.column}（{a.label}）"
+                        for a in c.attributes
+                        if a.column not in models[c.model].columns
+                    ]
             mapped_models = {c.model for c in ontology.concepts if c.model}
             unmapped = sorted(
                 m for m in models if m.startswith(("dim_", "fct_")) and m not in mapped_models
@@ -131,4 +155,36 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
         errors=errors,
         unmapped_sources=sorted(tables - mapped),
         unmapped_models=unmapped_models,
+        unmodeled_attributes=unmodeled,
     )
+
+
+def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
+    """BEAM 成果物（beam/*.yml）の属性のラベルが、同じ源泉の列のオントロジーの属性と違うもの
+    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は見ない。出来事をまたいで
+    共通のディメンションの属性は、設計の検査（design.builder）と同じく最初の 1 回だけ見る。
+
+    ontology は beam に依存しない（backend/CLAUDE.md の依存の向き）ので、成果物は YAML のまま読む。
+    """
+    errors: list[str] = []
+    docs = load_yaml_docs(beam_dir, "*.yml")
+    for problem in docs.problems:
+        errors.append(f"{problem.path.name}: 読めない（{problem.reason}）")
+    for doc in docs.docs:
+        seen: set[tuple[str, str]] = set()
+        for event in named(doc.data.get("events")):
+            for dim in named(event.get("dimensions")):
+                for attr in named(dim.get("attributes")):
+                    source = attr.get("source")
+                    key = (str(dim["name"]), str(attr["name"]))
+                    if not isinstance(source, dict) or not source.get("column") or key in seen:
+                        continue
+                    seen.add(key)
+                    mismatch = ontology.word_mismatch(
+                        str(source.get("table")),
+                        str(source["column"]),
+                        str(attr.get("label") or ""),
+                    )
+                    if mismatch:
+                        errors.append(f"{doc.path.name}: {dim['name']}.{attr['name']}: {mismatch}")
+    return errors

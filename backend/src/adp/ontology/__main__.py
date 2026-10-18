@@ -1,7 +1,8 @@
 """`python -m adp.ontology build|check`（#67）。
 
 - build: `ontology/ontology.yml` から `docs/ontology.md` を生成する
-- check: md が最新か、源泉・dbt のモデルと食い違いが無いかを調べる（CI）。未整理の源泉は表示だけ
+- check: md が最新か、源泉・dbt のモデル・BEAM 成果物（beam/）の言葉と食い違いが無いかを調べる
+  （CI）。未整理の源泉・dim に列の無い属性は表示だけ
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import sys
 from pathlib import Path
 
 from adp.catalog.catalog import Catalog, CatalogUnavailable
-from adp.ontology.check import check
+from adp.ontology.check import beam_mismatches, check
 from adp.ontology.models import dump, load
 from adp.ontology.render import markdown
 from adp.warehouse import warehouse_db
@@ -52,13 +53,16 @@ def main(argv: list[str] | None = None) -> int:
     except CatalogUnavailable as err:
         print(f"源泉と照合できなかった: {err}")
         return 1
-    for e in result.errors:
+    errors = result.errors + beam_mismatches(ontology, REPO_ROOT / "beam")
+    for e in errors:
         print(f"✗ {e}")
     for s in result.unmapped_sources:
         print(f"・未整理の源泉（どの概念にもなっていない）: {s}")
     for m in result.unmapped_models:
         print(f"・概念を持たない共通のモデル: {m}")
-    if result.errors:
+    for a in result.unmodeled_attributes:
+        print(f"・dim に列の無い属性（要求で使われたら生成が足す）: {a}")
+    if errors:
         failed = True
     if not failed:
         print(f"✓ オントロジー: 概念 {len(ontology.concepts)}、関係 {len(ontology.relations)}")

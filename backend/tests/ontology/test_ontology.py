@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from adp.catalog.catalog import Catalog
 from adp.ontology import Ontology, dump, load, markdown, mermaid
 from adp.ontology.__main__ import DOC, ONTOLOGY
-from adp.ontology.check import check
+from adp.ontology.check import beam_mismatches, check
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -268,3 +268,96 @@ def test_model_without_concept_is_an_error(tmp_path: Path) -> None:
     assert result.unmapped_models == ["dim_date"]  # ほかはエラーにだけ出す（2 回出さない）
     assert [e for e in result.errors if "fct_sales_copy" in e]
     assert not [e for e in result.errors if "dim_date" in e]
+
+
+def test_beam_words_must_match_ontology(tmp_path: Path) -> None:
+    """BEAM 成果物の属性のラベル（名前は見ない）を、オントロジーの属性と照合する（#137）。"""
+    attrs = [
+        {
+            "name": "region",
+            "label": "居住地方",
+            "source": {"table": "raw.customers", "column": "region"},
+        },
+        {
+            "name": "area",
+            "label": "地方",
+            "source": {"table": "raw.customers", "column": "region"},
+        },
+        {"name": "x", "label": "式", "source": {"table": "raw.customers", "expr": "1"}},
+        {"name": "y", "label": "無い列", "source": {"table": "raw.customers", "column": "y"}},
+    ]
+    # 出来事をまたいで共通のディメンションは 1 回だけ（設計の検査と同じ）
+    dims = [{"name": "customer", "attributes": attrs}]
+    beam = {"events": [{"name": "e", "dimensions": dims}, {"name": "f", "dimensions": dims}]}
+    (tmp_path / "b.yml").write_text(json.dumps(beam, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "broken.yml").write_text("events: [", encoding="utf-8")
+    errors = beam_mismatches(Ontology.model_validate(_data()), tmp_path)
+    assert errors[1:] == [
+        "b.yml: customer.region: raw.customers.region は、オントロジーでは「顧客」の属性 region"
+        "「地方」です。ラベルを「地方」にしてください"
+    ]
+    assert errors[0].startswith("broken.yml: 読めない")
+
+
+def test_check_command_fails_on_beam_words(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`python -m adp.ontology check` は BEAM 成果物の言葉の食い違いでも落ちる（#137）。"""
+    from adp.ontology import __main__ as cli
+    from adp.ontology.check import CheckResult
+
+    ontology = Ontology.model_validate(_data())
+    (tmp_path / "ontology").mkdir()
+    (tmp_path / "ontology" / "ontology.yml").write_text(dump(ontology), encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "ontology.md").write_text(markdown(ontology), encoding="utf-8")
+    (tmp_path / "warehouse" / "target").mkdir(parents=True)
+    (tmp_path / "warehouse" / "target" / "manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "warehouse" / "db.duckdb").write_text("", encoding="utf-8")
+    (tmp_path / "beam").mkdir()
+    attr = {
+        "name": "area",
+        "label": "居住地方",
+        "source": {"table": "raw.customers", "column": "region"},
+    }
+    beam = {"events": [{"name": "e", "dimensions": [{"name": "c", "attributes": [attr]}]}]}
+    (tmp_path / "beam" / "b.yml").write_text(json.dumps(beam, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cli, "ONTOLOGY", tmp_path / "ontology" / "ontology.yml")
+    monkeypatch.setattr(cli, "DOC", tmp_path / "docs" / "ontology.md")
+    monkeypatch.setattr(cli, "warehouse_db", lambda w: w / "db.duckdb")
+    monkeypatch.setattr(cli, "Catalog", lambda db: None)
+    monkeypatch.setattr(
+        cli,
+        "check",
+        lambda *a: CheckResult(
+            errors=[], unmapped_sources=[], unmodeled_attributes=["dim_c.x（X）"]
+        ),
+    )
+    assert cli.main(["check"]) == 1
+    out = capsys.readouterr().out
+    assert "✗ b.yml: c.area: raw.customers.region は" in out
+    assert "・dim に列の無い属性（要求で使われたら生成が足す）: dim_c.x（X）" in out
+
+
+def test_repository_beam_words_match_ontology() -> None:
+    assert beam_mismatches(load(ONTOLOGY), REPO / "beam") == []
+
+
+def test_attributes_missing_from_the_dim_are_listed(tmp_path: Path) -> None:
+    """もの・人・場所の概念の属性で、dim に列が無いものは表示する（食い違いにはしない。#137）。"""
+    db = _db(tmp_path, "order_id int, customer_id int")
+    manifest = tmp_path / "manifest.json"
+    node = {"name": "dim_customer", "resource_type": "model", "columns": {"customer_key": {}}}
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {"model.p.dim_customer": node},
+                "sources": {"source.p.raw.customers": {"schema": "raw", "name": "customers"}},
+                "parent_map": {"model.p.dim_customer": ["source.p.raw.customers"]},
+            }
+        )
+    )
+    result = check(Ontology.model_validate(_data()), Catalog(db), manifest)
+    assert result.unmodeled_attributes == ["dim_customer.region（地方）"]
+    assert not [e for e in result.errors if "region" in e]

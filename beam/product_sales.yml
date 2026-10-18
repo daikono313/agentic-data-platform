@@ -81,7 +81,7 @@ events:
       availability: available
       history_required: false
     - name: category
-      label: カテゴリ
+      label: 商品カテゴリ
       description: ''
       examples:
       - 衣料
