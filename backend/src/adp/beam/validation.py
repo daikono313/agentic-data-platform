@@ -251,10 +251,8 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 r
                 for r in metric.group_by
                 if len(events) > 1
-                and any(
-                    resolve_ref(e, r) not in (None, "measure") and not _shared_ref(e, r)
-                    for e in events.values()
-                )
+                and all(resolve_ref(e, r) not in (None, "measure") for e in events.values())
+                and not all(_shared_ref(e, r) for e in events.values())
             ]
             for ref in unshared:
                 issues.append(

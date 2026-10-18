@@ -404,6 +404,11 @@ def test_cross_event_group_by_must_share_names() -> None:
             "切ってください"
         ], ref
 
+    # 片方の出来事にしか無い切り口は「ありません」だけを出す
+    rate.group_by = ["return_reason.return_reason"]
+    assert unshared() == []
+    assert any("return_reason.return_reason は元の指標" in i for i in model.finalize_issues())
+
     # 絞り込みは元の指標ごとに、その出来事の名前で書くので問わない（#178）
     rate.group_by = ["product.category"]
     rate.filters = [MetricFilter(ref="order_status.order_status", operator="=", values=["x"])]
