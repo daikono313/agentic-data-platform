@@ -22,7 +22,6 @@ from adp.beam import (
     W,
 )
 from adp.design import ColumnRole, DimTable, FactTable, PhysicalDesign
-from adp.design.builder import is_masterless
 from adp.metricflow import literal
 
 _AGG = {
@@ -78,7 +77,7 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
         if col is None:
             raise SemanticError(f"{ref} の日付列が {fact.name} にありません")
         return f"{pe}__{col}__{grain}"
-    if is_masterless(d):
+    if d.masterless:
         return pe if fact.grain_columns == [d.ref] else f"{pe}__{d.ref}"
     if not attr:
         raise SemanticError(f"{ref} には属性名が必要です")

@@ -10,6 +10,7 @@ from adp.beam import (
     FactType,
     Gap,
     GapKind,
+    MetricFilter,
     MetricRequest,
     MetricType,
     SourceRef,
@@ -372,6 +373,58 @@ def test_nested_inputs_must_resolve_refs() -> None:
         ),
     ]
     assert model.finalize_issues() == []
+
+
+def test_cross_event_refs_must_share_names() -> None:
+    """出来事をまたぐ比率の切り口・絞り込みは、出来事によらず同じ名前で解決できるものに限る。
+    マスタなし・縮退のディメンションと時間軸以外の When は、出来事ごとの名前になる（#181）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    returns = model.event("customer_returns_product")
+    orders = model.event("customer_orders_product")
+    assert returns is not None and orders is not None
+    # 注文の状態（マスタなし）と注文日（返品では時間軸でない）を、返品の出来事にも持たせる
+    shared = ("order_status", "ordered_at")
+    returns.dimensions += [d.model_copy(deep=True) for d in orders.dimensions if d.ref in shared]
+    returns.agg_time_dimension = "returned_at"
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category"
+    assert model.finalize_issues() == []
+
+    rate.group_by = ["order_status.order_status"]
+    issues = model.finalize_issues()
+    for event in ("customer_returns_product", "customer_orders_product"):
+        assert any(
+            "[metric return_rate_by_category] order_status.order_status はイベント "
+            f"{event} では出来事ごとの名前になる" in i
+            for i in issues
+        ), issues
+
+    # 注文日は注文では時間軸（metric_time）だが、返品では返品の出来事の日付列になる
+    rate.group_by = ["ordered_at.month"]
+    issues = model.finalize_issues()
+    assert [i for i in issues if "出来事ごとの名前" in i] == [
+        "[metric return_rate_by_category] ordered_at.month はイベント customer_returns_product "
+        "では出来事ごとの名前になるため、出来事をまたぐ指標の切り口・絞り込みに使えません"
+        "（共通のディメンションの属性か、時間軸を使ってください）"
+    ], issues
+
+    # 絞り込みも同じ
+    rate.group_by = ["product.category"]
+    rate.filters = [MetricFilter(ref="order_status.order_status", operator="=", values=["x"])]
+    assert any("出来事ごとの名前" in i for i in model.finalize_issues())
+
+    # 同じ出来事の中だけなら、出来事ごとの名前でも解決できる
+    sold = next(m for m in model.metrics if m.name == "sold_qty_excl_cancelled")
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "half", "event": "customer_orders_product", "type": "ratio"}
+            | {"numerator": sold.name, "denominator": sold.name}
+            | {"group_by": ["order_status.order_status"]}
+        )
+    )
+    assert not any("[metric half]" in i for i in model.finalize_issues())
 
 
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
