@@ -22,7 +22,6 @@ from adp.beam import (
     W,
 )
 from adp.design import ColumnRole, DimTable, FactTable, PhysicalDesign
-from adp.design.builder import is_masterless
 from adp.metricflow import literal
 
 _AGG = {
@@ -60,7 +59,9 @@ def _time_column(fact: FactTable, ref: str) -> str | None:
 
 
 def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
-    """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。"""
+    """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。
+
+    出来事によらず同じ名前になるかの判定は `adp.beam.validation._shared_ref` とそろえる。"""
     pe = fact.primary_entity
     if event.degenerate(ref):
         # 粒度のキー（主 entity）は entity 名そのもので参照する
@@ -78,7 +79,7 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
         if col is None:
             raise SemanticError(f"{ref} の日付列が {fact.name} にありません")
         return f"{pe}__{col}__{grain}"
-    if is_masterless(d):
+    if d.masterless:
         return pe if fact.grain_columns == [d.ref] else f"{pe}__{d.ref}"
     if not attr:
         raise SemanticError(f"{ref} には属性名が必要です")

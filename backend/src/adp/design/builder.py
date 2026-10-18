@@ -62,11 +62,6 @@ def singular(name: str) -> str:
     return name[:-1] if name.endswith("s") else name
 
 
-def is_masterless(d: Dimension) -> bool:
-    """マスタなしのディメンション（自然キーとイベント側のキーが同じ列）。"""
-    return d.w != W.WHEN and d.business_key is not None and d.business_key == d.fact_key
-
-
 _SQL_WORDS = {"as", "and", "or", "not", "null", "is", "in", "case", "when", "then", "else", "end"}
 _STRING = re.compile(r"'(?:[^']|'')*'")
 
@@ -511,7 +506,7 @@ class DesignBuilder:
                 )
                 if is_agg:
                     agg_time = (f"{base_name}_on", d)
-            elif is_masterless(d):
+            elif d.masterless:
                 columns.append(
                     Column(
                         name=d.ref,
@@ -566,7 +561,7 @@ class DesignBuilder:
                 if gd.w == W.WHEN:
                     grain_columns.append(f"{_time_base(gd)}_on")
                 else:
-                    grain_columns.append(gd.ref if is_masterless(gd) else f"{gd.ref}_key")
+                    grain_columns.append(gd.ref if gd.masterless else f"{gd.ref}_key")
         table_name = event.table_name or event.name
         return FactTable(
             name=event.fact_table,
@@ -589,7 +584,7 @@ class DesignBuilder:
         by_name: dict[str, list[Dimension]] = {}
         for event in beam.events:
             for d in event.dimensions:
-                if d.w != W.WHEN and not is_masterless(d):
+                if d.w != W.WHEN and not d.masterless:
                     by_name.setdefault(d.name, []).append(d)
         return [dim for name, uses in by_name.items() if (dim := self._dim(name, uses))]
 
@@ -698,7 +693,7 @@ class DesignBuilder:
                     continue
                 if d is None:
                     self._blocker(f"{p} 切り口 {ref} がイベントにありません", ref)
-                elif is_masterless(d):
+                elif d.masterless:
                     if fact.column(d.ref) is None:
                         self._blocker(f"{p} 切り口 {ref} の列が {fact.name} にありません", ref)
                 elif (dim := dims.get(d.name)) is None or all(c.name != attr for c in dim.columns):

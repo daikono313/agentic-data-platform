@@ -330,6 +330,15 @@ class Dimension(_Base):
     def ref(self) -> str:
         return self.role or self.name
 
+    @property
+    def masterless(self) -> bool:
+        """マスタなしのディメンション（自然キーとイベント側のキーが同じ列）。"""
+        return (
+            self.w != W.WHEN
+            and self.business_key is not None
+            and (self.business_key == self.fact_key)
+        )
+
     @model_validator(mode="after")
     def _check(self) -> Dimension:
         if self.time_grain is not None and self.w != W.WHEN:

@@ -231,17 +231,35 @@ def _metric_issues(model: BeamModel) -> list[str]:
             leaves, cycle = _leaf_inputs(metric, metrics)
             if cycle:
                 issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
+            refs = [*metric.group_by, *(f.ref for f in metric.filters)]
+            # 切り口は MetricFlow が同じ名前のまま元の指標へ渡すので、出来事をまたぐなら、
+            # どの出来事でも同じ名前で解決できる必要がある（#181）
+            events = {event.name: event}
             for via, name in leaves:
                 src = metrics[name]
                 src_event = model.event(src.event)
                 if src_event is None or src_event.name == event.name:
                     continue
+                events[src_event.name] = src_event
                 where = name if via == name else f"{via} の元の {name}"
-                for ref in [*metric.group_by, *(f.ref for f in metric.filters)]:
+                for ref in refs:
                     if resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
                             f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
+            unshared = [
+                r
+                for r in metric.group_by
+                if len(events) > 1
+                and all(resolve_ref(e, r) not in (None, "measure") for e in events.values())
+                and not all(_shared_ref(e, r) for e in events.values())
+            ]
+            for ref in unshared:
+                issues.append(
+                    f"{p} 切り口 {ref} は出来事（{'・'.join(events)}）ごとに別々に記録される項目"
+                    "なので、出来事をまたぐ指標の切り口に使えません。どの出来事にも共通する"
+                    "ディメンション（商品など）の属性で切ってください"
+                )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
@@ -249,6 +267,19 @@ def _metric_issues(model: BeamModel) -> list[str]:
             elif kind == "attribute" and _attribute_unavailable(event, ref):
                 issues.append(f"{p} group_by {ref} はデータなしです")
     return issues
+
+
+def _shared_ref(event: BusinessEvent, ref: str) -> bool:
+    """出来事によらず同じ名前で解決できる参照か（マスタのあるディメンションの属性と、時間軸）。
+    MetricFlow の名前への変換（`adp.generation.semantic.mf_name`）と判定をそろえる。"""
+    kind = resolve_ref(event, ref)
+    dim = event.dimension(ref.partition(".")[0])
+    if kind == "attribute":
+        return dim is not None and dim.w != W.WHEN and not dim.masterless
+    if kind == "time":
+        time = event.time_dimension
+        return dim is not None and time is not None and time.ref == dim.ref
+    return False
 
 
 def _leaf_inputs(
