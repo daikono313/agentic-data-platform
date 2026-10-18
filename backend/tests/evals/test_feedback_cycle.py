@@ -586,6 +586,7 @@ def test_purpose_question_check() -> None:
         "何に役立てたいですか？",
         "見たいと思った背景を教えていただけますか？",
         "この指標を見てどのようなアクションを取りますか？",
+        "この数字を見て、どんな判断や行動に使う予定ですか。たとえば、品揃えの見直しなどです。",
     ]:
         assert _transcript_check_map([_msg(text)])["asks_purpose"].passed, text
     for text in [
@@ -594,6 +595,7 @@ def test_purpose_question_check() -> None:
         "集計方法は合計ですか？",
         "チャネル別にも見ますか？",
         "「目的地」別にも見ますか？",
+        "「この数字で何に使いますか。」と聞かれることがあります。",  # 引用は質問ではない
     ]:
         assert not _transcript_check_map([_msg(text)])["asks_purpose"].passed, text
     assert "asks_purpose" not in _checks([_msg("何に使いますか？")])  # シナリオに書いたときだけ
@@ -612,3 +614,14 @@ def test_check_rates_per_scenario(tmp_path: Path) -> None:
     (tmp_path / "a" / "x.json").write_text(json.dumps(data), encoding="utf-8")
     assert "| x / finalizable | 1/2 |" in check_table(None, tmp_path / "b")
     assert "| x / finalizable | 1/2 → 0/1 ⚠ |" in check_table(tmp_path / "b", tmp_path / "a")
+
+
+def test_questions_without_question_mark() -> None:
+    """「？」の無い質問も数え、「」の中の質問だけの文は数えない。"""
+    from adp.evals.interview import _questions, transcript_metrics
+
+    text = "「月ごとの売上はいくらですか。」という問いに言い換えました。この理解で合っていますか。"
+    assert _questions(text) == ["この理解で合っていますか。"]
+    assert transcript_metrics([_msg("取消はありますか。")])["questions"] == 1
+    quoted = _msg("「売上はいくらですか。」と言い換えました。")
+    assert transcript_metrics([quoted])["questions"] == 0
