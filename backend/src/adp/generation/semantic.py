@@ -59,7 +59,9 @@ def _time_column(fact: FactTable, ref: str) -> str | None:
 
 
 def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
-    """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。"""
+    """BEAM の参照（group_by / filter）を MetricFlow の名前に変換する。
+
+    出来事によらず同じ名前になるかの判定は `adp.beam.validation._shared_ref` とそろえる。"""
     pe = fact.primary_entity
     if event.degenerate(ref):
         # 粒度のキー（主 entity）は entity 名そのもので参照する

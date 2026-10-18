@@ -232,29 +232,36 @@ def _metric_issues(model: BeamModel) -> list[str]:
             if cycle:
                 issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
             refs = [*metric.group_by, *(f.ref for f in metric.filters)]
-            crossing = False
+            # 切り口は MetricFlow が同じ名前のまま元の指標へ渡すので、出来事をまたぐなら、
+            # どの出来事でも同じ名前で解決できる必要がある（#181）
+            events = {event.name: event}
             for via, name in leaves:
                 src = metrics[name]
                 src_event = model.event(src.event)
                 if src_event is None or src_event.name == event.name:
                     continue
-                crossing = True
+                events[src_event.name] = src_event
                 where = name if via == name else f"{via} の元の {name}"
                 for ref in refs:
                     if resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
                             f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
-                    elif not _shared_ref(src_event, ref):
-                        issues.append(_UNSHARED.format(p=p, ref=ref, event=src_event.name))
-            if crossing:
-                # MetricFlow は切り口・絞り込みを同じ名前のまま元の指標へ渡す。縮退・マスタなし
-                # のディメンションと時間軸以外の When は、出来事ごとに名前が変わる（#181）
-                for ref in refs:
-                    if resolve_ref(event, ref) not in (None, "measure") and not _shared_ref(
-                        event, ref
-                    ):
-                        issues.append(_UNSHARED.format(p=p, ref=ref, event=event.name))
+            unshared = [
+                r
+                for r in metric.group_by
+                if len(events) > 1
+                and any(
+                    resolve_ref(e, r) not in (None, "measure") and not _shared_ref(e, r)
+                    for e in events.values()
+                )
+            ]
+            for ref in unshared:
+                issues.append(
+                    f"{p} 切り口 {ref} は出来事（{'・'.join(events)}）ごとに別々に記録される項目"
+                    "なので、出来事をまたぐ指標の切り口に使えません。どの出来事にも共通する"
+                    "ディメンション（商品など）の属性で切ってください"
+                )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
@@ -264,18 +271,13 @@ def _metric_issues(model: BeamModel) -> list[str]:
     return issues
 
 
-_UNSHARED = (
-    "{p} {ref} はイベント {event} では出来事ごとの名前になるため、出来事をまたぐ指標の"
-    "切り口・絞り込みに使えません（共通のディメンションの属性か、時間軸を使ってください）"
-)
-
-
 def _shared_ref(event: BusinessEvent, ref: str) -> bool:
-    """出来事によらず同じ名前で解決できる参照か（共通のディメンションの属性と、時間軸）。"""
+    """出来事によらず同じ名前で解決できる参照か（マスタのあるディメンションの属性と、時間軸）。
+    MetricFlow の名前への変換（`adp.generation.semantic.mf_name`）と判定をそろえる。"""
     kind = resolve_ref(event, ref)
     dim = event.dimension(ref.partition(".")[0])
     if kind == "attribute":
-        return dim is not None and not dim.masterless
+        return dim is not None and dim.w != W.WHEN and not dim.masterless
     if kind == "time":
         time = event.time_dimension
         return dim is not None and time is not None and time.ref == dim.ref
