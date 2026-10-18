@@ -441,6 +441,28 @@ def test_cross_event_group_by_must_share_names() -> None:
     assert any(i.startswith("[metric pct] 切り口 return_id") for i in unshared())
 
 
+def test_cross_event_group_by_time_uses_each_time_axis() -> None:
+    """時間軸の切り口は元の指標ごとにその出来事の時間軸で解決されるので、出来事ごとに時間軸の
+    名前が違っても切れる（#185）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category" and rate.event == "customer_returns_product"
+    rate.group_by = ["product.category", "returned_at.month"]
+    assert model.finalize_issues() == []
+
+    # 元の指標の出来事に時間軸が無ければ切れない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert [i for i in model.finalize_issues() if "returned_at.month" in i] == [
+        "[metric return_rate_by_category] returned_at.month は時間軸で切りますが、元の指標 "
+        "sold_qty_excl_cancelled のイベント customer_orders_product には時間軸"
+        "（agg_time_dimension）がありません"
+    ]
+
+
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
     base = {"label": "x", "question": "q", "framed_question": "q"}
     base |= {"event": "customer_orders_product"}
