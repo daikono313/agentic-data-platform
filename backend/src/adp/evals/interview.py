@@ -417,10 +417,19 @@ JARGON = (
 _EXPLAINED_AFTER = re.compile(r"^[ァ-ヶー]{0,6}\s*(?:[（(]|とは|＝|=|:|：)")
 # 「1 行が何を表すか（粒度）」のように、説明の後に括弧で添えた場合も説明済み
 _EXPLAINED_BEFORE = re.compile(r"[（(]\s*$")
-_QUESTION = re.compile(r"[^。\n？?]*[？?]")
+# 「？」の無い質問（「この理解で合っていますか。」）も質問とみなす
+_QUESTION_END = re.compile(r"(?:[？?]|(?:ですか|ますか|ませんか|でしょうか)。)\s*$")
+
+
 DUPLICATE_RATIO = 0.95
 """同じ質問とみなす類似度（「顧客について…」「商品について…」のような型の同じ別の質問は除く）。"""
 _CONFIRM_WORDS = ("確定", "よろしいですか", "問題ありませんか")
+
+
+def _questions(text: str) -> list[str]:
+    """質問の文。「」の中の「。」「？」では切らない（「…はいくらですか。」という言い換えは
+    それだけでは質問ではない）。"""
+    return [q.strip() for q in sentences(text) if _QUESTION_END.search(q)]
 
 
 def _term_pattern(term: str) -> re.Pattern[str]:
@@ -488,7 +497,7 @@ def _questions_matching(messages: list[Any], pattern: re.Pattern[str]) -> list[s
         q.strip()
         for m in messages
         if m.role == "assistant"
-        for q in _QUESTION.findall(_shown(m))
+        for q in _questions(_shown(m))
         if pattern.search(_QUOTED.sub("", q))
     ]
 
@@ -514,8 +523,8 @@ def _repeated_questions(messages: list[Any]) -> list[str]:
             previous_user = str(m.text)
             continue
         n += 1
-        asked_back = "？" in previous_user or "?" in previous_user
-        for q in _QUESTION.findall(_shown(m)):
+        asked_back = bool(_questions(previous_user))
+        for q in _questions(_shown(m)):
             normalized = normalize(q)
             if len(normalized) >= 8:
                 exempt = asked_back or any(w in q for w in _CONFIRM_WORDS)
@@ -537,7 +546,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
     lengths = [len(_shown(m)) for m in assistant] or [0]
     return {
         "assistant_turns": len(assistant),
-        "questions": sum(1 for m in assistant if _QUESTION.search(_shown(m))),
+        "questions": sum(1 for m in assistant if _questions(_shown(m))),
         "avg_chars": round(sum(lengths) / len(lengths), 1),
         "max_chars": max(lengths),
         "unexplained_jargon": len(_unexplained_jargon(messages)),
@@ -571,7 +580,7 @@ def _transcript_check_map(messages: list[Any]) -> dict[str, CheckResult]:
         _shown(m)[:60]
         for m in messages
         if m.role == "assistant"
-        and _QUESTION.search(_shown(m))
+        and _questions(_shown(m))
         and _IRREGULAR.search(_QUOTED.sub("", _shown(m)))
     ]
     purpose = _questions_matching(messages, _PURPOSE)
