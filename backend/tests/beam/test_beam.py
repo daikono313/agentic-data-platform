@@ -441,6 +441,49 @@ def test_cross_event_group_by_must_share_names() -> None:
     assert any(i.startswith("[metric pct] 切り口 return_id") for i in unshared())
 
 
+def test_cross_event_group_by_time_uses_each_time_axis() -> None:
+    """時間軸の切り口は元の指標ごとにその出来事の時間軸で解決されるので、出来事ごとに時間軸の
+    名前が違っても切れる（#185）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category" and rate.event == "customer_returns_product"
+    rate.group_by = ["product.category", "returned_at.month"]
+    assert model.finalize_issues() == []
+    # 入れ子でも、たどった先の出来事の時間軸で解決される
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100", "group_by": ["ordered_at.month"]}
+        )
+    )
+    assert model.finalize_issues() == []
+    # 自分の出来事の時間軸でない When は、出来事をまたぐと切れない
+    returns = model.event("customer_returns_product")
+    assert returns is not None
+    returns.dimensions.append(returns.dimensions[1].model_copy(update={"role": "inspected_at"}))
+    returns.agg_time_dimension = "returned_at"
+    rate.group_by = ["inspected_at.month"]
+    assert any(
+        "[metric return_rate_by_category] inspected_at.month は元の指標" in i
+        for i in model.finalize_issues()
+    )
+    rate.group_by = ["returned_at.month"]
+    model.metrics.pop()
+
+    # 元の指標の出来事に時間軸が無ければ切れない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert [i for i in model.finalize_issues() if "returned_at.month" in i] == [
+        "[metric return_rate_by_category] returned_at.month は時間軸で切りますが、元の指標 "
+        "sold_qty_excl_cancelled のイベント customer_orders_product には時間軸"
+        "（agg_time_dimension）がありません"
+    ]
+
+
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
     base = {"label": "x", "question": "q", "framed_question": "q"}
     base |= {"event": "customer_orders_product"}

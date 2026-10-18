@@ -235,6 +235,14 @@ def _metric_issues(model: BeamModel) -> list[str]:
             # 切り口は MetricFlow が同じ名前のまま元の指標へ渡すので、出来事をまたぐなら、
             # どの出来事でも同じ名前で解決できる必要がある（#181）
             events = {event.name: event}
+            # 時間軸の切り口は MetricFlow の metric_time になり（`mf_name`）、元の指標ごとにその
+            # 出来事の時間軸で解決される。元の指標の出来事に時間軸があればよく、ref の名前は
+            # そろわなくてよい（#185）
+            metric_time = {
+                r
+                for r in metric.group_by
+                if resolve_ref(event, r) == "time" and _shared_ref(event, r)
+            }
             for via, name in leaves:
                 src = metrics[name]
                 src_event = model.event(src.event)
@@ -243,7 +251,13 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 events[src_event.name] = src_event
                 where = name if via == name else f"{via} の元の {name}"
                 for ref in refs:
-                    if resolve_ref(src_event, ref) in (None, "measure"):
+                    if ref in metric_time:
+                        if src_event.time_dimension is None:
+                            issues.append(
+                                f"{p} {ref} は時間軸で切りますが、元の指標 {where} のイベント "
+                                f"{src_event.name} には時間軸（agg_time_dimension）がありません"
+                            )
+                    elif resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
                             f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
@@ -251,6 +265,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 r
                 for r in metric.group_by
                 if len(events) > 1
+                and r not in metric_time
                 and all(resolve_ref(e, r) not in (None, "measure") for e in events.values())
                 and not all(_shared_ref(e, r) for e in events.values())
             ]
