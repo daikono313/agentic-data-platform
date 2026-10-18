@@ -286,7 +286,9 @@ class DesignBuilder:
                     seen.add((dim.name, a.name))
                     mismatch = self.ontology.word_mismatch(a.source.table, a.source.column, a.label)
                     if mismatch:
-                        self._blocker(f"属性 {dim.name}.{a.name}: {mismatch}", dim.name)
+                        self._blocker(
+                            f"属性 {dim.name}.{a.name}: {mismatch}", f"{dim.name}.{a.name}"
+                        )
 
     def _check_linkable(self, facts: list[FactTable], dims: list[DimTable]) -> None:
         """新しく作る fct / dim が、オントロジーのどれかの概念に結び付くか（#114）。

@@ -365,7 +365,10 @@ def test_attribute_words_must_match_ontology() -> None:
             for a in dim["attributes"]:
                 if a["name"] == "category":
                     a["label"] = "商品カテゴリ（大分類）"
-    messages = [m for m in _messages(BeamModel.model_validate(data), _ontology()) if "ラベル" in m]
+    design = DesignBuilder(FakeSchema(), ontology=_ontology()).build(BeamModel.model_validate(data))
+    # 参照先は属性（ディメンションのほかの課題を隠さない）
+    assert [b.ref for b in design.blockers if "ラベル" in b.message] == ["product.category"]
+    messages = [b.message for b in design.blockers if "ラベル" in b.message]
     assert messages == [
         "属性 product.category: raw.products.category は、オントロジーでは「商品」の属性"
         " category「商品カテゴリ」です。ラベルを「商品カテゴリ」にしてください"

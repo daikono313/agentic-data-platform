@@ -161,7 +161,8 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
 
 def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
     """BEAM 成果物（beam/*.yml）の属性のラベルが、同じ源泉の列のオントロジーの属性と違うもの
-    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は見ない。
+    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は見ない。出来事をまたいで
+    共通のディメンションの属性は、設計の検査（design.builder）と同じく最初の 1 回だけ見る。
 
     ontology は beam に依存しない（backend/CLAUDE.md の依存の向き）ので、成果物は YAML のまま読む。
     """
@@ -170,12 +171,15 @@ def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
     for problem in docs.problems:
         errors.append(f"{problem.path.name}: 読めない（{problem.reason}）")
     for doc in docs.docs:
+        seen: set[tuple[str, str]] = set()
         for event in named(doc.data.get("events")):
             for dim in named(event.get("dimensions")):
                 for attr in named(dim.get("attributes")):
                     source = attr.get("source")
-                    if not isinstance(source, dict) or not source.get("column"):
+                    key = (str(dim["name"]), str(attr["name"]))
+                    if not isinstance(source, dict) or not source.get("column") or key in seen:
                         continue
+                    seen.add(key)
                     mismatch = ontology.word_mismatch(
                         str(source.get("table")),
                         str(source["column"]),
