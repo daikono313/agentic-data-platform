@@ -411,7 +411,11 @@ def test_cross_event_group_by_must_share_names() -> None:
 
     # 絞り込みは元の指標ごとに、その出来事の名前で書くので問わない（#178）
     rate.group_by = ["product.category"]
-    rate.filters = [MetricFilter(ref="order_status.order_status", operator="=", values=["x"])]
+    rate.filters = [
+        MetricFilter.model_validate(
+            {"ref": "order_status.order_status", "operator": "=", "values": ["x"]}
+        )
+    ]
     assert unshared() == []
 
     # 同じ出来事の中だけなら、出来事ごとの名前でも解決できる
