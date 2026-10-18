@@ -581,12 +581,17 @@ class BeamModel(_Base):
             src = next(m for m in self.metrics if m.name == name)
             event = self.event(src.event)
             time = event.time_dimension if event else None
-            if event is not None and time is not None:
-                axes.append((src, event.name, time))
+            if event is None or time is None:
+                return None  # 時間軸の無い出来事があれば時間では切れない（検証の課題になる）
+            axes.append((src, event.name, time))
         if len({e for _, e, _ in axes}) < 2:
             return None
-        parts = [f"{src.label}（{src.name}）は{time.label}" for src, _, time in axes]
-        return "時間で切ると、" + "、".join(parts) + "で集計します"
+        parts = [f"「{src.label}」は{time.label}" for src, _, time in axes]
+        return (
+            "時間で切ると、"
+            + "、".join(parts)
+            + "で集計します（同じ期間の値どうしで計算し、同じ対象を追った値ではありません）"
+        )
 
     @model_validator(mode="after")
     def _unique(self) -> BeamModel:

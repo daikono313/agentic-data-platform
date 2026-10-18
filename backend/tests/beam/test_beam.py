@@ -538,9 +538,20 @@ def test_time_axis_note_for_cross_event_metric() -> None:
     assert notes == {
         "returned_qty_total": None,
         "sold_qty_excl_cancelled": None,
-        "return_rate_by_category": f"時間で切ると、{returned.label}（returned_qty_total）は"
-        f"返品日時、{sold.label}（sold_qty_excl_cancelled）は注文日時で集計します",
+        "return_rate_by_category": f"時間で切ると、「{returned.label}」は返品日時、"
+        f"「{sold.label}」は注文日時で集計します（同じ期間の値どうしで計算し、同じ対象を追った値"
+        "ではありません）",
     }
+    # 入れ子でも、たどった先の指標ごとに出す
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100"}
+        )
+    )
+    assert model.time_axis_note(model.metrics[-1]) == notes["return_rate_by_category"]
+    model.metrics.pop()
     # 同じ出来事の中の比率には出さない
     model.metrics.append(
         MetricRequest.model_validate(
@@ -550,6 +561,12 @@ def test_time_axis_note_for_cross_event_metric() -> None:
         )
     )
     assert model.time_axis_note(model.metrics[-1]) is None
+    # 時間軸の無い出来事が混ざると、時間では切れないので出さない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert model.time_axis_note(model.metrics[2]) is None
 
 
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
