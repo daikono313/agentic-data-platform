@@ -29,7 +29,7 @@
 | `story_type: <discrete / recurring / evolving>` | 指標の出来事が、その種類（出来事・定期的な状態・進んでいく状態）になっている（#135） |
 | `grain_keys_w: [what, where, …]` | 指標の出来事の粒度のキー（grain_keys）に、その W のディメンションがすべてある（縮退ディメンションは W を持たないので数えない） |
 | `measure_additivity: <additive など>` | 指標の measure が、その加法性（足し上げてよいか）になっている |
-| `min_examples: N` | 指標の出来事に、具体例が N 件以上ある |
+| `min_examples: N` | 指標の出来事それぞれに、具体例が N 件以上ある |
 | `has_hierarchy[: <ディメンション>]` | 階層のあるディメンションがある（名前を書けば、そのディメンションに） |
 | `shared_dimensions: [what, when, …]` | その W ごとに、2 つ以上の出来事が同じ名前のディメンションを持つ（共通ディメンション）。When は名前によらず dim_date で共通なので、2 つ以上の出来事にあればよい |
 | `fact_source: <源泉>` | その源泉を 1 行の元（設計と同じく、粒度のキーから決まるベースのテーブル。`adp.design.builder.base_table`）にした出来事があり、その fact がほかの源泉の既存の fact（オントロジーの概念のモデル）ではない。fact の名前は問わない（データ全体にしかない要求で新しい fact を作るか。#113） |

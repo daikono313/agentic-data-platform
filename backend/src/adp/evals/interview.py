@@ -212,8 +212,10 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             ),
             str({d.name: d.hierarchy for e in beam.events for d in e.dimensions if d.hierarchy}),
         ),
+        # 指標の出来事それぞれに（具体例は fact ごとのテストの期待値になる。#177）
         "min_examples": lambda: (
-            any(len(e.examples) >= int(arg) for e in _metric_event_list(beam)),
+            bool(_metric_event_list(beam))
+            and all(len(e.examples) >= int(arg) for e in _metric_event_list(beam)),
             str([len(e.examples) for e in _metric_event_list(beam)]),
         ),
         # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
