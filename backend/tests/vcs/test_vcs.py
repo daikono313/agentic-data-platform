@@ -1,3 +1,4 @@
+import json
 import subprocess
 from collections.abc import Sequence
 from datetime import date
@@ -5,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from adp.beam import load
+from adp.beam import BeamModel, load
 from adp.design import DesignBuilder
 from adp.generation import AgentTask
 from adp.vcs import (
@@ -260,3 +261,14 @@ def test_pr_body_records_purpose() -> None:
     beam.metrics[0].purpose = "売上の伸びない店舗に | 販促をかける"
     body = pr_body(beam, design, [], Verification(True))
     assert "  - 目的: 売上の伸びない店舗に \\| 販促をかける" in body
+
+
+def test_pr_body_records_time_axes_of_cross_event_metric() -> None:
+    """出来事をまたぐ指標は、元の指標ごとにどの日付で集計するかを要求に残す（#187）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    beam = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    design = DesignBuilder(FakeSchema()).build(load(FIXTURE))
+    body = pr_body(beam, design, [], Verification(True))
+    rate = beam.metrics[-1]
+    assert f"  - 日付: {beam.time_axis_note(rate)}" in body
+    assert body.count("  - 日付:") == 1

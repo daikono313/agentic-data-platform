@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from adp.beam import FilterOperator, MetricFilter, MetricRequest, MetricType, load
+from adp.beam import FilterOperator, MetricFilter, MetricRequest, MetricType, TimeGrain, load
 from adp.design import DesignBuilder
 from adp.generation.semantic import (
     SemanticError,
@@ -83,6 +83,12 @@ def test_metric_types(setup) -> None:  # type: ignore[no-untyped-def]
     cumulative_query = next(q for q in defs.queries if q.metric == "rev_7d")
     assert cumulative_query.group_by == ["metric_time__day", "store__channel"]
     assert beam.metrics[1].type == MetricType.SIMPLE
+    # 時間軸を月次で記録しているなら、月別で問い合わせる（日別には切れない。#188）
+    time = beam.event(fact.event).time_dimension
+    time.time_grain = TimeGrain.MONTH
+    defs = metric_definitions(beam, design, fact)
+    cumulative_query = next(q for q in defs.queries if q.metric == "rev_7d")
+    assert cumulative_query.group_by == ["metric_time__month", "store__channel"]
 
 
 def test_ratio_and_derived_keep_filters(setup) -> None:  # type: ignore[no-untyped-def]

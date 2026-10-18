@@ -330,6 +330,15 @@ class Dimension(_Base):
     def ref(self) -> str:
         return self.role or self.name
 
+    @property
+    def masterless(self) -> bool:
+        """マスタなしのディメンション（自然キーとイベント側のキーが同じ列）。"""
+        return (
+            self.w != W.WHEN
+            and self.business_key is not None
+            and (self.business_key == self.fact_key)
+        )
+
     @model_validator(mode="after")
     def _check(self) -> Dimension:
         if self.time_grain is not None and self.w != W.WHEN:
@@ -539,6 +548,50 @@ class BeamModel(_Base):
 
     def event(self, name: str) -> BusinessEvent | None:
         return next((e for e in self.events if e.name == name), None)
+
+    def leaf_inputs(self, metric: MetricRequest) -> tuple[list[tuple[str, str]], bool]:
+        """比率・派生の入れ子をたどった先の、measure を集計する指標（MetricFlow が切り口・
+        絞り込みを解決する指標）を、（直接の元の指標, その指標）で。2 つ目は、たどると自分に
+        戻るか（循環）。"""
+        metrics = {m.name: m for m in self.metrics}
+        leaves: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        cycle = False
+        todo = [(n, n) for n in metric.inputs]
+        while todo:
+            via, name = todo.pop(0)
+            src = metrics.get(name)
+            if name == metric.name:
+                cycle = True
+            if name in seen or name == metric.name or src is None:
+                continue
+            seen.add(name)
+            if src.type in (MetricType.RATIO, MetricType.DERIVED):
+                todo += [(via, n) for n in src.inputs]
+            else:
+                leaves.append((via, name))
+        return leaves, cycle
+
+    def time_axis_note(self, metric: MetricRequest) -> str | None:
+        """出来事をまたぐ比率・派生の指標を時間で切るとき、元の指標ごとにどの日付で集計するか。
+        MetricFlow の metric_time は、元の指標ごとにその出来事の時間軸で解決される（#185）ので、
+        「その月の返品数 ÷ その月の注文数」のように日付が分かれる（#187）。"""
+        axes: list[tuple[MetricRequest, str, Dimension]] = []
+        for _, name in self.leaf_inputs(metric)[0]:
+            src = next(m for m in self.metrics if m.name == name)
+            event = self.event(src.event)
+            time = event.time_dimension if event else None
+            if event is None or time is None:
+                return None  # 時間軸の無い出来事があれば時間では切れない（検証の課題になる）
+            axes.append((src, event.name, time))
+        if len({e for _, e, _ in axes}) < 2:
+            return None
+        parts = [f"「{src.label}」は{time.label}" for src, _, time in axes]
+        return (
+            "時間で切ると、"
+            + "、".join(parts)
+            + "で集計します（同じ期間の値どうしで計算し、同じ対象を追った値ではありません）"
+        )
 
     @model_validator(mode="after")
     def _unique(self) -> BeamModel:

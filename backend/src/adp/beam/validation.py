@@ -19,9 +19,10 @@ from adp.beam.models import (
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent, MetricRequest
+    from adp.beam.models import BeamModel, BusinessEvent, Dimension
 
 TIME_GRAINS = {g.value for g in TimeGrain}
+_GRAINS = list(TimeGrain)  # 細かい→粗いの順
 # 集計方法ごとに、宣言できる加法性
 _ADDITIVITY_BY_AGG = {
     Aggregation.AVERAGE: {Additivity.NON_ADDITIVE},
@@ -228,51 +229,105 @@ def _metric_issues(model: BeamModel) -> list[str]:
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
             # （元の指標がさらに比率・派生なら、その下の指標まで。MetricFlow は filter を下へ渡す。
             # #180）
-            leaves, cycle = _leaf_inputs(metric, metrics)
+            leaves, cycle = model.leaf_inputs(metric)
             if cycle:
                 issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
+            refs = [*metric.group_by, *(f.ref for f in metric.filters)]
+            # 切り口は MetricFlow が同じ名前のまま元の指標へ渡すので、出来事をまたぐなら、
+            # どの出来事でも同じ名前で解決できる必要がある（#181）
+            events = {event.name: event}
+            # 時間軸の切り口は MetricFlow の metric_time になり（`mf_name`）、元の指標ごとにその
+            # 出来事の時間軸で解決される。元の指標の出来事に時間軸があればよく、ref の名前は
+            # そろわなくてよい（#185）
+            metric_time = {
+                r
+                for r in metric.group_by
+                if resolve_ref(event, r) == "time" and _shared_ref(event, r)
+            }
             for via, name in leaves:
                 src = metrics[name]
                 src_event = model.event(src.event)
                 if src_event is None or src_event.name == event.name:
                     continue
+                events[src_event.name] = src_event
                 where = name if via == name else f"{via} の元の {name}"
-                for ref in [*metric.group_by, *(f.ref for f in metric.filters)]:
-                    if resolve_ref(src_event, ref) in (None, "measure"):
+                for ref in refs:
+                    if ref in metric_time:
+                        time = src_event.time_dimension
+                        if time is None:
+                            issues.append(
+                                f"{p} {ref} は時間軸で切りますが、元の指標 {where} のイベント "
+                                f"{src_event.name} には時間軸（agg_time_dimension）がありません"
+                            )
+                        elif _finer(_query_grain(event, ref), time):
+                            issues.append(
+                                f"{p} 切り口 {ref} の粒度は、元の指標 {where} のイベント "
+                                f"{src_event.name} の時間軸 {time.ref} の最小粒度"
+                                f"（{time.time_grain}）より細かいので切れません。{time.time_grain} "
+                                "以上の粒度で切ってください"
+                            )
+                    elif resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
                             f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
+            unshared = [
+                r
+                for r in metric.group_by
+                if len(events) > 1
+                and r not in metric_time
+                and all(resolve_ref(e, r) not in (None, "measure") for e in events.values())
+                and not all(_shared_ref(e, r) for e in events.values())
+            ]
+            for ref in unshared:
+                issues.append(
+                    f"{p} 切り口 {ref} は出来事（{'・'.join(events)}）ごとに別々に記録される項目"
+                    "なので、出来事をまたぐ指標の切り口に使えません。どの出来事にも共通する"
+                    "ディメンション（商品など）の属性で切ってください"
+                )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
                 issues.append(f"{p} group_by {ref} がイベントのディメンションに存在しません")
             elif kind == "attribute" and _attribute_unavailable(event, ref):
                 issues.append(f"{p} group_by {ref} はデータなしです")
+            elif kind == "time":
+                dim = event.dimension(ref.partition(".")[0])
+                if dim is not None and _finer(_query_grain(event, ref), dim):
+                    issues.append(
+                        f"{p} 切り口 {ref} の粒度は、{dim.ref} の最小粒度（{dim.time_grain}）"
+                        f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
+                        "記録の粒度（time_grain）を見直してください"
+                    )
     return issues
 
 
-def _leaf_inputs(
-    metric: MetricRequest, metrics: dict[str, MetricRequest]
-) -> tuple[list[tuple[str, str]], bool]:
-    """比率・派生の入れ子をたどった先の、measure を集計する指標（MetricFlow が切り口・絞り込みを
-    解決する指標）を、（直接の元の指標, その指標）で。2 つ目は、たどると自分に戻るか（循環）。"""
-    leaves: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    cycle = False
-    todo = [(n, n) for n in metric.inputs]
-    while todo:
-        via, name = todo.pop()
-        src = metrics.get(name)
-        if name == metric.name:
-            cycle = True
-        if name in seen or name == metric.name or src is None:
-            continue
-        seen.add(name)
-        if src.type in (MetricType.RATIO, MetricType.DERIVED):
-            todo += [(via, n) for n in src.inputs]
-        else:
-            leaves.append((via, name))
-    return leaves, cycle
+def _query_grain(event: BusinessEvent, ref: str) -> TimeGrain | None:
+    """時間の切り口（`<When ref>` / `<When ref>.<grain>`）で集計する粒度。省略時は When の
+    time_grain（`adp.generation.semantic.mf_name` と同じ）。time_grain が未定なら None で判定しない
+    （未定は別の課題になる）。"""
+    dim_ref, _, attr = ref.partition(".")
+    dim = event.dimension(dim_ref)
+    return TimeGrain(attr) if attr else (dim.time_grain if dim else None)
+
+
+def _finer(grain: TimeGrain | None, dim: Dimension) -> bool:
+    """grain が、When の記録の最小粒度（time_grain）より細かいか。"""
+    if grain is None or dim.time_grain is None:
+        return False
+    return _GRAINS.index(grain) < _GRAINS.index(dim.time_grain)
+
+
+def _shared_ref(event: BusinessEvent, ref: str) -> bool:
+    """出来事によらず同じ名前で解決できる参照か（マスタのあるディメンションの属性と、時間軸）。
+    MetricFlow の名前への変換（`adp.generation.semantic.mf_name`）と判定をそろえる。"""
+    kind = resolve_ref(event, ref)
+    dim = event.dimension(ref.partition(".")[0])
+    if kind == "attribute":
+        return dim is not None and dim.w != W.WHEN and not dim.masterless
+    if kind == "time":
+        time = event.time_dimension
+        return dim is not None and time is not None and time.ref == dim.ref
+    return False
 
 
 def _conformance_issues(model: BeamModel) -> list[str]:

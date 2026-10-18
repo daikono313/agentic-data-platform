@@ -10,10 +10,12 @@ from adp.beam import (
     FactType,
     Gap,
     GapKind,
+    MetricFilter,
     MetricRequest,
     MetricType,
     SourceRef,
     StoryType,
+    TimeGrain,
     build_event_matrix,
     from_yaml,
     load,
@@ -372,6 +374,199 @@ def test_nested_inputs_must_resolve_refs() -> None:
         ),
     ]
     assert model.finalize_issues() == []
+
+
+def test_cross_event_group_by_must_share_names() -> None:
+    """出来事をまたぐ指標の切り口は、出来事によらず同じ名前で解決できるものに限る。
+    マスタなし・縮退のディメンションと時間軸以外の When は、出来事ごとの名前になる（#181）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    returns = model.event("customer_returns_product")
+    orders = model.event("customer_orders_product")
+    assert returns is not None and orders is not None
+    # 注文の状態（マスタなし）・注文日（返品では時間軸でない）・返品番号（縮退）を両方に持たせる
+    shared = ("order_status", "ordered_at")
+    returns.dimensions += [d.model_copy(deep=True) for d in orders.dimensions if d.ref in shared]
+    returns.agg_time_dimension = "returned_at"
+    orders.degenerate_dimensions += [d.model_copy() for d in returns.degenerate_dimensions]
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category"
+    assert model.finalize_issues() == []
+
+    def unshared() -> list[str]:
+        return [i for i in model.finalize_issues() if "別々に記録される" in i]
+
+    for ref in ("order_status.order_status", "ordered_at.month", "return_id"):
+        rate.group_by = ["product.category", ref]
+        assert unshared() == [
+            f"[metric return_rate_by_category] 切り口 {ref} は出来事（customer_returns_product"
+            "・customer_orders_product）ごとに別々に記録される項目なので、出来事をまたぐ指標の"
+            "切り口に使えません。どの出来事にも共通するディメンション（商品など）の属性で"
+            "切ってください"
+        ], ref
+
+    # 片方の出来事にしか無い切り口は「ありません」だけを出す
+    rate.group_by = ["return_reason.return_reason"]
+    assert unshared() == []
+    assert any("return_reason.return_reason は元の指標" in i for i in model.finalize_issues())
+
+    # 絞り込みは元の指標ごとに、その出来事の名前で書くので問わない（#178）
+    rate.group_by = ["product.category"]
+    rate.filters = [
+        MetricFilter.model_validate(
+            {"ref": "order_status.order_status", "operator": "=", "values": ["x"]}
+        )
+    ]
+    assert unshared() == []
+
+    # 同じ出来事の中だけなら、出来事ごとの名前でも解決できる
+    sold = next(m for m in model.metrics if m.name == "sold_qty_excl_cancelled")
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "half", "event": "customer_orders_product", "type": "ratio"}
+            | {"numerator": sold.name, "denominator": sold.name}
+            | {"group_by": ["order_status.order_status"]}
+        )
+    )
+    assert not any("[metric half]" in i for i in model.finalize_issues())
+
+    # 入れ子でも、たどった先の出来事で判定する
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100", "group_by": ["return_id"]}
+        )
+    )
+    assert any(i.startswith("[metric pct] 切り口 return_id") for i in unshared())
+
+
+def test_cross_event_group_by_time_uses_each_time_axis() -> None:
+    """時間軸の切り口は元の指標ごとにその出来事の時間軸で解決されるので、出来事ごとに時間軸の
+    名前が違っても切れる（#185）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category" and rate.event == "customer_returns_product"
+    rate.group_by = ["product.category", "returned_at.month"]
+    assert model.finalize_issues() == []
+    # 入れ子でも、たどった先の出来事の時間軸で解決される
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100", "group_by": ["ordered_at.month"]}
+        )
+    )
+    assert model.finalize_issues() == []
+    # 自分の出来事の時間軸でない When は、出来事をまたぐと切れない
+    returns = model.event("customer_returns_product")
+    assert returns is not None
+    returns.dimensions.append(returns.dimensions[1].model_copy(update={"role": "inspected_at"}))
+    returns.agg_time_dimension = "returned_at"
+    rate.group_by = ["inspected_at.month"]
+    assert any(
+        "[metric return_rate_by_category] inspected_at.month は元の指標" in i
+        for i in model.finalize_issues()
+    )
+    rate.group_by = ["returned_at.month"]
+    model.metrics.pop()
+
+    # 元の指標の出来事に時間軸が無ければ切れない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert [i for i in model.finalize_issues() if "returned_at.month" in i] == [
+        "[metric return_rate_by_category] returned_at.month は時間軸で切りますが、元の指標 "
+        "sold_qty_excl_cancelled のイベント customer_orders_product には時間軸"
+        "（agg_time_dimension）がありません"
+    ]
+
+
+def test_group_by_grain_must_not_be_finer_than_time_grain() -> None:
+    """切り口の時間の粒度は、When の記録の最小粒度（time_grain）より細かくできない。出来事を
+    またぐなら、元の指標の出来事の時間軸でも同じ（#188）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    returns = model.event("customer_returns_product")
+    orders = model.event("customer_orders_product")
+    assert returns is not None and orders is not None
+    returned_at, ordered_at = returns.dimensions[1], orders.dimensions[1]
+    returned_at.time_grain = ordered_at.time_grain = TimeGrain.DAY
+    rate = model.metrics[-1]
+    rate.group_by = ["returned_at.day"]
+    assert model.finalize_issues() == []
+
+    # 月次でしか記録していない日付を日別に切る
+    returned_at.time_grain = TimeGrain.MONTH
+    returned = next(m for m in model.metrics if m.name == "returned_qty_total")
+    returned.group_by = ["returned_at.week"]
+    assert (
+        "[metric returned_qty_total] 切り口 returned_at.week の粒度は、returned_at の最小粒度"
+        "（month）より細かいので切れません。month 以上の粒度で切るか、記録の粒度（time_grain）を"
+        "見直してください"
+    ) in model.finalize_issues()
+    returned.group_by = ["returned_at", "returned_at.quarter"]  # 省略は time_grain
+    assert not any("[metric returned_qty_total]" in i for i in model.finalize_issues())
+
+    # 出来事をまたぐ比率: 分母（注文）の時間軸が月次なら、日別には切れない
+    returned_at.time_grain = TimeGrain.DAY
+    ordered_at.time_grain = TimeGrain.MONTH
+    sold = next(m for m in model.metrics if m.name == "sold_qty_excl_cancelled")
+    sold.group_by = ["product.category"]
+    assert model.finalize_issues() == [
+        "[metric return_rate_by_category] 切り口 returned_at.day の粒度は、元の指標 "
+        "sold_qty_excl_cancelled のイベント customer_orders_product の時間軸 ordered_at の"
+        "最小粒度（month）より細かいので切れません。month 以上の粒度で切ってください"
+    ]
+    # 粒度を省くと、指標自身の出来事の時間軸の粒度（day）で切る
+    rate.group_by = ["returned_at"]
+    assert any("切り口 returned_at の粒度は" in i for i in model.finalize_issues())
+    rate.group_by = ["returned_at.month"]
+    assert model.finalize_issues() == []
+
+
+def test_time_axis_note_for_cross_event_metric() -> None:
+    """出来事をまたぐ指標は、元の指標ごとにどの日付で集計するかを説明に出す（#187）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    notes = {m.name: model.time_axis_note(m) for m in model.metrics}
+    returned, sold = model.metrics[0], model.metrics[1]
+    assert returned.name == "returned_qty_total" and sold.name == "sold_qty_excl_cancelled"
+    assert notes == {
+        "returned_qty_total": None,
+        "sold_qty_excl_cancelled": None,
+        "return_rate_by_category": f"時間で切ると、「{returned.label}」は返品日時、"
+        f"「{sold.label}」は注文日時で集計します（同じ期間の値どうしで計算し、同じ対象を追った値"
+        "ではありません）",
+    }
+    # 入れ子でも、たどった先の指標ごとに出す
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100"}
+        )
+    )
+    assert model.time_axis_note(model.metrics[-1]) == notes["return_rate_by_category"]
+    model.metrics.pop()
+    # 同じ出来事の中の比率には出さない
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "half", "event": "customer_orders_product", "type": "ratio"}
+            | {"numerator": "sold_qty_excl_cancelled", "denominator": "sold_qty_excl_cancelled"}
+        )
+    )
+    assert model.time_axis_note(model.metrics[-1]) is None
+    # 時間軸の無い出来事が混ざると、時間では切れないので出さない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert model.time_axis_note(model.metrics[2]) is None
 
 
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:

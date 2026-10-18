@@ -93,6 +93,8 @@ def pr_body(
             lines.append(f"  - 目的: {cell(m.purpose)}")
         if m.group_by:
             lines.append(f"  - 切り口: {', '.join(f'`{g}`' for g in m.group_by)}")
+        if note := beam.time_axis_note(m):
+            lines.append(f"  - 日付: {cell(note)}")
         if m.filter:
             lines.append(f"  - 条件: {cell(m.filter)}")
     lines.append("")

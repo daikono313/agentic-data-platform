@@ -19,7 +19,6 @@ import duckdb
 from adp.beam import BeamModel, BusinessEvent, EventExample
 from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
-from adp.design.builder import is_masterless
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
 
 ACCEPTED_VALUES_MAX = 20
@@ -166,7 +165,7 @@ def _example_targets(event: BusinessEvent, fact: FactTable) -> dict[str, tuple[s
         if c.source_ref and m:
             targets.setdefault(c.source_ref, (m.group(1), m.group(2)))
     for d in event.dimensions:
-        if is_masterless(d):
+        if d.masterless:
             for a in d.attributes:
                 if d.ref in targets:
                     targets[f"{d.ref}.{a.name}"] = targets[d.ref]

@@ -86,6 +86,26 @@ def test_existing_fact_gets_missing_measure_and_metrics(after_s1: Path) -> None:
     assert revenue.returncode == 0, revenue.stderr[-500:]
 
 
+def test_cross_event_ratio_by_month_can_be_queried(after_s1: Path) -> None:
+    """出来事ごとに時間軸の名前が違っても（返品日・注文日）、返品率を月別に問い合わせられる。
+    元の指標ごとにその出来事の時間軸（metric_time）で解決される（#185）。"""
+    wh = after_s1
+    beam = _return_rate()
+    rate = next(m for m in beam.metrics if m.name == "return_rate_by_category")
+    rate.group_by = ["product.category", "returned_at.month"]
+    assert beam.finalize_issues() == []
+    info, generation = _generate(wh, beam)
+    info.write(generation.files)
+    assert _dbt(wh, "build").returncode == 0
+    # 分子は返品日、分母は注文日で集計することを、指標の説明に残す（#187）
+    note = beam.time_axis_note(rate)
+    assert note and any(note in f.content for f in generation.files)
+    [q] = [q for q in generation.queries if q.metric == rate.name]
+    assert q.group_by == ["product__category", "metric_time__month"]
+    result = mf_query(wh, q)
+    assert result.returncode == 0, result.stderr[-500:]
+
+
 def test_hand_written_fact_is_left_to_the_agent(after_s1: Path) -> None:
     wh = after_s1
     path = wh / "models/marts/fct_order_lines.sql"
