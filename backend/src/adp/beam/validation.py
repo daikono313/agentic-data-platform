@@ -19,9 +19,10 @@ from adp.beam.models import (
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent, MetricRequest
+    from adp.beam.models import BeamModel, BusinessEvent, Dimension, MetricRequest
 
 TIME_GRAINS = {g.value for g in TimeGrain}
+_GRAINS = list(TimeGrain)  # 細かい→粗いの順
 # 集計方法ごとに、宣言できる加法性
 _ADDITIVITY_BY_AGG = {
     Aggregation.AVERAGE: {Additivity.NON_ADDITIVE},
@@ -252,10 +253,18 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 where = name if via == name else f"{via} の元の {name}"
                 for ref in refs:
                     if ref in metric_time:
-                        if src_event.time_dimension is None:
+                        time = src_event.time_dimension
+                        if time is None:
                             issues.append(
                                 f"{p} {ref} は時間軸で切りますが、元の指標 {where} のイベント "
                                 f"{src_event.name} には時間軸（agg_time_dimension）がありません"
+                            )
+                        elif _finer(_query_grain(event, ref), time):
+                            issues.append(
+                                f"{p} 切り口 {ref} の粒度は、元の指標 {where} のイベント "
+                                f"{src_event.name} の時間軸 {time.ref} の最小粒度"
+                                f"（{time.time_grain}）より細かいので切れません。{time.time_grain} "
+                                "以上の粒度で切ってください"
                             )
                     elif resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
@@ -281,7 +290,31 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 issues.append(f"{p} group_by {ref} がイベントのディメンションに存在しません")
             elif kind == "attribute" and _attribute_unavailable(event, ref):
                 issues.append(f"{p} group_by {ref} はデータなしです")
+            elif kind == "time":
+                dim = event.dimension(ref.partition(".")[0])
+                if dim is not None and _finer(_query_grain(event, ref), dim):
+                    issues.append(
+                        f"{p} 切り口 {ref} の粒度は、{dim.ref} の最小粒度（{dim.time_grain}）"
+                        f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
+                        "記録の粒度（time_grain）を見直してください"
+                    )
     return issues
+
+
+def _query_grain(event: BusinessEvent, ref: str) -> TimeGrain | None:
+    """時間の切り口（`<When ref>` / `<When ref>.<grain>`）で集計する粒度。省略時は When の
+    time_grain（`adp.generation.semantic.mf_name` と同じ）。time_grain が未定なら None で判定しない
+    （未定は別の課題になる）。"""
+    dim_ref, _, attr = ref.partition(".")
+    dim = event.dimension(dim_ref)
+    return TimeGrain(attr) if attr else (dim.time_grain if dim else None)
+
+
+def _finer(grain: TimeGrain | None, dim: Dimension) -> bool:
+    """grain が、When の記録の最小粒度（time_grain）より細かいか。"""
+    if grain is None or dim.time_grain is None:
+        return False
+    return _GRAINS.index(grain) < _GRAINS.index(dim.time_grain)
 
 
 def _shared_ref(event: BusinessEvent, ref: str) -> bool:
