@@ -505,7 +505,8 @@ def test_group_by_grain_must_not_be_finer_than_time_grain() -> None:
     returned.group_by = ["returned_at.week"]
     assert (
         "[metric returned_qty_total] 切り口 returned_at.week の粒度は、returned_at の最小粒度"
-        "（month）より細かいので切れません"
+        "（month）より細かいので切れません。month 以上の粒度で切るか、記録の粒度（time_grain）を"
+        "見直してください"
     ) in model.finalize_issues()
     returned.group_by = ["returned_at", "returned_at.quarter"]  # 省略は time_grain
     assert not any("[metric returned_qty_total]" in i for i in model.finalize_issues())
@@ -518,8 +519,11 @@ def test_group_by_grain_must_not_be_finer_than_time_grain() -> None:
     assert model.finalize_issues() == [
         "[metric return_rate_by_category] 切り口 returned_at.day の粒度は、元の指標 "
         "sold_qty_excl_cancelled のイベント customer_orders_product の時間軸 ordered_at の"
-        "最小粒度（month）より細かいので切れません"
+        "最小粒度（month）より細かいので切れません。month 以上の粒度で切ってください"
     ]
+    # 粒度を省くと、指標自身の出来事の時間軸の粒度（day）で切る
+    rate.group_by = ["returned_at"]
+    assert any("切り口 returned_at の粒度は" in i for i in model.finalize_issues())
     rate.group_by = ["returned_at.month"]
     assert model.finalize_issues() == []
 

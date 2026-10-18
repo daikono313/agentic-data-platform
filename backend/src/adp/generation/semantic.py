@@ -281,6 +281,9 @@ def metric_definitions(
         if m.type == MetricType.CUMULATIVE and not any(
             g.startswith("metric_time") for g in group_by
         ):
-            group_by.insert(0, "metric_time__day")
+            # 時間軸の記録の粒度で切る（それより細かくは切れない。#188）
+            time = event.time_dimension
+            grain = time.time_grain.value if time and time.time_grain else "day"
+            group_by.insert(0, f"metric_time__{grain}")
         queries.append(MetricQuery(m.name, group_by))
     return MetricDefinitions(in_model, top, queries)

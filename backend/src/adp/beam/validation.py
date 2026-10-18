@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from adp.beam.models import BeamModel, BusinessEvent, Dimension, MetricRequest
 
 TIME_GRAINS = {g.value for g in TimeGrain}
+_GRAINS = list(TimeGrain)  # 細かい→粗いの順
 # 集計方法ごとに、宣言できる加法性
 _ADDITIVITY_BY_AGG = {
     Aggregation.AVERAGE: {Additivity.NON_ADDITIVE},
@@ -262,7 +263,8 @@ def _metric_issues(model: BeamModel) -> list[str]:
                             issues.append(
                                 f"{p} 切り口 {ref} の粒度は、元の指標 {where} のイベント "
                                 f"{src_event.name} の時間軸 {time.ref} の最小粒度"
-                                f"（{time.time_grain}）より細かいので切れません"
+                                f"（{time.time_grain}）より細かいので切れません。{time.time_grain} "
+                                "以上の粒度で切ってください"
                             )
                     elif resolve_ref(src_event, ref) in (None, "measure"):
                         issues.append(
@@ -293,17 +295,16 @@ def _metric_issues(model: BeamModel) -> list[str]:
                 if dim is not None and _finer(_query_grain(event, ref), dim):
                     issues.append(
                         f"{p} 切り口 {ref} の粒度は、{dim.ref} の最小粒度（{dim.time_grain}）"
-                        "より細かいので切れません"
+                        f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
+                        "記録の粒度（time_grain）を見直してください"
                     )
     return issues
 
 
-_GRAINS = list(TimeGrain)
-
-
 def _query_grain(event: BusinessEvent, ref: str) -> TimeGrain | None:
     """時間の切り口（`<When ref>` / `<When ref>.<grain>`）で集計する粒度。省略時は When の
-    time_grain（`adp.generation.semantic.mf_name` と同じ）。"""
+    time_grain（`adp.generation.semantic.mf_name` と同じ）。time_grain が未定なら None で判定しない
+    （未定は別の課題になる）。"""
     dim_ref, _, attr = ref.partition(".")
     dim = event.dimension(dim_ref)
     return TimeGrain(attr) if attr else (dim.time_grain if dim else None)
