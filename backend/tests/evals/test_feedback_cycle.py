@@ -500,6 +500,23 @@ def test_modeling_checks() -> None:
     assert not _check(two, {"story_type": "evolving"}).passed
 
 
+def test_min_examples_per_metric_event() -> None:
+    """具体例の件数は、指標の出来事それぞれに求める（#177）。"""
+    import json
+
+    from adp.beam import BeamModel, EventExample
+    from adp.evals.interview import _check
+
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    beam = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    for e in beam.events:
+        e.examples = [EventExample(values={}), EventExample(values={})]
+    assert _check(beam, {"min_examples": 2}).passed
+    beam.events[1].examples.pop()
+    result = _check(beam, {"min_examples": 2})
+    assert not result.passed and result.detail == "[2, 1]"
+
+
 def test_column_checks() -> None:
     """切り口・絞り込み・比率を、名前の揺れによらず元の列で採点する（#155）。"""
     from adp.beam import FilterOperator, MetricFilter, MetricRequest, MetricType, SourceRef
