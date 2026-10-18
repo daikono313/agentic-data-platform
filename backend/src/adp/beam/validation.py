@@ -235,8 +235,9 @@ def _metric_issues(model: BeamModel) -> list[str]:
             # 切り口は MetricFlow が同じ名前のまま元の指標へ渡すので、出来事をまたぐなら、
             # どの出来事でも同じ名前で解決できる必要がある（#181）
             events = {event.name: event}
-            # 時間軸の切り口は MetricFlow の metric_time になり、元の指標ごとにその出来事の時間軸で
-            # 解決される。元の指標の出来事に時間軸があればよく、ref の名前はそろわなくてよい（#185）
+            # 時間軸の切り口は MetricFlow の metric_time になり（`mf_name`）、元の指標ごとにその
+            # 出来事の時間軸で解決される。元の指標の出来事に時間軸があればよく、ref の名前は
+            # そろわなくてよい（#185）
             metric_time = {
                 r
                 for r in metric.group_by

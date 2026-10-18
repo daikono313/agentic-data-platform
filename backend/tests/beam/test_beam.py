@@ -450,6 +450,27 @@ def test_cross_event_group_by_time_uses_each_time_axis() -> None:
     assert rate.name == "return_rate_by_category" and rate.event == "customer_returns_product"
     rate.group_by = ["product.category", "returned_at.month"]
     assert model.finalize_issues() == []
+    # 入れ子でも、たどった先の出来事の時間軸で解決される
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100", "group_by": ["ordered_at.month"]}
+        )
+    )
+    assert model.finalize_issues() == []
+    # 自分の出来事の時間軸でない When は、出来事をまたぐと切れない
+    returns = model.event("customer_returns_product")
+    assert returns is not None
+    returns.dimensions.append(returns.dimensions[1].model_copy(update={"role": "inspected_at"}))
+    returns.agg_time_dimension = "returned_at"
+    rate.group_by = ["inspected_at.month"]
+    assert any(
+        "[metric return_rate_by_category] inspected_at.month は元の指標" in i
+        for i in model.finalize_issues()
+    )
+    rate.group_by = ["returned_at.month"]
+    model.metrics.pop()
 
     # 元の指標の出来事に時間軸が無ければ切れない
     orders = model.event("customer_orders_product")
