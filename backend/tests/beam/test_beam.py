@@ -15,6 +15,7 @@ from adp.beam import (
     MetricType,
     SourceRef,
     StoryType,
+    TimeGrain,
     build_event_matrix,
     from_yaml,
     load,
@@ -482,6 +483,45 @@ def test_cross_event_group_by_time_uses_each_time_axis() -> None:
         "sold_qty_excl_cancelled のイベント customer_orders_product には時間軸"
         "（agg_time_dimension）がありません"
     ]
+
+
+def test_group_by_grain_must_not_be_finer_than_time_grain() -> None:
+    """切り口の時間の粒度は、When の記録の最小粒度（time_grain）より細かくできない。出来事を
+    またぐなら、元の指標の出来事の時間軸でも同じ（#188）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    returns = model.event("customer_returns_product")
+    orders = model.event("customer_orders_product")
+    assert returns is not None and orders is not None
+    returned_at, ordered_at = returns.dimensions[1], orders.dimensions[1]
+    returned_at.time_grain = ordered_at.time_grain = TimeGrain.DAY
+    rate = model.metrics[-1]
+    rate.group_by = ["returned_at.day"]
+    assert model.finalize_issues() == []
+
+    # 月次でしか記録していない日付を日別に切る
+    returned_at.time_grain = TimeGrain.MONTH
+    returned = next(m for m in model.metrics if m.name == "returned_qty_total")
+    returned.group_by = ["returned_at.week"]
+    assert (
+        "[metric returned_qty_total] 切り口 returned_at.week の粒度は、returned_at の最小粒度"
+        "（month）より細かいので切れません"
+    ) in model.finalize_issues()
+    returned.group_by = ["returned_at", "returned_at.quarter"]  # 省略は time_grain
+    assert not any("[metric returned_qty_total]" in i for i in model.finalize_issues())
+
+    # 出来事をまたぐ比率: 分母（注文）の時間軸が月次なら、日別には切れない
+    returned_at.time_grain = TimeGrain.DAY
+    ordered_at.time_grain = TimeGrain.MONTH
+    sold = next(m for m in model.metrics if m.name == "sold_qty_excl_cancelled")
+    sold.group_by = ["product.category"]
+    assert model.finalize_issues() == [
+        "[metric return_rate_by_category] 切り口 returned_at.day の粒度は、元の指標 "
+        "sold_qty_excl_cancelled のイベント customer_orders_product の時間軸 ordered_at の"
+        "最小粒度（month）より細かいので切れません"
+    ]
+    rate.group_by = ["returned_at.month"]
+    assert model.finalize_issues() == []
 
 
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
