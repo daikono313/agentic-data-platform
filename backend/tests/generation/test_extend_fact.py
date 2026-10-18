@@ -97,6 +97,9 @@ def test_cross_event_ratio_by_month_can_be_queried(after_s1: Path) -> None:
     info, generation = _generate(wh, beam)
     info.write(generation.files)
     assert _dbt(wh, "build").returncode == 0
+    # 分子は返品日、分母は注文日で集計することを、指標の説明に残す（#187）
+    note = beam.time_axis_note(rate)
+    assert note and any(note in f.content for f in generation.files)
     [q] = [q for q in generation.queries if q.metric == rate.name]
     assert q.group_by == ["product__category", "metric_time__month"]
     result = mf_query(wh, q)

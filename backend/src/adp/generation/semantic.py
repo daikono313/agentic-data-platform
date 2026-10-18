@@ -227,7 +227,11 @@ def metric_definitions(
         base: dict[str, Any] = {
             "name": m.name,
             "label": m.label,
-            "description": m.framed_question + (f"\n目的: {m.purpose}" if m.purpose else ""),
+            "description": "\n".join(
+                [m.framed_question]
+                + ([f"目的: {m.purpose}"] if m.purpose else [])
+                + [n for n in [beam.time_axis_note(m)] if n]
+            ),
         }
         flt = _filters(event, fact, m)
         if m.type in (MetricType.SIMPLE, MetricType.CUMULATIVE):
