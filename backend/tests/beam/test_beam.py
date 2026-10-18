@@ -528,6 +528,47 @@ def test_group_by_grain_must_not_be_finer_than_time_grain() -> None:
     assert model.finalize_issues() == []
 
 
+def test_time_axis_note_for_cross_event_metric() -> None:
+    """出来事をまたぐ指標は、元の指標ごとにどの日付で集計するかを説明に出す（#187）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    notes = {m.name: model.time_axis_note(m) for m in model.metrics}
+    returned, sold = model.metrics[0], model.metrics[1]
+    assert returned.name == "returned_qty_total" and sold.name == "sold_qty_excl_cancelled"
+    assert notes == {
+        "returned_qty_total": None,
+        "sold_qty_excl_cancelled": None,
+        "return_rate_by_category": f"時間で切ると、「{returned.label}」は返品日時、"
+        f"「{sold.label}」は注文日時で集計します（同じ期間の値どうしで計算し、同じ対象を追った値"
+        "ではありません）",
+    }
+    # 入れ子でも、たどった先の指標ごとに出す
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+            | {"expr": "return_rate_by_category * 100"}
+        )
+    )
+    assert model.time_axis_note(model.metrics[-1]) == notes["return_rate_by_category"]
+    model.metrics.pop()
+    # 同じ出来事の中の比率には出さない
+    model.metrics.append(
+        MetricRequest.model_validate(
+            {"label": "x", "question": "q", "framed_question": "q"}
+            | {"name": "half", "event": "customer_orders_product", "type": "ratio"}
+            | {"numerator": "sold_qty_excl_cancelled", "denominator": "sold_qty_excl_cancelled"}
+        )
+    )
+    assert model.time_axis_note(model.metrics[-1]) is None
+    # 時間軸の無い出来事が混ざると、時間では切れないので出さない
+    orders = model.event("customer_orders_product")
+    assert orders is not None
+    orders.dimensions += [orders.dimensions[1].model_copy(update={"role": "shipped_at"})]
+    orders.agg_time_dimension = None
+    assert model.time_axis_note(model.metrics[2]) is None
+
+
 def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
     base = {"label": "x", "question": "q", "framed_question": "q"}
     base |= {"event": "customer_orders_product"}

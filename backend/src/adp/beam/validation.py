@@ -19,7 +19,7 @@ from adp.beam.models import (
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent, Dimension, MetricRequest
+    from adp.beam.models import BeamModel, BusinessEvent, Dimension
 
 TIME_GRAINS = {g.value for g in TimeGrain}
 _GRAINS = list(TimeGrain)  # 細かい→粗いの順
@@ -229,7 +229,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
             # 指標をまたぐ切り口・条件は、元になるすべての指標のイベントで解決できる必要がある
             # （元の指標がさらに比率・派生なら、その下の指標まで。MetricFlow は filter を下へ渡す。
             # #180）
-            leaves, cycle = _leaf_inputs(metric, metrics)
+            leaves, cycle = model.leaf_inputs(metric)
             if cycle:
                 issues.append(f"{p} 元の指標をたどると {metric.name} に戻ります（循環しています）")
             refs = [*metric.group_by, *(f.ref for f in metric.filters)]
@@ -328,30 +328,6 @@ def _shared_ref(event: BusinessEvent, ref: str) -> bool:
         time = event.time_dimension
         return dim is not None and time is not None and time.ref == dim.ref
     return False
-
-
-def _leaf_inputs(
-    metric: MetricRequest, metrics: dict[str, MetricRequest]
-) -> tuple[list[tuple[str, str]], bool]:
-    """比率・派生の入れ子をたどった先の、measure を集計する指標（MetricFlow が切り口・絞り込みを
-    解決する指標）を、（直接の元の指標, その指標）で。2 つ目は、たどると自分に戻るか（循環）。"""
-    leaves: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    cycle = False
-    todo = [(n, n) for n in metric.inputs]
-    while todo:
-        via, name = todo.pop()
-        src = metrics.get(name)
-        if name == metric.name:
-            cycle = True
-        if name in seen or name == metric.name or src is None:
-            continue
-        seen.add(name)
-        if src.type in (MetricType.RATIO, MetricType.DERIVED):
-            todo += [(via, n) for n in src.inputs]
-        else:
-            leaves.append((via, name))
-    return leaves, cycle
 
 
 def _conformance_issues(model: BeamModel) -> list[str]:
