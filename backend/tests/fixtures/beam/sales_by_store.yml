@@ -63,12 +63,12 @@ events:
             availability: available
             history_required: true
           - name: region
-            label: 地方
+            label: 居住地方
             examples: [関東]
             source: {table: raw.customers, column: region}
             availability: available
           - name: prefecture
-            label: 都道府県
+            label: 居住都道府県
             examples: [東京都]
             source: {table: raw.customers, column: prefecture}
             availability: available
@@ -83,12 +83,12 @@ events:
         hierarchy: [category, subcategory]
         attributes:
           - name: category
-            label: カテゴリ
+            label: 商品カテゴリ
             examples: [食品, 家電]
             source: {table: raw.products, column: category}
             availability: available
           - name: subcategory
-            label: サブカテゴリ
+            label: 商品サブカテゴリ
             examples: [お菓子]
             source: {table: raw.products, column: subcategory}
             availability: available
@@ -109,7 +109,7 @@ events:
             source: {table: raw.stores, column: store_name}
             availability: available
           - name: channel
-            label: チャネル
+            label: 販売チャネル
             examples: [store, online]
             source: {table: raw.stores, column: channel}
             availability: available

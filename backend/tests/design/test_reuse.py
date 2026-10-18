@@ -353,3 +353,20 @@ def test_linkable_models_are_not_blocked_twice() -> None:
     """ほかの検査が止めたモデル（未整理の源泉）は、結び付かないことを重ねて出さない。"""
     messages = _messages(load(FIXTURES / "sales_by_store.yml"), _without("raw.stores"))
     assert not any("結び付けられる" in m for m in messages), messages
+
+
+def test_attribute_words_must_match_ontology() -> None:
+    """属性のラベルは、同じ源泉の列のオントロジーの属性にそろえる（#137）。"""
+    beam = load(FIXTURES / "sales_by_store.yml")
+    assert not [m for m in _messages(beam, _ontology()) if "オントロジーでは" in m]
+    data = beam.model_dump(mode="json")
+    for event in data["events"]:
+        for dim in event["dimensions"]:
+            for a in dim["attributes"]:
+                if a["name"] == "category":
+                    a["label"] = "商品カテゴリ（大分類）"
+    messages = [m for m in _messages(BeamModel.model_validate(data), _ontology()) if "ラベル" in m]
+    assert messages == [
+        "属性 product.category: raw.products.category は、オントロジーでは「商品」の属性"
+        " category「商品カテゴリ」です。ラベルを「商品カテゴリ」にしてください"
+    ]

@@ -126,6 +126,30 @@ class Ontology(_Strict):
     def concept(self, name: str) -> Concept:
         return next(c for c in self.concepts if c.name == name)
 
+    def attribute_at(self, table: str, column: str) -> tuple[Concept, Attribute] | None:
+        """源泉の列（<schema>.<table> の column）を属性に持つ概念と、その属性。"""
+        for c in self.concepts:
+            if c.source == table:
+                for a in c.attributes:
+                    if a.column == column:
+                        return c, a
+        return None
+
+    def word_mismatch(self, table: str, column: str, label: str) -> str | None:
+        """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
+        その説明。BEAM 成果物の属性を確かめるのに使う。
+
+        名前は見ない（名前は dim の列名と指標の切り口の参照名になり、出来事ごとの縮退ディメンション
+        では「<ディメンション>.<属性>」の組で決まる。列名の決まりと合わせて決める。#137）。"""
+        found = self.attribute_at(table, column)
+        if found is None or found[1].label == label:
+            return None
+        concept, attr = found
+        return (
+            f"{table}.{column} は、オントロジーでは「{concept.label}」の属性 {attr.name}"
+            f"「{attr.label}」です。ラベルを「{attr.label}」にしてください"
+        )
+
 
 def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Ontology, list[str]]:
     """(源泉, モデル) の組から、まだモデルの無い概念にモデルを書き込む（#69 の fact / dim の整理）。

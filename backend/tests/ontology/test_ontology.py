@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from adp.catalog.catalog import Catalog
 from adp.ontology import Ontology, dump, load, markdown, mermaid
 from adp.ontology.__main__ import DOC, ONTOLOGY
-from adp.ontology.check import check
+from adp.ontology.check import beam_mismatches, check
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -268,3 +268,50 @@ def test_model_without_concept_is_an_error(tmp_path: Path) -> None:
     assert result.unmapped_models == ["dim_date"]  # ほかはエラーにだけ出す（2 回出さない）
     assert [e for e in result.errors if "fct_sales_copy" in e]
     assert not [e for e in result.errors if "dim_date" in e]
+
+
+def test_beam_words_must_match_ontology(tmp_path: Path) -> None:
+    """BEAM 成果物の属性のラベル（名前は見ない）を、オントロジーの属性と照合する（#137）。"""
+    attrs = [
+        {
+            "name": "region",
+            "label": "居住地方",
+            "source": {"table": "raw.customers", "column": "region"},
+        },
+        {
+            "name": "area",
+            "label": "地方",
+            "source": {"table": "raw.customers", "column": "region"},
+        },
+        {"name": "x", "label": "式", "source": {"table": "raw.customers", "expr": "1"}},
+        {"name": "y", "label": "無い列", "source": {"table": "raw.customers", "column": "y"}},
+    ]
+    beam = {"events": [{"name": "e", "dimensions": [{"name": "customer", "attributes": attrs}]}]}
+    (tmp_path / "b.yml").write_text(json.dumps(beam, ensure_ascii=False), encoding="utf-8")
+    assert beam_mismatches(Ontology.model_validate(_data()), tmp_path) == [
+        "b.yml: customer.region: raw.customers.region は、オントロジーでは「顧客」の属性 region"
+        "「地方」です。ラベルを「地方」にしてください"
+    ]
+
+
+def test_repository_beam_words_match_ontology() -> None:
+    assert beam_mismatches(load(ONTOLOGY), REPO / "beam") == []
+
+
+def test_attributes_missing_from_the_dim_are_listed(tmp_path: Path) -> None:
+    """もの・人・場所の概念の属性で、dim に列が無いものは表示する（食い違いにはしない。#137）。"""
+    db = _db(tmp_path, "order_id int, customer_id int")
+    manifest = tmp_path / "manifest.json"
+    node = {"name": "dim_customer", "resource_type": "model", "columns": {"customer_key": {}}}
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {"model.p.dim_customer": node},
+                "sources": {"source.p.raw.customers": {"schema": "raw", "name": "customers"}},
+                "parent_map": {"model.p.dim_customer": ["source.p.raw.customers"]},
+            }
+        )
+    )
+    result = check(Ontology.model_validate(_data()), Catalog(db), manifest)
+    assert result.unmodeled_attributes == ["dim_customer.region（地方）"]
+    assert not [e for e in result.errors if "region" in e]
