@@ -427,7 +427,7 @@ def test_sources_without_descriptions_use_ontology_labels(repo: Path) -> None:
         inventory = sources["raw.inventory"]
         assert inventory.description == "在庫の入出庫" and not inventory.unmapped
         columns = {c.name: c.description for c in inventory.columns}
-        assert columns["movement_type"] == "入出庫区分" and columns["quantity"] == "数量"
+        assert columns["movement_type"] == "入出庫区分" and columns["quantity"] == "入出庫数量"
         profile = index.profile("raw.inventory")
         assert profile.description == "在庫の入出庫"
         assert {c.name: c.description for c in profile.columns}["movement_type"] == "入出庫区分"

@@ -49,7 +49,16 @@ def patch_errors(errors: list[str], patch: OntologyPatch) -> list[str]:
     prefixes = [f"概念 {c.name}:" for c in patch.concepts]
     prefixes += [f"概念 {c.name} の" for c in patch.concepts]
     prefixes += [f"関係「{r.verb}」: 列 {r.via} " for r in patch.relations]
-    return sorted({e for e in errors if e.startswith(tuple(prefixes))})
+    names = {c.name for c in patch.concepts}
+    return sorted(
+        {e for e in errors if e.startswith(tuple(prefixes)) or _duplicates_patch(e, names)}
+    )
+
+
+def _duplicates_patch(error: str, names: set[str]) -> bool:
+    """同じラベルの二重定義（Ontology.duplicate_labels）に、追加案の概念の属性が入っているか。"""
+    m = re.match(r"ラベル「.*?」の属性が別々に定義されている（([^）]*)）", error)
+    return m is not None and any(r.split(".", 1)[0] in names for r in m.group(1).split("、"))
 
 
 def validate_patch(
@@ -123,18 +132,27 @@ def propose_from_profile(profile: TableProfile, ontology: Ontology) -> OntologyP
     )
     kind: Literal["entity", "event"] = "event" if has_time and links else "entity"
     fk_columns = {col for col, _ in links}
-    attributes = [
-        Attribute(name=c.name, label=_label(c.description, c.name), column=c.name)
-        for c in profile.columns
-        if c.name != key and c.name not in fk_columns and c.name not in IGNORED_COLUMNS
-    ]
+    concept_label = _label(profile.description, profile.name)
+    # 既存の属性と同じラベルは、業務の言葉の二重定義になる（#137）。概念の名前を前に付けて分ける
+    used = {a.label for c in ontology.concepts for a in c.attributes}
+    attributes = []
+    for c in profile.columns:
+        if c.name == key or c.name in fk_columns or c.name in IGNORED_COLUMNS:
+            continue
+        label = _label(c.description, c.name)
+        if label in used:
+            label = f"{concept_label}の{label}"
+        if label in used:  # それでも重なれば列名で分ける
+            label = f"{label}（{c.name}）"
+        used.add(label)
+        attributes.append(Attribute(name=c.name, label=label, column=c.name))
     domains: list[Domain] = []
     domain = links[0][1].domain if links else OTHER_DOMAIN.name
     if domain == OTHER_DOMAIN.name and OTHER_DOMAIN.name not in {d.name for d in ontology.domains}:
         domains.append(OTHER_DOMAIN)
     concept = Concept(
         name=name,
-        label=_label(profile.description, profile.name),
+        label=concept_label,
         domain=domain,
         kind=kind,
         source=source,

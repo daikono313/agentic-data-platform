@@ -478,9 +478,11 @@ def generate_models(
                         target=dim.name,
                         instruction=(
                             f"既存の {dim.name} に列 {', '.join(missing)} を追加する。"
-                            "既存の列は変更・削除しない。ソース: "
+                            "既存の列は変更・削除しない。yml の説明は「」の中のとおりに書く"
+                            "（オントロジーのラベルと照合される）。ソース: "
                             + ", ".join(
-                                f"{c.name} = {c.expr}（{dim.base.table} が t0）"
+                                f"{c.name} = {c.expr}"
+                                f"（{dim.base.table} が t0。説明「{c.description}」）"
                                 for c in dim.columns
                                 if c.name in missing
                             )

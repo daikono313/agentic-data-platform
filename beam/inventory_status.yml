@@ -50,7 +50,7 @@ events:
       availability: available
       history_required: true
     - name: region
-      label: 地方
+      label: 所在地方
       description: online / app の店舗は元データが空。「地方なし」として表示する
       examples: []
       source:

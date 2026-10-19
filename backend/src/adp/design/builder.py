@@ -270,21 +270,40 @@ class DesignBuilder:
                 )
 
     def _check_ontology_words(self, beam: BeamModel) -> None:
-        """属性のラベルが、同じ源泉の列のオントロジーの属性と同じか（#137）。
+        """属性のラベルが、オントロジーの属性（業務の言葉の正本）と同じか（#137）。
 
-        オントロジーが業務の言葉の正本。違うまま確定すると、生成した PR が `make ontology` の
-        検査（beam/ との照合）で落ちるので、確定の前に止める。
+        - 同じ源泉の列の属性（`ontology.check.beam_mismatches` と同じ。式は値を置き換えるだけの
+          ものだけ）
+        - 概念の dim に作る列（属性の名前）が概念の属性の列なら、その属性。dim の yml の説明は
+          属性のラベルになり、`make ontology` が dim の説明を照合する
+
+        違うまま確定すると、生成した PR が `make ontology` で落ちるので、確定の前に止める。
         """
         if self.ontology is None:
             return
+        by_model = {c.model: c for c in self.ontology.concepts if c.kind == "entity" and c.model}
         seen: set[tuple[str, str]] = set()  # 出来事をまたいで共通のディメンションは 1 回だけ
         for event in beam.events:
             for dim in event.dimensions:
+                concept = by_model.get(f"dim_{dim.name}")
                 for a in dim.attributes:
-                    if a.source is None or a.source.column is None or (dim.name, a.name) in seen:
+                    if (dim.name, a.name) in seen:
                         continue
                     seen.add((dim.name, a.name))
-                    mismatch = self.ontology.word_mismatch(a.source.table, a.source.column, a.label)
+                    mismatch = None
+                    if a.source is not None:
+                        column = a.source.column or self.ontology.expr_column(
+                            a.source.table, a.source.expr or ""
+                        )
+                        if column is not None:
+                            mismatch = self.ontology.word_mismatch(a.source.table, column, a.label)
+                    if mismatch is None and concept is not None:
+                        mismatch = self.ontology.word_mismatch(concept.source, a.name, a.label)
+                        if mismatch:
+                            mismatch += (
+                                f"（dim_{dim.name} の列 {a.name} になるため。別の言葉なら、"
+                                "属性の名前を変えてください）"
+                            )
                     if mismatch:
                         self._blocker(
                             f"属性 {dim.name}.{a.name}: {mismatch}", f"{dim.name}.{a.name}"

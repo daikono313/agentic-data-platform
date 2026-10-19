@@ -361,3 +361,105 @@ def test_attributes_missing_from_the_dim_are_listed(tmp_path: Path) -> None:
     result = check(Ontology.model_validate(_data()), Catalog(db), manifest)
     assert result.unmodeled_attributes == ["dim_customer.region（地方）"]
     assert not [e for e in result.errors if "region" in e]
+
+
+def test_same_as_names_the_canonical_attribute() -> None:
+    """同じ業務の言葉を別の源泉にも持つときは same_as で正本を示す（#137）。"""
+    data = _data()
+    order = data["concepts"][1]
+    order["attributes"] = [{"name": "area", "label": "地方", "column": "region"}]
+    onto = Ontology.model_validate(data)
+    assert onto.duplicate_labels() == [
+        "ラベル「地方」の属性が別々に定義されている（customer.region、order.area）。"
+        "同じものなら片方に same_as で正本を書き、違うものならラベルを分ける"
+    ]
+    order["attributes"][0]["same_as"] = "customer.region"
+    onto = Ontology.model_validate(data)
+    assert onto.duplicate_labels() == []
+    assert "地方（`region`。正本は顧客の `customer.region`）" in markdown(onto)
+    for target, label, message in [
+        ("customer.nope", "地方", "ほかの概念の属性に無い"),
+        ("order.area", "地方", "ほかの概念の属性に無い"),
+        ("order.status", "地方", "ほかの概念の属性に無い"),
+        ("customer.region", "居住地", "と違う"),
+    ]:
+        order["attributes"][0].update(same_as=target, label=label)
+        with pytest.raises(ValidationError, match=message):
+            Ontology.model_validate(data)
+    order["attributes"] = [
+        {"name": "area", "label": "地方", "column": "region", "same_as": "customer.region"}
+    ]
+    data["concepts"][0]["attributes"].append(
+        {"name": "area2", "label": "地方", "column": "region2", "same_as": "order.area"}
+    )
+    with pytest.raises(ValidationError, match="正本ではない"):
+        Ontology.model_validate(data)
+
+
+def test_expr_column_only_for_value_replacements() -> None:
+    """値を置き換えるだけの式だけ元の列を返す。列から別の言葉を作る式（年代・価格帯）は見ない。"""
+    onto = Ontology.model_validate(_data())
+    assert onto.expr_column("raw.customers", "coalesce(region, '地方なし')") == "region"
+    assert onto.expr_column("raw.customers", " IFNULL(region, 0) ") == "region"
+    assert onto.expr_column("raw.customers", "region") == "region"
+    for derived in [
+        "upper('region')",
+        "case when region = '関東' then '首都圏' else 'その他' end",
+        "date_diff('year', region, current_date)",
+        "coalesce(region, other)",
+    ]:
+        assert onto.expr_column("raw.customers", derived) is None, derived
+    assert onto.expr_column("raw.orders", "region") is None
+
+
+def test_beam_words_check_single_column_expressions(tmp_path: Path) -> None:
+    """式で作る属性も、式が使う属性の列が 1 つなら照合する（#137）。"""
+    attr = {
+        "name": "region",
+        "label": "居住地方",
+        "source": {"table": "raw.customers", "expr": "coalesce(region, '不明')"},
+    }
+    beam = {"events": [{"name": "e", "dimensions": [{"name": "c", "attributes": [attr]}]}]}
+    (tmp_path / "b.yml").write_text(json.dumps(beam, ensure_ascii=False), encoding="utf-8")
+    assert beam_mismatches(Ontology.model_validate(_data()), tmp_path) == [
+        "b.yml: c.region: raw.customers.region は、オントロジーでは「顧客」の属性 region"
+        "「地方」です。ラベルを「地方」にしてください"
+    ]
+
+
+def test_dim_descriptions_start_with_the_label(tmp_path: Path) -> None:
+    """dim の列の説明は、オントロジーの属性のラベルで始める（補足は「（…）」で後ろに。#137）。"""
+    db = _db(tmp_path, "order_id int, customer_id int")
+    manifest = tmp_path / "manifest.json"
+
+    def run(description: str) -> list[str]:
+        node = {
+            "name": "dim_customer",
+            "resource_type": "model",
+            "columns": {"region": {"description": description}},
+        }
+        manifest.write_text(
+            json.dumps(
+                {
+                    "nodes": {"model.p.dim_customer": node},
+                    "sources": {"source.p.raw.customers": {"schema": "raw", "name": "customers"}},
+                    "parent_map": {"model.p.dim_customer": ["source.p.raw.customers"]},
+                }
+            )
+        )
+        result = check(Ontology.model_validate(_data()), Catalog(db), manifest)
+        return [e for e in result.errors if "説明" in e]
+
+    assert run("地方") == [] and run("地方（不明は「不明」）") == []
+    assert run("居住地方") == [
+        "概念 customer の属性 region: dim_customer.region の説明「居住地方」が、ラベル「地方」"
+        "（か「地方（補足）」）になっていない"
+    ]
+
+
+def test_duplicate_labels_fail_the_check(tmp_path: Path) -> None:
+    db = _db(tmp_path, "order_id int, customer_id int, region text")
+    data = _data()
+    data["concepts"][1]["attributes"] = [{"name": "region", "label": "地方", "column": "region"}]
+    result = check(Ontology.model_validate(data), Catalog(db), None)
+    assert [e for e in result.errors if e.startswith("ラベル「地方」")]

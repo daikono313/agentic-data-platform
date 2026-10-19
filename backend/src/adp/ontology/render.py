@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from adp.markdown import cell, mermaid_label
-from adp.ontology.models import Concept, Ontology, mermaid_id
+from adp.ontology.models import Attribute, Concept, Ontology, mermaid_id
 
 MAX_ATTRS_IN_DIAGRAM = 4
 """図に出す属性の数（多いと読めなくなる。全部は md の表に出す）。"""
@@ -62,6 +62,13 @@ def mermaid(ontology: Ontology) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _attribute(a: Attribute, labels: dict[str, str]) -> str:
+    if a.same_as is None:
+        return f"{a.label}（`{a.column}`）"
+    concept = a.same_as.split(".", 1)[0]
+    return f"{a.label}（`{a.column}`。正本は{labels[concept]}の `{a.same_as}`）"
+
+
 def markdown(ontology: Ontology) -> str:
     domain = {d.name: d.label for d in ontology.domains}
     out = [
@@ -84,15 +91,15 @@ def markdown(ontology: Ontology) -> str:
         "| 概念 | 種類 | ドメイン | 源泉（キー） | モデル | 属性 |",
         "|---|---|---|---|---|---|",
     ]
+    labels = {c.name: c.label for c in ontology.concepts}
     for c in ontology.concepts:
         kind = "もの・人" if c.kind == "entity" else "出来事"
-        attrs = "、".join(f"{a.label}（`{a.column}`）" for a in c.attributes) or "-"
+        attrs = "、".join(_attribute(a, labels) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(
             f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
             f"| `{c.source}`（`{c.key}`） | {model} | {cell(attrs)} |"
         )
-    labels = {c.name: c.label for c in ontology.concepts}
     if ontology.relations:
         out += ["", "## 関係", "", "| から | 関係 | へ | 列 |", "|---|---|---|---|"]
         for r in ontology.relations:

@@ -16,6 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _NAME = r"^[a-z][a-z0-9_]*$"
 _TABLE = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 _COLUMN = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
+_REPLACEMENT = re.compile(
+    r"(?:(?:coalesce|ifnull)\(\s*(?P<column>[a-z_][a-z0-9_]*)\s*,\s*(?:'[^']*'|-?[0-9.]+)\s*\)"
+    r"|(?P<bare>[a-z_][a-z0-9_]*))"
+)
+"""値を置き換えるだけの式（`coalesce(列, 'リテラル')`・`ifnull(列, 0)`・列だけ）。"""
 
 
 class _Strict(BaseModel):
@@ -38,6 +43,11 @@ class Attribute(_Strict):
     label: str = Field(min_length=1)
     column: str = Field(pattern=_NAME)
     """概念の source の列。"""
+    same_as: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+    """別の概念の属性（`<概念>.<属性>`）と同じ業務の言葉なら、その属性（#137）。
+
+    同じ値を別の源泉にも持つとき（注文の支払方法と、支払の支払方法など）に、どちらが正本かを示す。
+    ラベルは正本と同じにする。同じラベルで same_as の無い属性が別々にあると、照合で落ちる。"""
 
 
 class Concept(_Strict):
@@ -121,6 +131,22 @@ class Ontology(_Strict):
         dup = {m for m in models if models.count(m) > 1}
         if dup:
             raise ValueError(f"1 つのモデルが複数の概念に対応している: {', '.join(sorted(dup))}")
+        attrs = {f"{c.name}.{a.name}": a for c in self.concepts for a in c.attributes}
+        for ref, a in attrs.items():
+            if a.same_as is None:
+                continue
+            target = attrs.get(a.same_as)
+            if target is None or a.same_as.split(".")[0] == ref.split(".")[0]:
+                raise ValueError(f"属性 {ref} の same_as {a.same_as} が、ほかの概念の属性に無い")
+            if target.same_as is not None:
+                raise ValueError(
+                    f"属性 {ref} の same_as {a.same_as} は正本ではない（same_as を持つ）"
+                )
+            if target.label != a.label:
+                raise ValueError(
+                    f"属性 {ref} のラベル「{a.label}」が、same_as の {a.same_as}"
+                    f"「{target.label}」と違う"
+                )
         return self
 
     def concept(self, name: str) -> Concept:
@@ -135,12 +161,46 @@ class Ontology(_Strict):
                         return c, a
         return None
 
+    def expr_column(self, table: str, expr: str) -> str | None:
+        """値を置き換えるだけの式（`coalesce(region, '地方なし')` など）の元の列。その源泉の属性の
+        列のときだけ返す。
+
+        年代（`date_diff(..., birth_date, ...)`）や価格帯（`case when list_price ...`）のように、
+        列から別の言葉を作る式は見ない（元の列のラベルを強いると、派生した属性を確定できない。#137）。
+        """
+        m = _REPLACEMENT.fullmatch(expr.strip().lower())
+        if m is None:
+            return None
+        column = m.group("column") or m.group("bare")
+        known = {a.column for c in self.concepts if c.source == table for a in c.attributes}
+        return column if column in known else None
+
+    def describes(self, attr: Attribute, text: str) -> bool:
+        """dim の列の説明が、属性のラベル（そのままか、後ろに「（補足）」）か（#137）。"""
+        return text == attr.label or text.startswith(f"{attr.label}（")
+
+    def duplicate_labels(self) -> list[str]:
+        """同じラベルなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。#137）。
+
+        同じものなら same_as で正本を示し、違うものならラベルを分ける（居住地方・所在地方など）。"""
+        groups: dict[str, set[str]] = {}
+        for c in self.concepts:
+            for a in c.attributes:
+                groups.setdefault(a.label, set()).add(a.same_as or f"{c.name}.{a.name}")
+        return [
+            f"ラベル「{label}」の属性が別々に定義されている（{'、'.join(sorted(refs))}）。"
+            "同じものなら片方に same_as で正本を書き、違うものならラベルを分ける"
+            for label, refs in groups.items()
+            if len(refs) > 1
+        ]
+
     def word_mismatch(self, table: str, column: str, label: str) -> str | None:
         """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
         その説明。BEAM 成果物の属性を確かめるのに使う。
 
-        名前は見ない（名前は dim の列名と指標の切り口の参照名になり、出来事ごとの縮退ディメンション
-        では「<ディメンション>.<属性>」の組で決まる。列名の決まりと合わせて決める。#137）。"""
+        BEAM の属性の名前どうしはそろえない（名前は指標の切り口の参照名になり、出来事ごとの縮退
+        ディメンションでは「<ディメンション>.<属性>」の組で決まる。#137）。ただし概念の dim の列に
+        なる名前は、設計（design.builder）がこれで dim の列のラベルを確かめる。"""
         found = self.attribute_at(table, column)
         if found is None or found[1].label == label:
             return None
@@ -201,7 +261,8 @@ HEADER = """\
 # - domains: 業務のまとまり（図の枠）
 # - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
-#   - attributes: 属性。column は source の列
+#   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
+#     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
 #   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）

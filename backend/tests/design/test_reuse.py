@@ -373,3 +373,51 @@ def test_attribute_words_must_match_ontology() -> None:
         "属性 product.category: raw.products.category は、オントロジーでは「商品」の属性"
         " category「商品カテゴリ」です。ラベルを「商品カテゴリ」にしてください"
     ]
+
+
+def test_expression_attribute_words_must_match_ontology() -> None:
+    """式で作る属性も、式が使う属性の列が 1 つなら照合する（#137）。"""
+    data = load(FIXTURES / "sales_by_store.yml").model_dump(mode="json")
+    for event in data["events"]:
+        for dim in event["dimensions"]:
+            for a in dim["attributes"]:
+                if a["name"] == "category":
+                    a["label"] = "カテゴリ"
+                    a["source"] = {"table": "raw.products", "expr": "coalesce(category, '不明')"}
+    design = DesignBuilder(FakeSchema(), ontology=_ontology()).build(BeamModel.model_validate(data))
+    assert [b.ref for b in design.blockers if "ラベル" in b.message] == ["product.category"]
+
+
+def test_derived_attributes_are_not_forced_to_the_source_label() -> None:
+    """列から別の言葉を作る式（価格帯など）は、元の列のラベルにそろえさせない（#137 レビュー）。"""
+    data = load(FIXTURES / "sales_by_store.yml").model_dump(mode="json")
+    for event in data["events"]:
+        for dim in event["dimensions"]:
+            for a in dim["attributes"]:
+                if a["name"] == "category":
+                    dim["hierarchy"] = [
+                        "category_group" if h == "category" else h for h in dim["hierarchy"]
+                    ]
+                    a["name"] = "category_group"
+                    a["label"] = "カテゴリの大分類"
+                    a["source"] = {
+                        "table": "raw.products",
+                        "expr": "case when category = '食品' then '食品' else 'その他' end",
+                    }
+    design = DesignBuilder(FakeSchema(), ontology=_ontology()).build(BeamModel.model_validate(data))
+    assert not [b for b in design.blockers if "ラベル" in b.message]
+
+
+def test_dim_column_names_must_keep_the_ontology_word() -> None:
+    """概念の dim の列名になる属性の名前が、概念の属性の列なら、そのラベルにする（dim の説明として
+    照合されるため。#137 レビュー）。"""
+    data = load(FIXTURES / "sales_by_store.yml").model_dump(mode="json")
+    for event in data["events"]:
+        for dim in event["dimensions"]:
+            for a in dim["attributes"]:
+                if a["name"] == "category":
+                    a["label"] = "カテゴリの大分類"
+                    a["source"] = {"table": "raw.products", "expr": "upper(category)"}
+    design = DesignBuilder(FakeSchema(), ontology=_ontology()).build(BeamModel.model_validate(data))
+    messages = [b.message for b in design.blockers if "ラベル" in b.message]
+    assert len(messages) == 1 and "dim_product の列 category になるため" in messages[0]

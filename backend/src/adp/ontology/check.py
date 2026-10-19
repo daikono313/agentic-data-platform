@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from adp.catalog.catalog import Catalog
-from adp.ontology.models import Ontology
+from adp.ontology.models import Concept, Ontology
 from adp.yaml_docs import load_yaml_docs, named
 
 
@@ -32,8 +32,8 @@ SHARED_MODELS = frozenset({"dim_date"})
 class _DbtModel(BaseModel):
     sources: set[str]
     """（staging などを経由して）読んでいる源泉（`<schema>.<table>`）。"""
-    columns: set[str]
-    """yml に書いた列。"""
+    columns: dict[str, str]
+    """yml に書いた列 → その説明。"""
 
 
 def _dbt_models(manifest_path: Path) -> dict[str, _DbtModel] | None:
@@ -65,7 +65,13 @@ def _dbt_models(manifest_path: Path) -> dict[str, _DbtModel] | None:
         return found
 
     return {
-        n["name"]: _DbtModel(sources=upstream(k), columns=set(n.get("columns") or {}))
+        n["name"]: _DbtModel(
+            sources=upstream(k),
+            columns={
+                name: str((col or {}).get("description") or "")
+                for name, col in (n.get("columns") or {}).items()
+            },
+        )
         for k, n in nodes.items()
         if n.get("resource_type") == "model"
     }
@@ -94,6 +100,8 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
         for a in c.attributes:
             if not has_column(c.source, a.column):
                 errors.append(f"概念 {c.name} の属性 {a.name}: 列 {c.source}.{a.column} が無い")
+
+    errors += ontology.duplicate_labels()
 
     by_name = {c.name: c for c in ontology.concepts}
     for r in ontology.relations:
@@ -130,7 +138,9 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                         f"（読んでいる源泉: {read}）"
                     )
                 elif c.kind == "entity":
-                    # fct の列は measure の名前（数量 → movement_qty など）になるので、dim だけ見る
+                    # fct の列は measure の名前（数量 → movement_qty など）と、measure のラベル
+                    # （「値引額(税抜)」など）から作る説明になるので、dim だけ見る
+                    errors += _description_mismatches(ontology, c, models[c.model])
                     unmodeled += [
                         f"{c.model}.{a.column}（{a.label}）"
                         for a in c.attributes
@@ -159,9 +169,25 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
     )
 
 
+def _description_mismatches(ontology: Ontology, concept: Concept, model: _DbtModel) -> list[str]:
+    """dim の列（属性と同じ列名のもの）の説明が、属性のラベルになっていないもの（#137）。
+
+    説明はラベルの後に補足（「（不明は「不明」）」など）を付けてよい（Ontology.describes）。"""
+    errors = []
+    for a in concept.attributes:
+        text = model.columns.get(a.column)
+        if text is not None and not ontology.describes(a, text):
+            errors.append(
+                f"概念 {concept.name} の属性 {a.name}: {concept.model}.{a.column} の説明"
+                f"「{text}」が、ラベル「{a.label}」（か「{a.label}（補足）」）になっていない"
+            )
+    return errors
+
+
 def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
     """BEAM 成果物（beam/*.yml）の属性のラベルが、同じ源泉の列のオントロジーの属性と違うもの
-    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は見ない。出来事をまたいで
+    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は、値を置き換えるだけの式の
+    ときだけ見る（Ontology.expr_column）。出来事をまたいで
     共通のディメンションの属性は、設計の検査（design.builder）と同じく最初の 1 回だけ見る。
 
     ontology は beam に依存しない（backend/CLAUDE.md の依存の向き）ので、成果物は YAML のまま読む。
@@ -177,13 +203,17 @@ def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
                 for attr in named(dim.get("attributes")):
                     source = attr.get("source")
                     key = (str(dim["name"]), str(attr["name"]))
-                    if not isinstance(source, dict) or not source.get("column") or key in seen:
+                    if not isinstance(source, dict) or key in seen:
+                        continue
+                    table = str(source.get("table"))
+                    column = source.get("column") or ontology.expr_column(
+                        table, str(source.get("expr") or "")
+                    )
+                    if not column:
                         continue
                     seen.add(key)
                     mismatch = ontology.word_mismatch(
-                        str(source.get("table")),
-                        str(source["column"]),
-                        str(attr.get("label") or ""),
+                        table, str(column), str(attr.get("label") or "")
                     )
                     if mismatch:
                         errors.append(f"{doc.path.name}: {dim['name']}.{attr['name']}: {mismatch}")
