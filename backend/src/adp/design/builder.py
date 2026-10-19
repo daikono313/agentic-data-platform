@@ -270,7 +270,8 @@ class DesignBuilder:
                 )
 
     def _check_ontology_words(self, beam: BeamModel) -> None:
-        """属性のラベルが、同じ源泉の列のオントロジーの属性と同じか（#137）。
+        """属性のラベルが、同じ源泉の列のオントロジーの属性と同じか（#137）。式で作る属性は、式が
+        使う属性の列が 1 つのときだけ見る（ontology.check.beam_mismatches と同じ）。
 
         オントロジーが業務の言葉の正本。違うまま確定すると、生成した PR が `make ontology` の
         検査（beam/ との照合）で落ちるので、確定の前に止める。
@@ -281,10 +282,15 @@ class DesignBuilder:
         for event in beam.events:
             for dim in event.dimensions:
                 for a in dim.attributes:
-                    if a.source is None or a.source.column is None or (dim.name, a.name) in seen:
+                    if a.source is None or (dim.name, a.name) in seen:
+                        continue
+                    column = a.source.column or self.ontology.expr_column(
+                        a.source.table, a.source.expr or ""
+                    )
+                    if column is None:
                         continue
                     seen.add((dim.name, a.name))
-                    mismatch = self.ontology.word_mismatch(a.source.table, a.source.column, a.label)
+                    mismatch = self.ontology.word_mismatch(a.source.table, column, a.label)
                     if mismatch:
                         self._blocker(
                             f"属性 {dim.name}.{a.name}: {mismatch}", f"{dim.name}.{a.name}"

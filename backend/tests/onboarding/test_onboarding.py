@@ -483,3 +483,28 @@ def test_onboarding_api_rejects_invalid_cleansing_json(tmp_path: Path) -> None:
     res = client.post("/sources/raw.reviews/onboarding", json=body)
     assert res.status_code == 422, res.text
     assert "raw.orders" in res.text
+
+
+def test_patch_must_not_duplicate_existing_labels(catalog: Catalog) -> None:
+    """既存の属性と同じラベルは業務の言葉の二重定義（#137）。決定的な案は概念の名前で分け、
+    エージェントの案なら誤りにする。"""
+    profile = catalog.profile_table("raw.inventory")
+    profile = profile.model_copy(
+        update={
+            "description": "在庫の入出庫",
+            "columns": [
+                c.model_copy(update={"description": "販売数量"}) if c.name == "quantity" else c
+                for c in profile.columns
+            ],
+        }
+    )
+    patch = propose_from_profile(profile, ONTOLOGY)
+    labels = {a.column: a.label for a in patch.concepts[0].attributes}
+    assert labels["quantity"] == "在庫の入出庫の販売数量"
+    assert validate_patch(ONTOLOGY, patch, catalog, "raw.inventory") == []
+    data = patch.model_dump(mode="json", by_alias=True)
+    for a in data["concepts"][0]["attributes"]:
+        if a["column"] == "quantity":
+            a["label"] = "販売数量"
+    errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
+    assert [e for e in errors if e.startswith("ラベル「販売数量」")], errors

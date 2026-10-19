@@ -373,3 +373,16 @@ def test_attribute_words_must_match_ontology() -> None:
         "属性 product.category: raw.products.category は、オントロジーでは「商品」の属性"
         " category「商品カテゴリ」です。ラベルを「商品カテゴリ」にしてください"
     ]
+
+
+def test_expression_attribute_words_must_match_ontology() -> None:
+    """式で作る属性も、式が使う属性の列が 1 つなら照合する（#137）。"""
+    data = load(FIXTURES / "sales_by_store.yml").model_dump(mode="json")
+    for event in data["events"]:
+        for dim in event["dimensions"]:
+            for a in dim["attributes"]:
+                if a["name"] == "category":
+                    a["label"] = "カテゴリ"
+                    a["source"] = {"table": "raw.products", "expr": "coalesce(category, '不明')"}
+    design = DesignBuilder(FakeSchema(), ontology=_ontology()).build(BeamModel.model_validate(data))
+    assert [b.ref for b in design.blockers if "ラベル" in b.message] == ["product.category"]

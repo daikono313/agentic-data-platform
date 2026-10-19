@@ -5,7 +5,8 @@
 # - domains: 業務のまとまり（図の枠）
 # - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
-#   - attributes: 属性。column は source の列
+#   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
+#     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
 #   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
@@ -145,6 +146,7 @@ concepts:
   - name: payment_method
     label: 支払方法
     column: payment_method
+    same_as: payment.payment_method
 - name: order_line
   label: 注文明細
   domain: sales
@@ -154,7 +156,7 @@ concepts:
   model: fct_order_lines
   attributes:
   - name: quantity
-    label: 数量
+    label: 販売数量
     column: quantity
   - name: unit_price
     label: 販売単価
@@ -225,7 +227,7 @@ concepts:
     label: 入出庫区分
     column: movement_type
   - name: quantity
-    label: 数量
+    label: 入出庫数量
     column: quantity
 relations:
 - from: customer

@@ -38,6 +38,11 @@ class Attribute(_Strict):
     label: str = Field(min_length=1)
     column: str = Field(pattern=_NAME)
     """概念の source の列。"""
+    same_as: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+    """別の概念の属性（`<概念>.<属性>`）と同じ業務の言葉なら、その属性（#137）。
+
+    同じ値を別の源泉にも持つとき（注文の支払方法と、支払の支払方法など）に、どちらが正本かを示す。
+    ラベルは正本と同じにする。同じラベルで same_as の無い属性が別々にあると、照合で落ちる。"""
 
 
 class Concept(_Strict):
@@ -121,6 +126,22 @@ class Ontology(_Strict):
         dup = {m for m in models if models.count(m) > 1}
         if dup:
             raise ValueError(f"1 つのモデルが複数の概念に対応している: {', '.join(sorted(dup))}")
+        attrs = {f"{c.name}.{a.name}": a for c in self.concepts for a in c.attributes}
+        for ref, a in attrs.items():
+            if a.same_as is None:
+                continue
+            target = attrs.get(a.same_as)
+            if target is None or a.same_as == ref:
+                raise ValueError(f"属性 {ref} の same_as {a.same_as} が、ほかの概念の属性に無い")
+            if target.same_as is not None:
+                raise ValueError(
+                    f"属性 {ref} の same_as {a.same_as} は正本ではない（same_as を持つ）"
+                )
+            if target.label != a.label:
+                raise ValueError(
+                    f"属性 {ref} のラベル「{a.label}」が、same_as の {a.same_as}"
+                    f"「{target.label}」と違う"
+                )
         return self
 
     def concept(self, name: str) -> Concept:
@@ -134,6 +155,31 @@ class Ontology(_Strict):
                     if a.column == column:
                         return c, a
         return None
+
+    def expr_column(self, table: str, expr: str) -> str | None:
+        """式（`coalesce(region, '地方なし')` など）が使う、オントロジーの属性の列。
+
+        文字列のリテラルと関数名を除いた識別子のうち、その源泉の属性の列がちょうど 1 つのときだけ
+        返す（複数の列から作る式は、どの言葉にそろえるか決まらないので見ない。#137）。"""
+        known = {a.column for c in self.concepts if c.source == table for a in c.attributes}
+        words = re.findall(r"\b([a-z_][a-z0-9_]*)\b(?!\s*\()", re.sub(r"'[^']*'", "", expr.lower()))
+        used = known & set(words)
+        return used.pop() if len(used) == 1 else None
+
+    def duplicate_labels(self) -> list[str]:
+        """同じラベルなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。#137）。
+
+        同じものなら same_as で正本を示し、違うものならラベルを分ける（居住地方・所在地方など）。"""
+        groups: dict[str, set[str]] = {}
+        for c in self.concepts:
+            for a in c.attributes:
+                groups.setdefault(a.label, set()).add(a.same_as or f"{c.name}.{a.name}")
+        return [
+            f"ラベル「{label}」の属性が別々に定義されている（{'、'.join(sorted(refs))}）。"
+            "同じものなら片方に same_as で正本を書き、違うものならラベルを分ける"
+            for label, refs in groups.items()
+            if len(refs) > 1
+        ]
 
     def word_mismatch(self, table: str, column: str, label: str) -> str | None:
         """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
@@ -201,7 +247,8 @@ HEADER = """\
 # - domains: 業務のまとまり（図の枠）
 # - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
-#   - attributes: 属性。column は source の列
+#   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
+#     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
 #   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）

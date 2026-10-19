@@ -101,7 +101,7 @@
               },
               {
                 "name": "region",
-                "label": "地方",
+                "label": "居住地方",
                 "description": "",
                 "examples": [
                   "関東"
@@ -116,7 +116,7 @@
               },
               {
                 "name": "prefecture",
-                "label": "都道府県",
+                "label": "居住都道府県",
                 "description": "",
                 "examples": [
                   "東京都"
@@ -164,7 +164,7 @@
             "attributes": [
               {
                 "name": "category",
-                "label": "カテゴリ",
+                "label": "商品カテゴリ",
                 "description": "",
                 "examples": [
                   "食品",
@@ -180,7 +180,7 @@
               },
               {
                 "name": "subcategory",
-                "label": "サブカテゴリ",
+                "label": "商品サブカテゴリ",
                 "description": "",
                 "examples": [
                   "お菓子"
@@ -250,7 +250,7 @@
               },
               {
                 "name": "channel",
-                "label": "チャネル",
+                "label": "販売チャネル",
                 "description": "",
                 "examples": [
                   "store",

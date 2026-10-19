@@ -14,7 +14,7 @@ flowchart LR
     c_order(["注文"])
     a_order["注文日時<br/>注文ステータス<br/>支払方法"]:::attr
     c_order_line(["注文明細"])
-    a_order_line["数量<br/>販売単価<br/>値引額"]:::attr
+    a_order_line["販売数量<br/>販売単価<br/>値引額"]:::attr
   end
   subgraph d_merchandise["商品"]
     c_product("商品")
@@ -38,7 +38,7 @@ flowchart LR
   end
   subgraph d_inventory["在庫"]
     c_inventory_movement(["在庫の入出庫"])
-    a_inventory_movement["入出庫日時<br/>入出庫区分<br/>数量"]:::attr
+    a_inventory_movement["入出庫日時<br/>入出庫区分<br/>入出庫数量"]:::attr
   end
   c_customer -.- a_customer
   c_product -.- a_product
@@ -86,12 +86,12 @@ flowchart LR
 | 商品 `product` | もの・人 | 商品 | `raw.products`（`product_id`） | `dim_product` | 商品名（`product_name`）、商品カテゴリ（`category`）、商品サブカテゴリ（`subcategory`）、ブランド（`brand`）、定価（`list_price`）、標準原価（`unit_cost`）、発売日（`launched_on`） |
 | 店舗・チャネル `store` | もの・人 | 店舗・チャネル | `raw.stores`（`store_id`） | `dim_store` | 店舗名（`store_name`）、販売チャネル（`channel`）、所在都道府県（`prefecture`）、所在地方（`region`）、開店日（`opened_on`） |
 | プロモーション `promotion` | もの・人 | 販売 | `raw.promotions`（`promotion_id`） | `dim_promotion` | プロモーション名（`promotion_name`）、種類（`promotion_type`）、割引率（`discount_rate`）、開始日（`start_date`）、終了日（`end_date`） |
-| 注文 `order` | 出来事 | 販売 | `raw.orders`（`order_id`） | 未整備 | 注文日時（`ordered_at`）、注文ステータス（`order_status`）、支払方法（`payment_method`） |
-| 注文明細 `order_line` | 出来事 | 販売 | `raw.order_items`（`order_item_id`） | `fct_order_lines` | 数量（`quantity`）、販売単価（`unit_price`）、値引額（`discount_amount`） |
+| 注文 `order` | 出来事 | 販売 | `raw.orders`（`order_id`） | 未整備 | 注文日時（`ordered_at`）、注文ステータス（`order_status`）、支払方法（`payment_method`。正本は支払の `payment.payment_method`） |
+| 注文明細 `order_line` | 出来事 | 販売 | `raw.order_items`（`order_item_id`） | `fct_order_lines` | 販売数量（`quantity`）、販売単価（`unit_price`）、値引額（`discount_amount`） |
 | 支払 `payment` | 出来事 | 決済・配送・返品 | `raw.payments`（`payment_id`） | 未整備 | 支払方法（`payment_method`）、支払金額（`amount`）、支払日時（`paid_at`） |
 | 配送 `shipment` | 出来事 | 決済・配送・返品 | `raw.shipments`（`shipment_id`） | 未整備 | 配送方法（`shipping_method`）、出荷日時（`shipped_at`）、配達日時（`delivered_at`） |
 | 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | 未整備 | 返品日時（`returned_at`）、返品数量（`quantity`）、返品理由（`return_reason`） |
-| 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`）、入出庫区分（`movement_type`）、数量（`quantity`） |
+| 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`）、入出庫区分（`movement_type`）、入出庫数量（`quantity`） |
 
 ## 関係
 
