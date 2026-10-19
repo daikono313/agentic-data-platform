@@ -578,3 +578,46 @@ def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
     ]
     issues = model.finalize_issues()
     assert any("[metric a] 元の指標をたどると a に戻ります" in i for i in issues), issues
+
+
+def test_nested_cross_event_filter_must_be_shared() -> None:
+    """元の指標がさらに比率・派生なら、絞り込みはたどった先の指標の出来事の名前で書き、そのまま
+    下へ渡るので、下の出来事が分かれるなら、どの出来事でも同じ名前で解決できる参照に限る（#184）。"""
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    returns = model.event("customer_returns_product")
+    orders = model.event("customer_orders_product")
+    assert returns is not None and orders is not None
+    # 注文の状態（マスタなし）を両方の出来事に持たせる
+    returns.dimensions += [
+        d.model_copy(deep=True) for d in orders.dimensions if d.ref == "order_status"
+    ]
+    rate = model.metrics[-1]
+    assert rate.name == "return_rate_by_category"
+
+    base = list(model.metrics)
+
+    def issues(ref: str, expr: str = "return_rate_by_category * 100") -> list[str]:
+        model.metrics = [
+            *base,
+            MetricRequest.model_validate(
+                {"label": "x", "question": "q", "framed_question": "q"}
+                | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
+                | {"expr": expr}
+                | {"filters": [{"ref": ref, "operator": "=", "values": ["x"]}] * 2}
+            ),
+        ]
+        return [i for i in model.finalize_issues() if i.startswith("[metric pct] 絞り込み")]
+
+    # 両方の出来事にあるが、出来事ごとに別々に記録される（マスタなし）
+    assert issues("order_status.order_status") == [
+        "[metric pct] 絞り込み order_status.order_status は、元の指標 return_rate_by_category"
+        "（比率・派生）の下の出来事（customer_returns_product・customer_orders_product）ごとに"
+        "別々に記録される項目なので使えません。どの出来事にも共通するディメンション（商品など）の"
+        "属性で絞り込むか、return_rate_by_category の元の指標に絞り込みを付けてください"
+    ]
+    # 共通のディメンションの属性なら、どの出来事でも同じ名前で解決できる
+    assert issues("product.category") == []
+    # 直接の元の指標と、入れ子の元の指標が同じ指標（注文数）を共有していても、元の指標ごとに見る
+    mixed = issues("order_status.order_status", "sold_qty_excl_cancelled + return_rate_by_category")
+    assert len(mixed) == 1 and "元の指標 return_rate_by_category" in mixed[0]

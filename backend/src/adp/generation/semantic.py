@@ -115,13 +115,17 @@ def _input(
     """比率・派生の指標の元の指標。絞り込みは元の指標ごとに、その出来事の名前で書く。
 
     指標の filter は元の指標すべてに効くが、名前は 1 つの出来事でしか解決できない（返品の出来事の
-    return__order_status は、注文の指標には無い。#178）。参照が元の指標（入れ子ならたどった先の
-    指標）の出来事にあることは検証で確かめている（adp.beam.validation、#180）。入れ子で、下の指標の
-    出来事で同じ名前になるかは確かめていない（#184。切り口は #181 で確かめる）。
+    return__order_status は、注文の指標には無い。#178）。元の指標がさらに比率・派生なら、
+    MetricFlow はこの名前のまま下の指標へ渡すので、たどった先の指標の出来事の名前で書く（途中の
+    指標の置き場所は問わない）。参照がたどった先の出来事にあること、出来事が分かれるならどの
+    出来事でも同じ名前になることは検証で確かめている（adp.beam.validation、#180・#184）。
     """
     if not m.filters:
         return {"name": name} if named else name
     src = next((x for x in beam.metrics if x.name == name), None)
+    if src is not None and src.type in (MetricType.RATIO, MetricType.DERIVED):
+        leaves = beam.leaf_inputs(src)[0]
+        src = next((x for x in beam.metrics if leaves and x.name == leaves[0][1]), None)
     event = beam.event(src.event) if src else None
     fact = next((f for f in design.facts if event and f.event == event.name), None)
     if event is None or fact is None:

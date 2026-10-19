@@ -223,3 +223,35 @@ def test_purpose_goes_to_metric_description(setup) -> None:  # type: ignore[no-u
     beam.metrics[0].purpose = "売上の伸びない店舗に販促をかける"
     after = metric_definitions(beam, design, fact).in_model[0]["description"]
     assert after == f"{before}\n目的: 売上の伸びない店舗に販促をかける"
+
+
+def test_nested_input_filter_uses_the_leaf_event_names() -> None:
+    """元の指標がさらに比率・派生なら、MetricFlow は絞り込みを下の指標へそのまま渡すので、
+    途中の指標の置き場所（返品）ではなく、たどった先の指標（注文）の出来事の名前で書く（#184）。"""
+    import json
+
+    from adp.beam import BeamModel
+    from adp.generation.semantic import _input
+
+    record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
+    beam = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
+    design = DesignBuilder(FakeSchema()).build(beam)
+    base = {"label": "x", "question": "q", "framed_question": "q"}
+    beam.metrics.append(
+        MetricRequest.model_validate(
+            base
+            | {"name": "self_rate", "event": "customer_returns_product", "type": "ratio"}
+            | {"numerator": "sold_qty_excl_cancelled", "denominator": "sold_qty_excl_cancelled"}
+        )
+    )
+    outer = MetricRequest.model_validate(
+        base
+        | {"name": "t", "event": "customer_orders_product", "type": "derived"}
+        | {"expr": "self_rate * 2"}
+        | {"filters": [{"ref": "order_status.order_status", "operator": "=", "values": ["x"]}]}
+    )
+    beam.metrics.append(outer)
+    assert _input(beam, design, outer, "self_rate") == {
+        "name": "self_rate",
+        "filter": "{{ Dimension('order_line__order_status') }} = 'x'",
+    }
