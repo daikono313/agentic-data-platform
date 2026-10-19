@@ -192,6 +192,9 @@ def test_existing_dim_missing_columns_become_tasks(warehouse: Path) -> None:
     generation = generate_models(design, ProjectInfo(warehouse, catalog))
     tasks = [(t.kind, t.target) for t in generation.tasks]
     assert ("add_dim_columns", "dim_store") in tasks
+    # yml の説明はオントロジーのラベルと照合されるので、書く説明を指示に入れる（#137）
+    task = next(t for t in generation.tasks if t.kind == "add_dim_columns")
+    assert "説明「開店日」" in task.instruction
 
 
 def test_blockers_stop_generation(warehouse: Path) -> None:

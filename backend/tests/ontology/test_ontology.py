@@ -380,24 +380,35 @@ def test_same_as_names_the_canonical_attribute() -> None:
     for target, label, message in [
         ("customer.nope", "地方", "ほかの概念の属性に無い"),
         ("order.area", "地方", "ほかの概念の属性に無い"),
+        ("order.status", "地方", "ほかの概念の属性に無い"),
         ("customer.region", "居住地", "と違う"),
     ]:
         order["attributes"][0].update(same_as=target, label=label)
         with pytest.raises(ValidationError, match=message):
             Ontology.model_validate(data)
     order["attributes"] = [
-        {"name": "area", "label": "地方", "column": "region", "same_as": "customer.region"},
-        {"name": "area2", "label": "地方", "column": "region2", "same_as": "order.area"},
+        {"name": "area", "label": "地方", "column": "region", "same_as": "customer.region"}
     ]
+    data["concepts"][0]["attributes"].append(
+        {"name": "area2", "label": "地方", "column": "region2", "same_as": "order.area"}
+    )
     with pytest.raises(ValidationError, match="正本ではない"):
         Ontology.model_validate(data)
 
 
-def test_expr_column_picks_the_single_attribute_column() -> None:
+def test_expr_column_only_for_value_replacements() -> None:
+    """値を置き換えるだけの式だけ元の列を返す。列から別の言葉を作る式（年代・価格帯）は見ない。"""
     onto = Ontology.model_validate(_data())
     assert onto.expr_column("raw.customers", "coalesce(region, '地方なし')") == "region"
-    assert onto.expr_column("raw.customers", "upper('region')") is None
-    assert onto.expr_column("raw.customers", "region(1)") is None
+    assert onto.expr_column("raw.customers", " IFNULL(region, 0) ") == "region"
+    assert onto.expr_column("raw.customers", "region") == "region"
+    for derived in [
+        "upper('region')",
+        "case when region = '関東' then '首都圏' else 'その他' end",
+        "date_diff('year', region, current_date)",
+        "coalesce(region, other)",
+    ]:
+        assert onto.expr_column("raw.customers", derived) is None, derived
     assert onto.expr_column("raw.orders", "region") is None
 
 
@@ -441,8 +452,8 @@ def test_dim_descriptions_start_with_the_label(tmp_path: Path) -> None:
 
     assert run("地方") == [] and run("地方（不明は「不明」）") == []
     assert run("居住地方") == [
-        "dim_customer.region の説明「居住地方」が、オントロジーの属性 customer.region「地方」で"
-        "始まっていない"
+        "概念 customer の属性 region: dim_customer.region の説明「居住地方」が、ラベル「地方」"
+        "（か「地方（補足）」）になっていない"
     ]
 
 

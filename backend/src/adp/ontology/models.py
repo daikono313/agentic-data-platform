@@ -16,6 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _NAME = r"^[a-z][a-z0-9_]*$"
 _TABLE = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 _COLUMN = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
+_REPLACEMENT = re.compile(
+    r"(?:(?:coalesce|ifnull)\(\s*(?P<column>[a-z_][a-z0-9_]*)\s*,\s*(?:'[^']*'|-?[0-9.]+)\s*\)"
+    r"|(?P<bare>[a-z_][a-z0-9_]*))"
+)
+"""値を置き換えるだけの式（`coalesce(列, 'リテラル')`・`ifnull(列, 0)`・列だけ）。"""
 
 
 class _Strict(BaseModel):
@@ -131,7 +136,7 @@ class Ontology(_Strict):
             if a.same_as is None:
                 continue
             target = attrs.get(a.same_as)
-            if target is None or a.same_as == ref:
+            if target is None or a.same_as.split(".")[0] == ref.split(".")[0]:
                 raise ValueError(f"属性 {ref} の same_as {a.same_as} が、ほかの概念の属性に無い")
             if target.same_as is not None:
                 raise ValueError(
@@ -157,14 +162,22 @@ class Ontology(_Strict):
         return None
 
     def expr_column(self, table: str, expr: str) -> str | None:
-        """式（`coalesce(region, '地方なし')` など）が使う、オントロジーの属性の列。
+        """値を置き換えるだけの式（`coalesce(region, '地方なし')` など）の元の列。その源泉の属性の
+        列のときだけ返す。
 
-        文字列のリテラルと関数名を除いた識別子のうち、その源泉の属性の列がちょうど 1 つのときだけ
-        返す（複数の列から作る式は、どの言葉にそろえるか決まらないので見ない。#137）。"""
+        年代（`date_diff(..., birth_date, ...)`）や価格帯（`case when list_price ...`）のように、
+        列から別の言葉を作る式は見ない（元の列のラベルを強いると、派生した属性を確定できない。#137）。
+        """
+        m = _REPLACEMENT.fullmatch(expr.strip().lower())
+        if m is None:
+            return None
+        column = m.group("column") or m.group("bare")
         known = {a.column for c in self.concepts if c.source == table for a in c.attributes}
-        words = re.findall(r"\b([a-z_][a-z0-9_]*)\b(?!\s*\()", re.sub(r"'[^']*'", "", expr.lower()))
-        used = known & set(words)
-        return used.pop() if len(used) == 1 else None
+        return column if column in known else None
+
+    def describes(self, attr: Attribute, text: str) -> bool:
+        """dim の列の説明が、属性のラベル（そのままか、後ろに「（補足）」）か（#137）。"""
+        return text == attr.label or text.startswith(f"{attr.label}（")
 
     def duplicate_labels(self) -> list[str]:
         """同じラベルなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。#137）。
@@ -185,8 +198,9 @@ class Ontology(_Strict):
         """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
         その説明。BEAM 成果物の属性を確かめるのに使う。
 
-        名前は見ない（名前は dim の列名と指標の切り口の参照名になり、出来事ごとの縮退ディメンション
-        では「<ディメンション>.<属性>」の組で決まる。列名の決まりと合わせて決める。#137）。"""
+        BEAM の属性の名前どうしはそろえない（名前は指標の切り口の参照名になり、出来事ごとの縮退
+        ディメンションでは「<ディメンション>.<属性>」の組で決まる。#137）。ただし概念の dim の列に
+        なる名前は、設計（design.builder）がこれで dim の列のラベルを確かめる。"""
         found = self.attribute_at(table, column)
         if found is None or found[1].label == label:
             return None

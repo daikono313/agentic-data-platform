@@ -140,7 +140,7 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                 elif c.kind == "entity":
                     # fct の列は measure の名前（数量 → movement_qty など）と、measure のラベル
                     # （「値引額(税抜)」など）から作る説明になるので、dim だけ見る
-                    errors += _description_mismatches(c, models[c.model])
+                    errors += _description_mismatches(ontology, c, models[c.model])
                     unmodeled += [
                         f"{c.model}.{a.column}（{a.label}）"
                         for a in c.attributes
@@ -169,24 +169,24 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
     )
 
 
-def _description_mismatches(concept: Concept, model: _DbtModel) -> list[str]:
-    """dim の列（属性と同じ列名のもの）の説明が、属性のラベルで始まっていないもの（#137）。
+def _description_mismatches(ontology: Ontology, concept: Concept, model: _DbtModel) -> list[str]:
+    """dim の列（属性と同じ列名のもの）の説明が、属性のラベルになっていないもの（#137）。
 
-    説明はラベルの後に補足（「（マスタなし）」「（個）」など）を付けてよい。"""
+    説明はラベルの後に補足（「（不明は「不明」）」など）を付けてよい（Ontology.describes）。"""
     errors = []
     for a in concept.attributes:
         text = model.columns.get(a.column)
-        if text is not None and not (text == a.label or text.startswith(f"{a.label}（")):
+        if text is not None and not ontology.describes(a, text):
             errors.append(
-                f"{concept.model}.{a.column} の説明「{text}」が、オントロジーの属性 "
-                f"{concept.name}.{a.name}「{a.label}」で始まっていない"
+                f"概念 {concept.name} の属性 {a.name}: {concept.model}.{a.column} の説明"
+                f"「{text}」が、ラベル「{a.label}」（か「{a.label}（補足）」）になっていない"
             )
     return errors
 
 
 def beam_mismatches(ontology: Ontology, beam_dir: Path) -> list[str]:
     """BEAM 成果物（beam/*.yml）の属性のラベルが、同じ源泉の列のオントロジーの属性と違うもの
-    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は、式が使う属性の列が 1 つの
+    （#137。オントロジーが業務の言葉の正本）。式（expr）で作る属性は、値を置き換えるだけの式の
     ときだけ見る（Ontology.expr_column）。出来事をまたいで
     共通のディメンションの属性は、設計の検査（design.builder）と同じく最初の 1 回だけ見る。
 

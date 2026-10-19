@@ -142,6 +142,8 @@ def propose_from_profile(profile: TableProfile, ontology: Ontology) -> OntologyP
         label = _label(c.description, c.name)
         if label in used:
             label = f"{concept_label}の{label}"
+        if label in used:  # それでも重なれば列名で分ける
+            label = f"{label}（{c.name}）"
         used.add(label)
         attributes.append(Attribute(name=c.name, label=label, column=c.name))
     domains: list[Domain] = []
