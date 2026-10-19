@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -271,12 +272,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
                             f"{p} {ref} は元の指標 {where} のイベント {src_event.name} にありません"
                         )
             unshared = [
-                r
-                for r in metric.group_by
-                if len(events) > 1
-                and r not in metric_time
-                and all(resolve_ref(e, r) not in (None, "measure") for e in events.values())
-                and not all(_shared_ref(e, r) for e in events.values())
+                r for r in metric.group_by if r not in metric_time and _unshared(events.values(), r)
             ]
             for ref in unshared:
                 issues.append(
@@ -284,7 +280,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
                     "なので、出来事をまたぐ指標の切り口に使えません。どの出来事にも共通する"
                     "ディメンション（商品など）の属性で切ってください"
                 )
-            issues += _nested_filter_issues(model, metric, leaves, p)
+            issues += _nested_filter_issues(model, metric, p)
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
@@ -318,34 +314,44 @@ def _finer(grain: TimeGrain | None, dim: Dimension) -> bool:
     return _GRAINS.index(grain) < _GRAINS.index(dim.time_grain)
 
 
-def _nested_filter_issues(
-    model: BeamModel, metric: MetricRequest, leaves: list[tuple[str, str]], p: str
-) -> list[str]:
+def _nested_filter_issues(model: BeamModel, metric: MetricRequest, p: str) -> list[str]:
     """比率・派生の指標の絞り込みは、元の指標ごとにその出来事の名前で書く（#178）。元の指標が
-    さらに比率・派生なら、たどった先の最初の指標の出来事の名前で書き、MetricFlow はその名前の
-    まま下の指標すべてへ渡す（`adp.generation.semantic._input`）。下の出来事が分かれるなら、
-    どの出来事でも同じ名前で解決できる必要がある（#184。切り口の #181 と同じ判定）。
+    さらに比率・派生なら、その指標からたどった先の最初の指標の出来事の名前で書き、MetricFlow は
+    その名前のまま下の指標すべてへ渡す（`adp.generation.semantic._input`）。下の出来事が分かれる
+    なら、どの出来事でも同じ名前で解決できる必要がある（#184。切り口の #181 と同じ判定）。
     参照が下の出来事にあるかは、呼び出し元が確かめる（#180）。"""
     metrics = {m.name: m for m in model.metrics}
     issues: list[str] = []
     for via in dict.fromkeys(metric.inputs):
+        src = metrics.get(via)
+        if src is None or src.type not in (MetricType.RATIO, MetricType.DERIVED):
+            continue
+        # 生成と同じく、元の指標ごとにたどり直す（leaf_inputs(metric) は元の指標をまたいで
+        # 同じ指標を 1 回にまとめるので、元の指標ごとの出来事を取りこぼす）
         events: dict[str, BusinessEvent] = {}
-        for v, name in leaves:
-            leaf_event = model.event(metrics[name].event) if v == via else None
+        for _, name in model.leaf_inputs(src)[0]:
+            leaf_event = model.event(metrics[name].event)
             if leaf_event is not None:
                 events[leaf_event.name] = leaf_event
-        if len(events) < 2:
-            continue
-        for f in metric.filters:
-            resolved = all(resolve_ref(e, f.ref) not in (None, "measure") for e in events.values())
-            if resolved and not all(_shared_ref(e, f.ref) for e in events.values()):
+        for ref in dict.fromkeys(f.ref for f in metric.filters):
+            if _unshared(events.values(), ref):
                 issues.append(
-                    f"{p} 絞り込み {f.ref} は、元の指標 {via}（比率・派生）の下の出来事"
+                    f"{p} 絞り込み {ref} は、元の指標 {via}（比率・派生）の下の出来事"
                     f"（{'・'.join(events)}）ごとに別々に記録される項目なので使えません。"
                     "どの出来事にも共通するディメンション（商品など）の属性で絞り込むか、"
                     f"{via} の元の指標に絞り込みを付けてください"
                 )
     return issues
+
+
+def _unshared(events: Collection[BusinessEvent], ref: str) -> bool:
+    """出来事が分かれ、どの出来事でも解決できるが、出来事ごとに名前が変わる参照か（マスタなし・
+    縮退のディメンションなど。#181・#184）。どれかの出来事で解決できないものは、別の課題になる。"""
+    return (
+        len(events) > 1
+        and all(resolve_ref(e, ref) not in (None, "measure") for e in events)
+        and not all(_shared_ref(e, ref) for e in events)
+    )
 
 
 def _shared_ref(event: BusinessEvent, ref: str) -> bool:

@@ -581,8 +581,8 @@ def test_metric_input_cycle_is_reported(model: BeamModel) -> None:
 
 
 def test_nested_cross_event_filter_must_be_shared() -> None:
-    """元の指標がさらに比率・派生なら、絞り込みは直接の元の指標の出来事の名前のまま下へ渡るので、
-    下の出来事が分かれるなら、どの出来事でも同じ名前で解決できる参照に限る（#184）。"""
+    """元の指標がさらに比率・派生なら、絞り込みはたどった先の指標の出来事の名前で書き、そのまま
+    下へ渡るので、下の出来事が分かれるなら、どの出来事でも同じ名前で解決できる参照に限る（#184）。"""
     record = Path(__file__).parents[1] / "fixtures" / "recorded" / "return_rate_by_category.json"
     model = BeamModel.model_validate(json.loads(record.read_text(encoding="utf-8"))["beam"])
     returns = model.event("customer_returns_product")
@@ -595,14 +595,16 @@ def test_nested_cross_event_filter_must_be_shared() -> None:
     rate = model.metrics[-1]
     assert rate.name == "return_rate_by_category"
 
-    def issues(ref: str) -> list[str]:
-        model.metrics[-1:] = [
-            rate,
+    base = list(model.metrics)
+
+    def issues(ref: str, expr: str = "return_rate_by_category * 100") -> list[str]:
+        model.metrics = [
+            *base,
             MetricRequest.model_validate(
                 {"label": "x", "question": "q", "framed_question": "q"}
                 | {"name": "pct", "event": "customer_orders_product", "type": "derived"}
-                | {"expr": "return_rate_by_category * 100"}
-                | {"filters": [{"ref": ref, "operator": "=", "values": ["x"]}]}
+                | {"expr": expr}
+                | {"filters": [{"ref": ref, "operator": "=", "values": ["x"]}] * 2}
             ),
         ]
         return [i for i in model.finalize_issues() if i.startswith("[metric pct] 絞り込み")]
@@ -616,3 +618,6 @@ def test_nested_cross_event_filter_must_be_shared() -> None:
     ]
     # 共通のディメンションの属性なら、どの出来事でも同じ名前で解決できる
     assert issues("product.category") == []
+    # 直接の元の指標と、入れ子の元の指標が同じ指標（注文数）を共有していても、元の指標ごとに見る
+    mixed = issues("order_status.order_status", "sold_qty_excl_cancelled + return_rate_by_category")
+    assert len(mixed) == 1 and "元の指標 return_rate_by_category" in mixed[0]
