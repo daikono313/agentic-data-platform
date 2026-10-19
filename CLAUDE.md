@@ -56,7 +56,7 @@ make dev        # backend と frontend を起動
 - PR 本文には `Closes #<issue>` と、certificate の各項目の結果を書く。
 - 敵対的レビューは、実装したコンテキストとは別の **新しい subagent** で行う。レビューの観点に「用途の重複が無いか」（certificate の C11）を必ず入れる。
 - コードもドキュメントも MECE に保つ。新しく足す前に、同じ役割のものが無いかを探し、あれば使うか統合する（重複した helper・処理・文書の節を作らない）。
-- design-doc の決定（Resolved issues）を覆す必要が出たら、`docs/adr/` に ADR を `Proposed` で追加し、design-doc も更新する（書き方・テンプレートは [docs/adr/README.md](docs/adr/README.md)）。`Accepted` にするのはオーナー（T3）。
+- design-doc の決定（Resolved issues）を覆す必要が出たら、`docs/adr/` に ADR を `Proposed` で追加し、design-doc も更新する（書き方・テンプレートは [docs/adr/README.md](docs/adr/README.md)。書く・直すときは adr skill（`.claude/skills/adr/`）の手順に沿う）。`Accepted` にするのはオーナー（T3）。
 - 新しい依存を入れるときはライセンス（MIT / Apache-2.0 / BSD 系）を確認し、PR に書く。
 - 同じ種類の失敗が続いたら、個別の修正ではなく、プロンプト・テンプレート・certificate の側を直す。
 - git の commit と push は daikono313 のアカウントで行われる（includeIf で設定済み）。
