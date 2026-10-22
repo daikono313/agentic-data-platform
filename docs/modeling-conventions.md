@@ -52,6 +52,19 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 - When の列: fact_key の列名が `_at` で終わるなら、日時列 `<base>_at` と日付列 `<base>_on`（`cast(... as date)`）を置く（例: `ordered_at` → `ordered_at` / `ordered_on`）。fact_key が expr か、`_at` で終わらない列なら、`<ref>_at` / `<ref>_on` にする。日付列から `dim_date.date_day` への relationships テストを付ける。
 - 同じ dim を role 違いで複数回使う場合は、`<role>_key` を複数置き、どれも同じ `dim_<name>` を参照する。
 
+### 定期的な状態 → periodic snapshot の fct
+
+story_type が recurring のイベント（月末在庫など）は、記録の行をそのまま並べず、「区切り × 期間の終わり」の 1 行にする。値の求め方は measure の `state` に書き、SQL は生成器が決まった形で作る（[ADR 0008](adr/0008-generate-state-snapshots-from-beam.md)）。
+
+- 粒度: 区切りは grain_keys から When を除いたもの（例: 店舗 × 商品）、期間は When の `time_grain`（例: 月）。When は 1 つにし、grain_keys に記録 1 件の番号（縮退ディメンション）を入れない。
+- 列: 区切りのキー列（通常は `<ref>_key`、マスタなしは `<ref>`）、期間の終わりの日付 `snapshot_on`（`dim_date.date_day` を参照）、measure。記録ごとの列（日時・区分など）は置かない（区分は置き換える行の条件にだけ使う）。
+- 値:
+  - `last_value`: 期間の最後の記録の値。
+  - `running_total`: 時刻の順に増減を積み上げ、`reset` の条件に合う行（棚卸など）で、その行の値に置き換える。最初の置き換える行より前は値を出さない（期首の値は記録の外にあるため）。
+  - 同じ時刻の記録は、源泉の主キーの順に処理する。
+- 期間: 区切りごとに、最初に値のある期間から、記録全体の最後の期間まで行を作る。記録の無い期間は、前の期間の値を引き継ぐ。
+- Semantic Layer: `agg_time_dimension` は `snapshot_on`。時点の値（`semi_additive`）の指標は、`non_additive_dimension` を `snapshot_on` にする（後述の metric）。
+
 ### 具体例（examples） → unit test
 
 - unit test の対象は fct（計算は fct で行うため）。
@@ -59,6 +72,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 - dim の属性（`<ref>.<attr>`）と When のキーは、`given` の入力行（stg）を組み立てるのに使い、fct の出力では検証しない。
 - 入力行に必要で具体例に無い列は、テストが成り立つ最小の値で補う（例: 値引 0）。
 - 外部キーが NULL の入力を1行入れ、不明メンバーのキー（`md5('__unknown__')`）になることも検証する。
+- periodic snapshot は、具体例の値 E と時点から 3 期間の記録を作る（2 期間前に置き換える行、1 期間前は記録なし、当期に +5 と −3）。期待値は E − 2・E − 2・E（置き換え・引き継ぎ・積み上げを検証する）。
 
 ## キー
 
@@ -87,7 +101,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 | fct の粒度 | grain_keys が1つなら主キーの `unique`、複数なら `dbt_utils.unique_combination_of_columns` |
 | 区分値 | `accepted_values`（不明メンバー行の値も含める） |
 | fct の計算列 | BEAM の具体例から作る unit test |
-| fct の件数と金額 | ソースとの突合テスト（`tests/assert_<fct>_reconciles_with_source.sql`） |
+| fct の件数と金額 | ソースとの突合テスト（`tests/assert_<fct>_reconciles_with_source.sql`）。periodic snapshot は合計を足せないので、区切りごとに期間が途切れていないことと、期間の最後の記録の値との一致（`last_value` はすべての期間、`running_total` は最後の記録が置き換える行の期間）を見る |
 
 ## 命名と記述
 
