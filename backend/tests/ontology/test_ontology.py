@@ -750,3 +750,20 @@ def test_required_relation_must_find_the_other_key(tmp_path: Path) -> None:
     # 相手が決まっていないことがある関係では見ない
     data["relations"][0]["optional"] = True
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
+
+
+def test_required_relation_skips_missing_key_source(tmp_path: Path) -> None:
+    """キー側の源泉が無ければ、その誤り（源泉がカタログに無い）だけを出し、照合全体は落ちない。"""
+    import duckdb
+
+    db = tmp_path / "m.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute("create table raw.orders (order_id int, customer_id int)")
+    con.execute("insert into raw.orders values (10, 1)")
+    con.close()
+    data = _data()
+    data["relations"][0]["optional"] = False
+    assert check(Ontology.model_validate(data), Catalog(db), None).errors == [
+        "概念 customer: 源泉 raw.customers がカタログに無い"
+    ]

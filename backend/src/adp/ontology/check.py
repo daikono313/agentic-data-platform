@@ -135,7 +135,9 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                 f"{dst.source} にある {src.key} のどちらでもない"
             )
         else:
-            errors += _multiplicity_mismatches(catalog, r, ends, table, column)
+            # キー側の源泉・キーの列が無ければ、その誤りは概念の照合で出るので、相手の照合はしない
+            keyed = has_column(ends[0].source, ends[0].key)
+            errors += _multiplicity_mismatches(catalog, r, ends, table, column, keyed)
 
     unmapped_models: list[str] = []
     unmodeled: list[str] = []
@@ -192,7 +194,12 @@ _ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timesta
 
 
 def _multiplicity_mismatches(
-    catalog: Catalog, r: Relation, ends: tuple[Concept, Concept], table: str, column: str
+    catalog: Catalog,
+    r: Relation,
+    ends: tuple[Concept, Concept],
+    table: str,
+    column: str,
+    keyed: bool,
 ) -> list[str]:
     """関係の件数の対応（cardinality）と、相手が決まっていないことがあるか（optional）を、via の列
     の値と照合する（#137）。宣言していない（未確認の）ものは見ない。文言は表示（multiplicity）と
@@ -214,7 +221,7 @@ def _multiplicity_mismatches(
                 f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）として"
                 f"いるのに、列 {r.via} が空の行が {p.null_count} 行ある"
             )
-        missing = catalog.count_unmatched(table, column, one.source, one.key)
+        missing = catalog.count_unmatched(table, column, one.source, one.key) if keyed else 0
         if missing:
             errors.append(
                 f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）として"

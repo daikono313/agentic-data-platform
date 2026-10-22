@@ -478,7 +478,8 @@ class Catalog:
 
     def count_unmatched(self, table: str, column: str, ref_table: str, ref_column: str) -> int:
         """table.column の値（空を除く）のうち、ref_table.ref_column に無いものの行数（関係の
-        照合。相手が必ずあるか。#137）。"""
+        照合。相手が必ずあるか。#137）。テーブル・列が無ければ例外（呼び出し側で確かめてから使う）。
+        """
         schema, name = self._resolve(table)
         ref_schema, ref_name = self._resolve(ref_table)
         for c in (column, ref_column):
@@ -766,8 +767,8 @@ def _unmatched(
     ps, pn, pc = parent
     row = con.execute(
         f"select count(*), count(*) filter (where r.k is null) from {_table(cs, cn)} t"
-        f" left join (select distinct cast({quote_ident(pc)} as varchar) as k"
-        f" from {_table(ps, pn)}) r on cast(t.{quote_ident(cc)} as varchar) = r.k"
+        f" left join (select distinct cast(p.{quote_ident(pc)} as varchar) as k"
+        f" from {_table(ps, pn)} p) r on cast(t.{quote_ident(cc)} as varchar) = r.k"
         f" where t.{quote_ident(cc)} is not null"
     ).fetchone()
     assert row is not None
