@@ -1,0 +1,98 @@
+schema_version: 1
+name: stock_levels
+title: 店舗・商品別の月末在庫数
+request: 店舗ごと・商品ごとの月末の在庫数を見たい
+events:
+  - name: store_holds_product_stock
+    table_name: stock_levels
+    label: 店舗が商品の在庫を持つ
+    subject: 店舗
+    verb: 持つ
+    object: 商品在庫
+    story_type: recurring
+    grain: 店舗 × 商品 × 月末
+    grain_keys: [store, product, moved_at]
+    source_tables: [raw.inventory]
+    priority: high
+    impact: high
+    effort: medium
+    measures:
+      - name: stock_qty
+        label: 在庫数
+        description: 入庫・移動出庫・廃棄の増減を積み上げ、棚卸で数えた数に置き換える
+        aggregation: sum
+        additivity: semi_additive
+        non_additive_dimension: moved_at
+        unit: 個
+        source: {table: raw.inventory, column: quantity}
+        availability: available
+        state:
+          method: running_total
+          reset:
+            - {ref: movement_type.movement_type, operator: in, values: [count]}
+    dimensions:
+      - w: when
+        name: moved_at
+        label: 入出庫日時
+        time_grain: month
+        fact_key: {table: raw.inventory, column: moved_at}
+      - w: where
+        name: store
+        label: 店舗
+        business_key: {table: raw.stores, column: store_id}
+        fact_key: {table: raw.inventory, column: store_id}
+        attributes:
+          - name: store_name
+            label: 店舗名
+            examples: [東京都01号店]
+            source: {table: raw.stores, column: store_name}
+            availability: available
+      - w: what
+        name: product
+        label: 商品
+        business_key: {table: raw.products, column: product_id}
+        fact_key: {table: raw.inventory, column: product_id}
+        attributes:
+          - name: category
+            label: 商品カテゴリ
+            examples: [食品]
+            source: {table: raw.products, column: category}
+            availability: available
+      - w: how
+        name: movement_type
+        label: 入出庫区分
+        business_key: {table: raw.inventory, column: movement_type}
+        fact_key: {table: raw.inventory, column: movement_type}
+        attributes:
+          - name: movement_type
+            label: 入出庫区分
+            examples: [receipt, count]
+            source: {table: raw.inventory, column: movement_type}
+            availability: available
+    examples:
+      - values:
+          store.store_name: 東京都01号店
+          product.category: 食品
+          moved_at: "2025-03-31"
+          stock_qty: 12
+      - values:
+          store.store_name: 大阪府01号店
+          product.category: 飲料
+          moved_at: "2025-04-30"
+          stock_qty: 30
+metrics:
+  - name: month_end_stock_qty
+    label: 月末在庫数
+    question: 店舗ごと・商品ごとの月末の在庫数を見たい
+    framed_question: 月別・店舗別・商品カテゴリ別の月末の在庫数はいくつか
+    purpose: 欠品しそうな店舗・商品を見つけて発注を早める
+    type: simple
+    event: store_holds_product_stock
+    measure: stock_qty
+    group_by: [moved_at.month, store.store_name, product.category]
+    status: confirmed
+gaps:
+  - kind: deferred
+    event: store_holds_product_stock
+    related: stock_qty
+    description: 期首の在庫は記録の外にあるため、最初の棚卸より前の月は在庫数を出さない（ADR 0008）

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from adp.markdown import cell, mermaid_label
-from adp.ontology.models import Attribute, Concept, Ontology, mermaid_id
+from adp.ontology.models import KIND_LABELS, Attribute, Concept, Ontology, mermaid_id
 
 MAX_ATTRS_IN_DIAGRAM = 4
 """図に出す属性の数（多いと読めなくなる。全部は md の表に出す）。"""
@@ -14,13 +14,13 @@ HEADER = (
 
 
 def _node(c: Concept) -> str:
-    # 出来事（event）は角丸の長円、もの・人（entity）は角丸の四角
+    # 出来事（event）は角丸の長円、状態（state）は六角形、もの・人（entity）は角丸の四角
     label = mermaid_label(c.label)
-    return (
-        f'{mermaid_id(c.name)}(["{label}"])'
-        if c.kind == "event"
-        else f'{mermaid_id(c.name)}("{label}")'
-    )
+    if c.kind == "event":
+        return f'{mermaid_id(c.name)}(["{label}"])'
+    if c.kind == "state":
+        return f'{mermaid_id(c.name)}{{{{"{label}"}}}}'
+    return f'{mermaid_id(c.name)}("{label}")'
 
 
 def mermaid(ontology: Ontology) -> str:
@@ -53,12 +53,16 @@ def mermaid(ontology: Ontology) -> str:
         "  classDef constraint fill:#dcfce7,stroke:#22c55e,color:#14532d,font-size:11px",
         "  classDef event fill:#166534,stroke:#14532d,color:#ffffff",
         "  classDef entity fill:#1e3a8a,stroke:#172554,color:#ffffff",
+        "  classDef state fill:#9a3412,stroke:#7c2d12,color:#ffffff",
     ]
     entities = [mermaid_id(c.name) for c in ontology.concepts if c.kind == "entity"]
     if events:
         lines.append(f"  class {','.join(events)} event")
     if entities:
         lines.append(f"  class {','.join(entities)} entity")
+    states = [mermaid_id(c.name) for c in ontology.concepts if c.kind == "state"]
+    if states:
+        lines.append(f"  class {','.join(states)} state")
     return "\n".join(lines) + "\n"
 
 
@@ -93,7 +97,7 @@ def markdown(ontology: Ontology) -> str:
     ]
     labels = {c.name: c.label for c in ontology.concepts}
     for c in ontology.concepts:
-        kind = "もの・人" if c.kind == "entity" else "出来事"
+        kind = KIND_LABELS[c.kind]
         attrs = "、".join(_attribute(a, labels) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(

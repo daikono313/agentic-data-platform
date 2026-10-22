@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import duckdb
 
-from adp.beam import BeamModel, BusinessEvent, EventExample
+from adp.beam import BeamModel, BusinessEvent, EventExample, StateMethod, TimeGrain
 from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
@@ -349,3 +349,225 @@ def _evaluate(expr: str, values: dict[str, object], types: dict[str, str]) -> ob
     if isinstance(value, Decimal):  # YAML に書けるようにする
         return int(value) if value == value.to_integral_value() else float(value)
     return value
+
+
+# --- 定期スナップショット（ADR 0008） ----------------------------------------------------------
+
+
+def snapshot_reconciliation_test(fact: FactTable, info: WarehouseInfo | None) -> GeneratedFile:
+    """定期スナップショットの fct と源泉の突合。合計は期間をまたいで足せないので、次を見る。
+
+    - 区切りごとに、最初の期間から最後の期間まで、期間の終わりの日付が途切れていない
+    - 期間の最後の記録の値と一致する（last_value はすべての期間、running_total は最後の記録が
+      置き換える行の期間）
+    """
+    from adp.generation.dbt import _from_clause, _select, period_end, snapshot_order_key
+
+    snap = fact.snapshot
+    assert snap is not None
+    names = snapshot_partition(fact)
+    cols = {c.name: c for c in fact.columns}
+    checked = [
+        m
+        for m, method in snap.methods.items()
+        if method == StateMethod.LAST_VALUE or m in snap.resets
+    ]
+    records = [(n, cols[n].expr) for n in names]
+    records += [
+        (snap.time_column, period_end(snap.recorded_at, snap.grain)),
+        ("recorded_at", snap.recorded_at),
+        ("record_order", snapshot_order_key(fact, info)),
+    ]
+    records += [(m, cols[m].expr) for m in checked]
+    records += [(f"{m}__is_reset", f"coalesce({snap.resets[m]}, false)") for m in snap.resets]
+    body = _select(records) + "\n" + _from_clause(fact.base, fact.joins)
+    keys = [*names, snap.time_column]
+    on = " and ".join(
+        [f"r.{n} is not distinct from f.{n}" for n in names]
+        + [f"r.{snap.time_column} = f.{snap.time_column}"]
+    )
+    parts = [
+        "select '期間が途切れている' as reason\nfrom counts\nwhere n <> (\n"
+        "    select count(*) from periods\n"
+        "    where date_day between counts.first_on and counts.last_on\n)"
+    ]
+    for m in checked:
+        cond = f"r.{m} is distinct from f.{m}"
+        if snap.methods[m] == StateMethod.RUNNING_TOTAL:
+            cond = f"r.{m}__is_reset and {cond}"
+        parts.append(
+            f"select '{m} が期間の最後の記録の値と違う' as reason\n"
+            f"from last_records as r\n"
+            f"inner join {{{{ ref('{fact.name}') }}}} as f on {on}\n"
+            f"where {cond}"
+        )
+    group = f"\n    group by {', '.join(names)}" if names else ""
+    partition = ", ".join(keys)
+    sql = (
+        f"-- adp により生成。{fact.name}（定期スナップショット）が、区切りごとに期間が途切れず、\n"
+        "-- 期間の最後の記録の値と一致すること（ADR 0008）\n"
+        "with counts as (\n"
+        f"    select {''.join(f'{n}, ' for n in names)}count(*) as n,"
+        f" min({snap.time_column}) as first_on, max({snap.time_column}) as last_on\n"
+        f"    from {{{{ ref('{fact.name}') }}}}{group}\n),\n\n"
+        "periods as (\n    select date_day\n    from {{ ref('dim_date') }}\n"
+        f"    where date_day = {period_end('date_day', snap.grain)}\n),\n\n"
+        "records as (\n"
+        + "\n".join("    " + line for line in body.splitlines())
+        + "\n),\n\nlast_records as (\n    select *\n    from records\n"
+        f"    qualify row_number() over (partition by {partition}"
+        " order by recorded_at desc, record_order desc) = 1\n)\n\n"
+        + "\n\nunion all\n\n".join(parts)
+        + "\n"
+    )
+    return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
+
+
+def snapshot_partition(fact: FactTable) -> list[str]:
+    """定期スナップショットの区切りの列（粒度の列から期間の終わりの日付を除いたもの）。"""
+    snap = fact.snapshot
+    assert snap is not None
+    return [n for n in fact.grain_columns if n != snap.time_column]
+
+
+def _period_ends(last: date, grain: TimeGrain, n: int) -> list[date]:
+    """last を含む期間の終わりの日付から、n 期間さかのぼった期間の終わりの日付（古い順）。
+
+    期間の区切りは生成した SQL と同じ式（`period_end`）で DuckDB に計算させる。"""
+    from adp.generation.dbt import period_end
+
+    ends: list[date] = []
+    cursor = last
+    for _ in range(n):
+        end = duckdb.sql("select " + period_end(f"date '{cursor.isoformat()}'", grain)).fetchone()
+        assert end is not None
+        ends.append(end[0])
+        start = duckdb.sql(
+            f"select cast(date_trunc('{'week' if grain == TimeGrain.WEEK else grain.value}',"
+            f" date '{cursor.isoformat()}') as date)"
+        ).fetchone()
+        assert start is not None
+        cursor = start[0] - timedelta(days=1)
+    return list(reversed(ends))
+
+
+def snapshot_unit_test(
+    beam: BeamModel, fact: FactTable, info: WarehouseInfo, example: EventExample, index: int
+) -> dict[str, Any] | None:
+    """具体例の値 E と時点から、3 期間の記録の履歴を作り、期待値を独立に計算する（ADR 0008）。
+
+    - 2 期間前: 増減（置き換える行より前なので数えない）と、置き換える行（E − 2）
+    - 1 期間前: 記録なし（前の期間の値を引き継ぐ）
+    - 当期: +5 と −3
+    期待値は E − 2・E − 2・E。last_value は各記録をその時点の値として同じ結果になるようにする。
+    入力に書けるのはベースのテーブルの列だけ（結合が要る fct は作らない）。
+    """
+    from adp.design.builder import filter_source
+
+    event = beam.event(fact.event)
+    snap = fact.snapshot
+    if event is None or snap is None or fact.joins:
+        return None
+    base = fact.base.alias
+    types = dict(info.source_columns(fact.base.table))
+
+    def base_column(expr: str) -> str | None:
+        m = re.search(rf"\b{base}\.(\w+)", expr)
+        return m.group(1) if m and set(re.findall(r"\b(t\d+)\.", expr)) == {base} else None
+
+    recorded = base_column(snap.recorded_at)
+    pk = info.source_primary_key(fact.base.table)
+    if recorded is None:
+        return None
+    # 置き換える行・そうでない行の、条件の列の値
+    reset_values: dict[str, object] = {}
+    other_values: dict[str, object] = {}
+    for m in snap.resets:
+        measure = event.measure(m)
+        for f in measure.state.reset if measure and measure.state else []:
+            src = filter_source(event, f.ref)
+            if src is None or src.table != fact.base.table or src.column is None:
+                return None
+            known = info.distinct_values(src.table, src.column, ACCEPTED_VALUES_MAX) or []
+            listed = [str(v) for v in f.values]
+            outside = next((v for v in known if v not in listed), None)
+            if f.operator.value in ("=", "in"):
+                reset_values[src.column], other_values[src.column] = f.values[0], outside
+            else:
+                reset_values[src.column], other_values[src.column] = outside, f.values[0]
+            if outside is None:
+                return None
+    time_col = fact.column(snap.time_column)
+    raw_when = example.values.get(time_col.source_ref) if time_col and time_col.source_ref else None
+    try:
+        last_day = date.fromisoformat(str(raw_when)[:10]) if raw_when else date(2025, 3, 31)
+    except ValueError:
+        last_day = date(2025, 3, 31)
+    p2, p1, p0 = _period_ends(last_day, snap.grain, 3)
+
+    finals: dict[str, int] = {}
+    for m in snap.methods:
+        v = example.values.get(m)
+        finals[m] = v if isinstance(v, int) and not isinstance(v, bool) and v >= 2 else 10
+
+    def values(step: int, m: str) -> int:
+        """記録ごとの measure の値（求め方ごと）。期間の値が E − 2・E − 2・E になるようにする。"""
+        e = finals[m]
+        method = snap.methods[m]
+        if method == StateMethod.LAST_VALUE:
+            return [1, e - 2, 1, e][step]
+        if m in snap.resets:
+            return [4, e - 2, 5, -3][step]
+        return [0, e - 2, 5, -3][step]
+
+    plan = [(p2, 9, False), (p2, 10, True), (p0, 10, False), (p0, 11, False)]
+    parts = snapshot_partition(fact)
+    natural: dict[str, object] = {}
+    expected_keys: dict[str, object] = {}
+    for n in parts:
+        col = fact.column(n)
+        name = base_column(col.expr) if col else None
+        if col is None or name is None:
+            return None
+        value = _default(types.get(name, ""))
+        natural[name] = value
+        expected_keys[n] = surrogate_key(value) if col.role == ColumnRole.FOREIGN_KEY else value
+    rows = []
+    for step, (day, hour, is_reset) in enumerate(plan):
+        row: dict[str, object] = dict(natural)
+        row[recorded] = f"{day.isoformat()} {hour:02d}:00:00"  # 期間の終わりの日の記録
+        if pk:
+            row[pk] = step + 1
+        for m in snap.methods:
+            measure_col = fact.column(m)
+            name = base_column(measure_col.expr) if measure_col else None
+            if name is None:
+                return None
+            row[name] = values(step, m)
+        row |= reset_values if is_reset else other_values
+        rows.append(row)
+    columns = sorted({k for r in rows for k in r})
+    given_rows = [{c: r.get(c) for c in columns} for r in rows]
+    spine = [p2, p1, p0, p0 - timedelta(days=1) if snap.grain != TimeGrain.DAY else p0]
+    expect = [
+        {
+            **expected_keys,
+            snap.time_column: d.isoformat(),
+            **{m: finals[m] + offset for m in snap.methods},
+        }
+        for d, offset in ((p2, -2), (p1, -2), (p0, 0))
+    ]
+    return {
+        "name": f"test_{fact.name}_example_{index + 1}",
+        "description": "BEAM の具体例の値と時点から 3 期間の記録を作り、期待値を独立に計算する"
+        "（2 期間前に置き換える行、1 期間前は記録なしで引き継ぎ、当期に増減。ADR 0008）",
+        "model": fact.name,
+        "given": [
+            {"input": f"ref('{fact.base.model}')", "rows": given_rows},
+            {
+                "input": "ref('dim_date')",
+                "rows": [{"date_day": d.isoformat()} for d in sorted(set(spine))],
+            },
+        ],
+        "expect": {"rows": expect},
+    }

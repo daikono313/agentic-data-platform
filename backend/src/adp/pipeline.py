@@ -22,6 +22,7 @@ from adp.beam import BeamModel, save
 from adp.catalog.catalog import Catalog
 from adp.charts import SPECS_DIR, ChartError, check, compile_board, render_png
 from adp.design import DesignBuilder, PhysicalDesign
+from adp.design.builder import concept_kind
 from adp.design.catalog_schema import CatalogSchema
 from adp.design.check import existing_facts, load_ontology
 from adp.generation import generate_models
@@ -31,7 +32,7 @@ from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
 from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, LLMSettings
-from adp.ontology.models import Ontology, link_models
+from adp.ontology.models import ConceptKind, Ontology, link_models
 from adp.ontology.models import dump as dump_ontology
 from adp.ontology.render import markdown as ontology_markdown
 from adp.vcs import (
@@ -339,8 +340,10 @@ class GenerationPipeline:
         save(beam, wt_root / "beam" / f"{beam.name}.yml")
         if ontology is not None:
             # 作った fct / dim を、その源泉の概念に書き込む（fact / dim の整理。#69）
-            links = [(f.base.table, f.name) for f in design.facts]
-            links += [(d.base.table, d.name) for d in design.dims if not d.exists]
+            links: list[tuple[str, str, ConceptKind]] = [
+                (f.base.table, f.name, concept_kind(f)) for f in design.facts
+            ]
+            links += [(d.base.table, d.name, "entity") for d in design.dims if not d.exists]
             ontology, linked = link_models(ontology, links)
             if linked:
                 ontology_path.write_text(dump_ontology(ontology), encoding="utf-8")

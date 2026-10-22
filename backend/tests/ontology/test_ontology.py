@@ -79,6 +79,12 @@ def test_model_must_match_kind() -> None:
     data["concepts"][1]["model"] = "dim_order"
     with pytest.raises(ValidationError, match="fct_"):
         Ontology.model_validate(data)
+    # 状態（定期スナップショット）の概念も fct_（ADR 0008）
+    data["concepts"][1] |= {"kind": "state", "model": "dim_order"}
+    with pytest.raises(ValidationError, match="fct_"):
+        Ontology.model_validate(data)
+    data["concepts"][1]["model"] = "fct_order_levels"
+    assert Ontology.model_validate(data).concept("order") is not None
 
 
 def test_mermaid_escapes_labels() -> None:
@@ -90,6 +96,9 @@ def test_mermaid_escapes_labels() -> None:
     assert "<script>" not in text
     assert 'c_customer -- "注文する" --> c_order' in text
     assert "c_order([" in text and "c_customer(" in text  # 出来事とものの形を変える
+    data["concepts"][1]["kind"] = "state"
+    text = mermaid(Ontology.model_validate(data))
+    assert 'c_order{{"' in text and "class c_order state" in text  # 状態は六角形
 
 
 @pytest.mark.parametrize(

@@ -74,6 +74,7 @@ flowchart LR
   classDef constraint fill:#dcfce7,stroke:#22c55e,color:#14532d,font-size:11px
   classDef event fill:#166534,stroke:#14532d,color:#ffffff
   classDef entity fill:#1e3a8a,stroke:#172554,color:#ffffff
+  classDef state fill:#9a3412,stroke:#7c2d12,color:#ffffff
   class c_order,c_order_line,c_payment,c_shipment,c_return,c_inventory_movement event
   class c_customer,c_product,c_store,c_promotion entity
 ```
