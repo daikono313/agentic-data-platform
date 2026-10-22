@@ -284,7 +284,7 @@ def test_state_rules(model: BeamModel) -> None:
     m.state = StateSpec(method=StateMethod.LAST_VALUE, reset=[count])
     issues = model.finalize_issues()
     assert any("running_total）ときだけ" in i for i in issues)
-    assert any("store.no_such が、イベントの属性" in i for i in issues)
+    assert any("store.no_such がイベントの属性" in i for i in issues)
     attr = next(f"{d.ref}.{a.name}" for d in event.dimensions for a in d.attributes if a.source)
     m.state = StateSpec(
         method=StateMethod.RUNNING_TOTAL,
@@ -297,9 +297,20 @@ def test_state_rules(model: BeamModel) -> None:
     assert any(f"measure {m.name} は時点の値なので" in i for i in model.finalize_issues())
     m.additivity = Additivity.SEMI_ADDITIVE
 
-    # 求め方が無ければ課題
+    # 件数は状態にできない。積み上げは sum に限る
+    from adp.beam import Aggregation, Availability
+
+    m.aggregation = Aggregation.COUNT
+    assert any(f"measure {m.name} は件数" in i for i in model.finalize_issues())
+    m.aggregation = Aggregation.MAX
+    assert any("集計方法は sum" in i for i in model.finalize_issues())
+    m.aggregation = Aggregation.SUM
+
+    # 求め方が無ければ課題。データの無い measure は作らないので要らない
     m.state = None
     assert any("記録からの求め方（state）" in i for i in model.finalize_issues())
+    m.availability = Availability.UNAVAILABLE
+    assert not any("記録からの求め方（state）" in i for i in model.finalize_issues())
 
 
 def test_semi_additive_measure_cannot_be_cumulative(model: BeamModel) -> None:
