@@ -249,14 +249,15 @@ def metric_definitions(
         flt = _filters(event, fact, m)
         if m.type in (MetricType.SIMPLE, MetricType.CUMULATIVE):
             measure = event.measure(m.measure or "")
-            if measure is None or fact.column(measure.name) is None:
+            if measure is None or (not measure.counts_rows and fact.column(measure.name) is None):
                 raise SemanticError(
                     f"metric {m.name} の measure {m.measure} が {fact.name} にありません"
                 )
             simple: dict[str, Any] = {
                 "type": "simple",
                 "agg": _AGG[measure.aggregation],
-                "expr": measure.name,
+                # 出来事の件数は列を持たず、行を数える（factless fact。#139）
+                "expr": "1" if measure.counts_rows else measure.name,
             }
             if flt:
                 simple["filter"] = flt

@@ -7,10 +7,11 @@ from pathlib import Path
 
 import duckdb
 import pytest
+import yaml
 
 from adp.beam import load
 from adp.catalog.catalog import Catalog
-from adp.design import DesignBuilder
+from adp.design import ColumnRole, DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
 from adp.generation.conventions import check_warehouse
@@ -443,3 +444,42 @@ def test_periodic_snapshot_builds_and_matches_reference(tmp_path: Path) -> None:
     query = mf_query(warehouse, q)
     assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
     assert conventions_violations(warehouse) == []
+
+
+def test_factless_fact_counts_events(tmp_path: Path) -> None:
+    """出来事の件数だけの要求（measure に列が無い）から、中身のない出来事の fact を作る（#139）。
+
+    fct は measure の列を持たず、指標は行を数える（`agg: count`、`expr: 1`）。件数は源泉と一致する。
+    """
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "shipment_counts.yml")
+    assert beam.finalize_issues() == []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    [fact] = design.facts
+    assert not any(c.role == ColumnRole.MEASURE for c in fact.columns)
+    generation = generate_models(design, info, beam)
+    info.write(generation.files)
+    yml = next(f for f in generation.files if f.path == "models/marts/fct_shipments.yml")
+    [metric] = yaml.safe_load(yml.content)["models"][0]["metrics"]
+    assert (metric["agg"], metric["expr"]) == ("count", "1")
+
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+    assert "test_fct_shipments_example_1" in result.stdout
+    assert conventions_violations(warehouse) == []
+
+    query = mf_query(warehouse, MetricQuery("shipment_count", ["shipment__shipping_method"]))
+    assert query.returncode == 0, query.stdout[-2000:] + query.stderr[-1000:]
+    got = {
+        parts[0]: int(parts[1])
+        for line in query.stdout.splitlines()
+        if len(parts := line.split()) == 2 and parts[1].isdigit()
+    }
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    expected = dict(
+        con.sql("select shipping_method, count(*) from raw.shipments group by 1").fetchall()
+    )
+    assert got == expected

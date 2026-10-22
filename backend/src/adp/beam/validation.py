@@ -119,7 +119,7 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
     for m in event.measures:
         if m.availability == Availability.UNKNOWN:
             issues.append(f"{p} measure {m.name} がソースで作れるか未確認です")
-        if m.availability == Availability.AVAILABLE and m.source is None:
+        if m.availability == Availability.AVAILABLE and m.source is None and not m.counts_rows:
             issues.append(f"{p} measure {m.name} のソースが指定されていません")
         if m.availability == Availability.UNAVAILABLE and m.name not in gaps:
             issues.append(f"{p} measure {m.name} はデータなしですが gap に記録されていません")

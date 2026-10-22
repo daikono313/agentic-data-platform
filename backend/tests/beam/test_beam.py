@@ -674,3 +674,18 @@ def test_nested_cross_event_filter_must_be_shared() -> None:
     # 直接の元の指標と、入れ子の元の指標が同じ指標（注文数）を共有していても、元の指標ごとに見る
     mixed = issues("order_status.order_status", "sold_qty_excl_cancelled + return_rate_by_category")
     assert len(mixed) == 1 and "元の指標 return_rate_by_category" in mixed[0]
+
+
+def test_row_count_measure_needs_no_source(model: BeamModel) -> None:
+    """出来事の件数（count）は元の列が無くてよい（中身のない出来事の fact。#139）。ほかの集計は
+    要る。"""
+    from adp.beam import Aggregation
+
+    m = model.events[0].measures[0]
+    m.source = None
+    assert any(
+        f"measure {m.name} のソースが指定されていません" in i for i in model.finalize_issues()
+    )
+    m.aggregation = Aggregation.COUNT
+    assert m.counts_rows
+    assert not any(f"measure {m.name} のソースが" in i for i in model.finalize_issues())
