@@ -311,8 +311,8 @@ class Measure(_Base):
 
     @property
     def counts_rows(self) -> bool:
-        """出来事の件数（行の数）を数える measure か。count で source の無いもの。fct に列を
-        持たない（中身のない出来事の fact。factless fact。#139）。"""
+        """出来事の件数（粒度 1 行を 1 件）を数える measure か。count で source の無いもの。
+        fct に列を持たない（中身のない出来事の fact。factless fact。#139）。"""
         return self.aggregation == Aggregation.COUNT and self.source is None
 
 

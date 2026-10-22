@@ -689,3 +689,6 @@ def test_row_count_measure_needs_no_source(model: BeamModel) -> None:
     m.aggregation = Aggregation.COUNT
     assert m.counts_rows
     assert not any(f"measure {m.name} のソースが" in i for i in model.finalize_issues())
+    # 具体例の件数は 1 行 1 件
+    model.events[0].examples[0].values[m.name] = 3
+    assert any("粒度 1 行の件数" in i for i in model.finalize_issues())

@@ -228,6 +228,15 @@ class MetricDefinitions:
     queries: list[MetricQuery]
 
 
+ROW_COUNT_EXPR = "1"
+"""出来事の件数（行の数）の measure の式。列を持たず、行を数える（factless fact。#139）。"""
+
+
+def measure_expr(measure: Measure) -> str:
+    """simple 指標の expr（measure の列。出来事の件数なら行を数える式）。"""
+    return ROW_COUNT_EXPR if measure.counts_rows else measure.name
+
+
 def metric_definitions(
     beam: BeamModel, design: PhysicalDesign, fact: FactTable
 ) -> MetricDefinitions:
@@ -256,8 +265,7 @@ def metric_definitions(
             simple: dict[str, Any] = {
                 "type": "simple",
                 "agg": _AGG[measure.aggregation],
-                # 出来事の件数は列を持たず、行を数える（factless fact。#139）
-                "expr": "1" if measure.counts_rows else measure.name,
+                "expr": measure_expr(measure),
             }
             if flt:
                 simple["filter"] = flt

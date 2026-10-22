@@ -121,6 +121,13 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
             issues.append(f"{p} measure {m.name} がソースで作れるか未確認です")
         if m.availability == Availability.AVAILABLE and m.source is None and not m.counts_rows:
             issues.append(f"{p} measure {m.name} のソースが指定されていません")
+        if m.counts_rows and any(
+            m.name in x.values and str(x.values[m.name]) != "1" for x in event.examples
+        ):
+            issues.append(
+                f"{p} measure {m.name} は粒度 1 行の件数なので、具体例の値は 1 です（書かなくて"
+                "よい）。1 件に複数を数えるなら、粒度を見直してください"
+            )
         if m.availability == Availability.UNAVAILABLE and m.name not in gaps:
             issues.append(f"{p} measure {m.name} はデータなしですが gap に記録されていません")
         if m.additivity == Additivity.NON_ADDITIVE and m.aggregation == Aggregation.SUM:
