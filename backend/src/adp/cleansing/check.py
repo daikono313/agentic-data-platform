@@ -11,7 +11,7 @@ import duckdb
 import yaml
 
 from adp.catalog.catalog import Catalog, TableProfile
-from adp.catalog.types import is_text_type
+from adp.catalog.types import column_kind, is_text_type
 from adp.cleansing.models import (
     DEFAULTS_FILE,
     IDENT,
@@ -38,33 +38,6 @@ class CheckResult:
 
 def source_columns(catalog: Catalog, source: str) -> list[SourceColumn]:
     return [SourceColumn(c.name, c.data_type) for c in catalog.columns(source)]
-
-
-_NUMBER = re.compile(
-    r"U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|INT\d*|DOUBLE|FLOAT\d*|REAL|DECIMAL|NUMERIC)"
-    r"(\(\d+(,\s*\d+)?\))?"
-)
-
-
-def column_kind(data_type: str) -> str:
-    """列の型の種類（text / timestamp / date / number / boolean / other）。画面の型の表示にも使う。
-
-    is_text_type と同じく、型の名前だけで決める。
-    """
-    if is_text_type(data_type):
-        return "text"
-    t = data_type.upper().strip()
-    if "[" in t:  # 配列（INTEGER[] など）は、要素の型にかかわらず other
-        return "other"
-    if t.startswith("TIMESTAMP"):
-        return "timestamp"
-    if t == "DATE":
-        return "date"
-    if _NUMBER.fullmatch(t):
-        return "number"
-    if t in ("BOOLEAN", "BOOL"):
-        return "boolean"
-    return "other"
 
 
 def date_column_name(column: str) -> str:

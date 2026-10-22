@@ -8,7 +8,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from adp.catalog.catalog import Catalog
-from adp.ontology.models import Concept, Ontology
+from adp.catalog.types import column_kind
+from adp.ontology.models import ROLE_LABELS, Concept, Ontology, Relation
 from adp.yaml_docs import load_yaml_docs, named
 
 
@@ -80,13 +81,13 @@ def _dbt_models(manifest_path: Path) -> dict[str, _DbtModel] | None:
 def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> CheckResult:
     errors: list[str] = []
     tables = {t.qualified for t in catalog.list_sources()}
-    columns: dict[str, set[str]] = {}
+    columns: dict[str, dict[str, str]] = {}
 
     def has_column(table: str, column: str) -> bool:
         if table not in tables:
             return False
         if table not in columns:
-            columns[table] = {c.name for c in catalog.columns(table)}
+            columns[table] = {c.name: c.data_type for c in catalog.columns(table)}
         return column in columns[table]
 
     for c in ontology.concepts:
@@ -97,9 +98,26 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
             errors.append(f"概念 {c.name}: キー {c.source}.{c.key} が無い")
         elif not catalog.is_unique(c.source, c.key):
             errors.append(f"概念 {c.name}: キー {c.source}.{c.key} が一意でない")
+        by_attr = {a.name: a for a in c.attributes}
         for a in c.attributes:
             if not has_column(c.source, a.column):
                 errors.append(f"概念 {c.name} の属性 {a.name}: 列 {c.source}.{a.column} が無い")
+                continue
+            # 役割は列の型と照合する。文字列の列は（クレンジングで型を変えることがあり）見ない
+            kind = column_kind(columns[c.source][a.column])
+            if a.role in _ROLE_KINDS and kind != "text" and kind not in _ROLE_KINDS[a.role]:
+                errors.append(
+                    f"概念 {c.name} の属性 {a.name}: 役割が{ROLE_LABELS[a.role]}（{a.role}）"
+                    f"なのに、列 {c.source}.{a.column} の型は {columns[c.source][a.column]}"
+                )
+            parent = by_attr.get(a.parent) if a.parent else None
+            if parent is not None and has_column(c.source, parent.column):
+                n = catalog.count_multi_valued(c.source, a.column, parent.column)
+                if n:
+                    errors.append(
+                        f"概念 {c.name} の属性 {a.name}: 階層の親 {parent.name} の値が 2 つ以上ある"
+                        f"{a.label}が {n} 件ある（子の値ごとに親の値は 1 つ）"
+                    )
 
     errors += ontology.duplicate_labels()
 
@@ -118,6 +136,8 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                 f"関係「{r.verb}」: 列 {r.via} が、{src.source} にある {dst.key} か、"
                 f"{dst.source} にある {src.key} のどちらでもない"
             )
+        else:
+            errors += _multiplicity_mismatches(catalog, r, table, column)
 
     unmapped_models: list[str] = []
     unmodeled: list[str] = []
@@ -167,6 +187,30 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
         unmapped_models=unmapped_models,
         unmodeled_attributes=unmodeled,
     )
+
+
+_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timestamp", "date"}}
+"""役割 → それに合う列の型の種類（column_kind）。説明（descriptive）はどの型でもよい。"""
+
+
+def _multiplicity_mismatches(catalog: Catalog, r: Relation, table: str, column: str) -> list[str]:
+    """関係の多重度（cardinality）と、相手を持たないことがあるか（optional）を、via の列の値と照合
+    する（#137）。宣言していない（未確認の）ものは見ない。"""
+    if r.cardinality is None and r.optional is None:
+        return []
+    p = catalog.profile_column(table, column, top=0)
+    errors = []
+    if r.cardinality == "one_to_one" and p.distinct_count != p.row_count - p.null_count:
+        errors.append(
+            f"関係「{r.verb}」: 1 対 1（one_to_one）なのに、列 {r.via} の値が重複している"
+            f"（{p.row_count - p.null_count} 行に {p.distinct_count} 種類）"
+        )
+    if r.optional is False and p.null_count:
+        errors.append(
+            f"関係「{r.verb}」: 相手を必ず持つ（optional: false）のに、列 {r.via} が空の行が"
+            f" {p.null_count} 行ある"
+        )
+    return errors
 
 
 def _description_mismatches(ontology: Ontology, concept: Concept, model: _DbtModel) -> list[str]:

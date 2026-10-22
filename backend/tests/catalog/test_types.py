@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from adp.catalog.types import is_text_type
-from adp.cleansing.check import column_kind
+from adp.catalog.types import column_kind, is_text_type
 from adp.cleansing.models import Defaults
 from adp.cleansing.render import SourceColumn, column_expr
 from adp.design import Column, ColumnRole

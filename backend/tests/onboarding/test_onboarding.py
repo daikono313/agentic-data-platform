@@ -403,7 +403,8 @@ def test_cleansing_spec_round_trips_through_the_form() -> None:
 
 def test_date_derives_follow_the_naming_convention() -> None:
     """日時から作る日付の列は _on（規約）。ほかの出力の列と重なる名前は出さない（#150）。"""
-    from adp.cleansing.check import column_kind, column_kinds, date_derives
+    from adp.catalog.types import column_kind
+    from adp.cleansing.check import column_kinds, date_derives
     from adp.cleansing.models import CleansingSpec
     from adp.cleansing.render import SourceColumn
 
@@ -530,4 +531,11 @@ def test_patch_must_not_duplicate_existing_labels(catalog: Catalog) -> None:
         if a["column"] == "quantity":
             a["label"] = "販売数量"
     errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
-    assert [e for e in errors if e.startswith("ラベル「販売数量」")], errors
+    assert [e for e in errors if e.startswith("言葉「販売数量」")], errors
+
+    # 足した関係の多重度の誤りも返す（同じ店舗に入出庫は何件もあるので 1 対 1 ではない）
+    data = patch.model_dump(mode="json", by_alias=True)
+    assert data["relations"], data
+    data["relations"][0]["cardinality"] = "one_to_one"
+    errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
+    assert [e for e in errors if "1 対 1（one_to_one）なのに" in e], errors

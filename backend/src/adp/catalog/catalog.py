@@ -19,6 +19,7 @@ from typing import Any
 import duckdb
 from pydantic import BaseModel
 
+from adp.catalog.types import column_kind
 from adp.yaml_docs import load_yaml_docs, named
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -602,6 +603,25 @@ class Catalog:
                 )
             )
 
+    def count_multi_valued(self, table: str, column: str, depends_on: str) -> int:
+        """column の値のうち、depends_on の値が 2 つ以上あるものの数（階層の照合。子の値ごとに親の
+        値は 1 つ。#137）。子が空の行は見ない。親の空は 1 つの値として数える（同じ子に、親のある行と
+        空の行があれば食い違い）。"""
+        schema, name = self._resolve(table)
+        for c in (column, depends_on):
+            if not _IDENT.match(c):
+                raise ValueError(f"不正な列名です: {c}")
+        child, parent = quote_ident(column), quote_ident(depends_on)
+        with self.connect() as con:
+            return int(
+                _scalar(
+                    con,
+                    f"select count(*) from (select {child} from {_table(schema, name)}"
+                    f" where {child} is not null group by {child}"
+                    f" having count(distinct {parent}) + max(({parent} is null)::int) > 1)",
+                )
+            )
+
     def search_columns(self, query: str) -> list[ColumnMatch]:
         """列名・説明・テーブル説明に、いずれかの語を含む列を返す（大文字小文字は区別しない）。"""
         terms = [t.lower() for t in query.split() if t]
@@ -665,33 +685,15 @@ def _profile(
         profile.masked = True
         return profile
     if detail and total > nulls:
-        kind = column.data_type.upper()
+        kind = column_kind(column.data_type)
         try:
-            if kind == "DATE" or kind.startswith("TIMESTAMP"):
+            if kind in ("timestamp", "date"):
                 profile.monthly = _monthly(con, q, col)
-            elif kind.startswith(_NUMERIC):
+            elif kind == "number":
                 profile.histogram = _histogram(con, q, col)
         except duckdb.Error:  # 図が作れなくても、プロファイル全体は返す
             pass
     return profile
-
-
-_NUMERIC = (
-    "UTINYINT",
-    "USMALLINT",
-    "UHUGEINT",
-    "TINYINT",
-    "SMALLINT",
-    "INTEGER",
-    "BIGINT",
-    "HUGEINT",
-    "DOUBLE",
-    "FLOAT",
-    "REAL",
-    "DECIMAL",
-    "UBIGINT",
-    "UINTEGER",
-)
 
 
 def _monthly(con: duckdb.DuckDBPyConnection, q: str, col: str) -> list[tuple[str, int]] | None:

@@ -96,18 +96,20 @@ flowchart LR
 
 ## 関係
 
-| から | 関係 | へ | 列 |
-|---|---|---|---|
-| 顧客 | 注文する | 注文 | `raw.orders.customer_id` |
-| 店舗・チャネル | 受け付ける | 注文 | `raw.orders.store_id` |
-| プロモーション | 適用される | 注文 | `raw.orders.promotion_id` |
-| 注文 | 含む | 注文明細 | `raw.order_items.order_id` |
-| 注文明細 | 購入する | 商品 | `raw.order_items.product_id` |
-| 注文 | 支払われる | 支払 | `raw.payments.order_id` |
-| 注文 | 配送される | 配送 | `raw.shipments.order_id` |
-| 注文明細 | 返品される | 返品 | `raw.returns.order_item_id` |
-| 店舗・チャネル | 入出庫する | 在庫の入出庫 | `raw.inventory.store_id` |
-| 在庫の入出庫 | 動かす | 商品 | `raw.inventory.product_id` |
+多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。「相手が無いことがある」は、列を持つ側に相手の無い行がありうること。
+
+| から | 関係 | へ | 列 | 多重度 |
+|---|---|---|---|---|
+| 顧客 | 注文する | 注文 | `raw.orders.customer_id` | - |
+| 店舗・チャネル | 受け付ける | 注文 | `raw.orders.store_id` | - |
+| プロモーション | 適用される | 注文 | `raw.orders.promotion_id` | - |
+| 注文 | 含む | 注文明細 | `raw.order_items.order_id` | - |
+| 注文明細 | 購入する | 商品 | `raw.order_items.product_id` | - |
+| 注文 | 支払われる | 支払 | `raw.payments.order_id` | - |
+| 注文 | 配送される | 配送 | `raw.shipments.order_id` | - |
+| 注文明細 | 返品される | 返品 | `raw.returns.order_item_id` | - |
+| 店舗・チャネル | 入出庫する | 在庫の入出庫 | `raw.inventory.store_id` | - |
+| 在庫の入出庫 | 動かす | 商品 | `raw.inventory.product_id` | - |
 
 ## 制約
 
