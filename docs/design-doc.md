@@ -403,7 +403,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | R3 | UI は日本語。識別子は英語の snake_case。dbt の description は日本語 | 利用者とコード規約の両方に合わせる |
 | R4 | モデルは Sonnet 5.5 を既定とし、失敗時に Opus 5.5 へ上げる | コスト効率。再試行率は記録する |
 | R5 | 集計は Semantic Layer に一元化し、マートは dim / fct まで | 指標定義の二重管理を避ける |
-| R6 | SCD は Type1 のみ実装する（履歴の要否は記録する） | MVP の範囲を絞る |
+| R6 | SCD は Type1 を基本にする。当時の値でも見たい属性（BEAM の `change: history`）は、dbt snapshot と別の履歴モデル `dim_<name>_history`（SCD Type 2）で持つ。既存の dim は変えない | MVP では Type1 のみだった。履歴の持ち方は [ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)（#141） |
 | R7 | ソースに無い要求は記録して先へ進み、PR に書き、issue も起票する | インタビューを止めない |
 | R8 | Canvas / Matrix は表示のみ。修正はチャット経由 | 同期処理の複雑さを避ける |
 | R9 | /goal の開発は issue ごとに PR を作り、CI green とレビュー合格で自己マージする | [certificate.md](certificate.md) を参照 |
