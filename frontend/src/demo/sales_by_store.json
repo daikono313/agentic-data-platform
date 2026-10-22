@@ -31,7 +31,8 @@
               "column": "quantity",
               "expr": null
             },
-            "availability": "available"
+            "availability": "available",
+            "state": null
           },
           {
             "name": "sales_amount",
@@ -46,7 +47,8 @@
               "column": null,
               "expr": "quantity * unit_price - discount_amount"
             },
-            "availability": "available"
+            "availability": "available",
+            "state": null
           },
           {
             "name": "unit_price",
@@ -61,7 +63,8 @@
               "column": "unit_price",
               "expr": null
             },
-            "availability": "available"
+            "availability": "available",
+            "state": null
           },
           {
             "name": "gross_margin",
@@ -72,7 +75,8 @@
             "unit": "円",
             "non_additive_dimension": null,
             "source": null,
-            "availability": "unavailable"
+            "availability": "unavailable",
+            "state": null
           }
         ],
         "dimensions": [

@@ -29,8 +29,10 @@ from adp.beam import (
     BusinessEvent,
     FilterOperator,
     GapKind,
+    MetricFilter,
     MetricType,
     SourceRef,
+    StateMethod,
     StoryType,
     W,
 )
@@ -229,6 +231,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "metric_filter": lambda: _metric_filter(beam, opts),
         # 比率の指標の分子・分母が、その列の集計になっている
         "ratio_of": lambda: _ratio_of(beam, opts),
+        # 状態の指標の measure の値の求め方（ADR 0008）。reset は置き換えに使う列と値
+        "measure_state": lambda: _measure_state(beam, opts),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -296,6 +300,18 @@ def _allows(operator: FilterOperator, values: list[str], value: str) -> bool:
     return value not in values
 
 
+def _passes(filters: list[MetricFilter], value: str) -> bool:
+    """値 value の行が、条件 filters をすべて満たすか（すべて AND）。"""
+    return all(_allows(f.operator, [str(v) for v in f.values], value) for f in filters)
+
+
+def _keeps_exactly(filters: list[MetricFilter], includes: list[str], excludes: list[str]) -> bool:
+    """条件が includes の値をすべて通し、excludes の値をどれも通さないか。"""
+    return all(_passes(filters, v) for v in includes) and not any(
+        _passes(filters, v) for v in excludes
+    )
+
+
 def _metric_filter(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
     """ある指標が、column の excludes の値をすべて除き、includes の値をすべて残すか。
 
@@ -312,13 +328,38 @@ def _metric_filter(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
             continue
         filters = [f for f in m.filters if _ref_column(e, f.ref) == column]
         seen += [f"{m.name}: {f.ref} {f.operator.value} {f.values}" for f in filters]
-
-        def allowed(value: str, filters: list[Any] = filters) -> bool:
-            return all(_allows(f.operator, [str(v) for v in f.values], value) for f in filters)
-
-        if not any(allowed(v) for v in excludes) and all(allowed(v) for v in includes):
+        if _keeps_exactly(filters, includes, excludes):
             return True, "; ".join(seen)
     return False, "; ".join(seen) or "条件なし"
+
+
+def _measure_state(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """ある指標の measure が、method の求め方か。reset を書けば、その列の includes の値の行で
+    置き換え、excludes の値の行では置き換えないか（ほかの列の条件は見ない）。"""
+    if not opts.get("method"):
+        raise ValueError(f"measure_state には method が必要です: {opts}")
+    method = StateMethod(opts["method"])
+    reset = opts.get("reset") or {}
+    column = str(reset.get("column", ""))
+    includes = [str(v) for v in reset.get("includes", [])]
+    excludes = [str(v) for v in reset.get("excludes", [])]
+    if column and not (includes and excludes):
+        raise ValueError(f"measure_state の reset には includes と excludes が必要です: {opts}")
+    seen: list[str] = []
+    for m, e in _metrics_events(beam):
+        ms = e.measure(m.measure) if e is not None and m.measure else None
+        if ms is None or ms.state is None:
+            continue
+        seen.append(
+            f"{ms.name}: {ms.state.method.value}"
+            + "".join(f" / {f.ref} {f.operator.value} {f.values}" for f in ms.state.reset)
+        )
+        if ms.state.method != method:
+            continue
+        filters = [f for f in ms.state.reset if _ref_column(e, f.ref) == column]
+        if not column or (filters and _keeps_exactly(filters, includes, excludes)):
+            return True, "; ".join(seen)
+    return False, "; ".join(seen) or "求め方なし"
 
 
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:

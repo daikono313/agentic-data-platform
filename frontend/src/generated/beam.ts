@@ -37,6 +37,15 @@ export type Additivity1 = "additive" | "semi_additive" | "non_additive";
  */
 export type Availability2 = "unknown" | "available" | "unavailable";
 /**
+ * last_value（記録が時点の値そのもの）か running_total（増減を積み上げる）
+ */
+export type StateMethod = "last_value" | "running_total";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "FilterOperator".
+ */
+export type FilterOperator = "=" | "!=" | "in" | "not_in";
+/**
  * How many 以外の 6W。How many は measure として別に持つ。
  *
  * This interface was referenced by `BEAM`'s JSON-Schema
@@ -54,11 +63,6 @@ export type TimeGrain = "day" | "week" | "month" | "quarter" | "year";
  */
 export type Level = "high" | "medium" | "low";
 export type MetricType = "simple" | "ratio" | "derived" | "cumulative";
-/**
- * This interface was referenced by `BEAM`'s JSON-Schema
- * via the `definition` "FilterOperator".
- */
-export type FilterOperator = "=" | "!=" | "in" | "not_in";
 export type MetricStatus = "draft" | "confirmed" | "blocked";
 /**
  * This interface was referenced by `BEAM`'s JSON-Schema
@@ -80,6 +84,13 @@ export type MetricStatus1 = "draft" | "confirmed" | "blocked";
  * via the `definition` "MetricType".
  */
 export type MetricType1 = "simple" | "ratio" | "derived" | "cumulative";
+/**
+ * 定期的な状態（recurring）の値の求め方（ADR 0008）。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "StateMethod".
+ */
+export type StateMethod1 = "last_value" | "running_total";
 /**
  * イベントの種類。fct の種類を決める。
  *
@@ -223,6 +234,44 @@ export interface Measure {
   non_additive_dimension?: string | null;
   source?: SourceRef | null;
   availability?: Availability2;
+  /**
+   * 定期的な状態（recurring）のイベントのとき、記録からの値の求め方
+   */
+  state?: StateSpec | null;
+}
+/**
+ * 定期的な状態（story_type: recurring）の measure を、記録からどう求めるか（#138、ADR 0008）。
+ *
+ * スナップショットは When の最小粒度（time_grain）の期間ごとに、粒度のキーから When を除いた
+ * 区切り（店舗 × 商品など）で作る。記録の無い期間は前の期間の値を引き継ぐ。同じ時刻の記録は
+ * 源泉の主キーの順に処理する。SQL は生成器が決まった形で作る（LLM にも人にも書かせない）。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "StateSpec".
+ */
+export interface StateSpec {
+  method: StateMethod;
+  /**
+   * running_total のとき、値を数え直した数に置き換える行の条件（例: movement_type が count の棚卸）。最初のこの行より前の期間は値を出さない
+   */
+  reset?: MetricFilter[];
+}
+/**
+ * 指標の絞り込み条件。Semantic Layer の filter に変換される。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "MetricFilter".
+ */
+export interface MetricFilter {
+  /**
+   * `<dimension ref>.<attribute>` または縮退ディメンション名
+   */
+  ref: string;
+  operator: FilterOperator;
+  /**
+   * @minItems 1
+   */
+  values: [string | number | number | boolean, ...(string | number | number | boolean)[]];
 }
 /**
  * 6W のいずれかに対応するディメンション。
@@ -341,23 +390,6 @@ export interface MetricRequest {
    */
   group_by?: string[];
   status?: MetricStatus;
-}
-/**
- * 指標の絞り込み条件。Semantic Layer の filter に変換される。
- *
- * This interface was referenced by `BEAM`'s JSON-Schema
- * via the `definition` "MetricFilter".
- */
-export interface MetricFilter {
-  /**
-   * `<dimension ref>.<attribute>` または縮退ディメンション名
-   */
-  ref: string;
-  operator: FilterOperator;
-  /**
-   * @minItems 1
-   */
-  values: [string | number | number | boolean, ...(string | number | number | boolean)[]];
 }
 /**
  * 未解決事項。PR 本文に書かれ、data_unavailable は issue も起票される。

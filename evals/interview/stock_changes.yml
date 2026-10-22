@@ -13,6 +13,8 @@ persona: |
   - 優先度とインパクトは高い。
 checks:
   - finalizable
+  # 在庫の増減・入荷は出来事。状態（月末在庫）と取り違えない（#138）
+  - story_type: discrete
   - min_examples: 2
   - has_w: [what, when, where]
   - asks_irregular_cases
