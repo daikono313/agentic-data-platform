@@ -163,7 +163,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                   <TableCell className="text-xs">
                     {c.model ? <span className="font-mono">{c.model}</span> : <Badge variant="outline">未整備</Badge>}
                   </TableCell>
-                  <TableCell className="text-xs whitespace-normal">{c.attributes.map((a) => a.label).join('、')}</TableCell>
+                  <TableCell className="text-xs whitespace-normal">{c.attributes.map((a) => a.label).join('、') || '-'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

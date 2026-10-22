@@ -120,7 +120,8 @@ def propose_from_profile(profile: TableProfile, ontology: Ontology) -> OntologyP
     ids = [k for k in profile.primary_key_candidates if k.endswith("_id")]
     key = ids[0] if ids else (profile.primary_key_candidates or [profile.columns[0].name])[0]
 
-    by_key = {(c.source, c.key): c for c in ontology.concepts}
+    # 状態の概念は、出来事と同じ記録（源泉のキー）から作るので、関係は元の概念に付ける（ADR 0008）
+    by_key = {(c.source, c.key): c for c in ontology.concepts if c.kind != "state"}
     links: list[tuple[str, Concept]] = []
     for fk in profile.foreign_key_candidates:
         table, _, column = fk.references.rpartition(".")

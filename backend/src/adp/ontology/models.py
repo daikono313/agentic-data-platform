@@ -275,7 +275,8 @@ HEADER = """\
 # - domains: 業務のまとまり（図の枠）
 # - concepts: 概念。kind は entity（もの・人・場所）、event（出来事。fact の候補）、
 #   state（定期的に測る状態。月末在庫など。定期スナップショットの fact の候補）
-#   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
+#   - source / key: 概念の元になる源泉のテーブルと、その識別子の列（状態の概念では元にする記録の
+#     識別子。状態の粒度ではない）
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
 #   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
