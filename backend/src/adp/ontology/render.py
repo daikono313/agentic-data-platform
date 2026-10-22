@@ -74,8 +74,10 @@ def mermaid(ontology: Ontology) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _attribute(a: Attribute, c: Concept, labels: dict[str, str]) -> str:
-    notes = [f"`{a.column}`"]
+def attribute_notes(a: Attribute, c: Concept, ontology: Ontology) -> list[str]:
+    """属性の補足（役割・上の階層・同義語・正本）。docs/ontology.md と画面で同じものを出す
+    （#137）。"""
+    notes = []
     if a.role is not None:
         notes.append(ROLE_LABELS[a.role])
     if a.parent is not None:
@@ -83,21 +85,33 @@ def _attribute(a: Attribute, c: Concept, labels: dict[str, str]) -> str:
     if a.synonyms:
         notes.append("同義語: " + "・".join(a.synonyms))
     if a.same_as is not None:
-        notes.append(f"正本は{labels[a.same_as.split('.', 1)[0]]}の `{a.same_as}`")
-    return f"{a.label}（{'。'.join(notes)}）"
+        concept, attr = a.same_as.split(".", 1)
+        target = ontology.concept(concept)
+        label = next(x.label for x in target.attributes if x.name == attr)
+        notes.append(f"正本は{target.label}の{label}")
+    return notes
 
 
-def _multiplicity(r: Relation, ontology: Ontology) -> str:
-    """関係の多重度の表示（例: 顧客 1 : 注文 多。未確認なら -）。via を持つ側が「多」の側。"""
+def _attribute(a: Attribute, c: Concept, ontology: Ontology) -> str:
+    return f"{a.label}（{'。'.join([f'`{a.column}`', *attribute_notes(a, c, ontology)])}）"
+
+
+def multiplicity(r: Relation, ontology: Ontology) -> str:
+    """関係の件数の対応の表示（例: 顧客 1 件に注文が複数、注文には必ず顧客がある。未確認なら -）。
+    via を持つ側から見る（Ontology.relation_ends）。"""
+    ends = ontology.relation_ends(r)
+    if ends is None:
+        return "-"
+    one, many = ends
     parts = []
-    if r.cardinality is not None:
-        table = r.via.rpartition(".")[0]
-        src, dst = ontology.concept(r.from_), ontology.concept(r.to)
-        one, many = (dst, src) if table == src.source and src.source != dst.source else (src, dst)
-        n = "1" if r.cardinality == "one_to_one" else "多"
-        parts.append(f"{one.label} 1 : {many.label} {n}")
-    if r.optional is not None:
-        parts.append("相手が無いことがある" if r.optional else "必ず相手がある")
+    if r.cardinality == "one_to_one":
+        parts.append(f"{one.label} 1 件に{many.label}は 1 件まで")
+    elif r.cardinality == "one_to_many":
+        parts.append(f"{one.label} 1 件に{many.label}が複数")
+    if r.optional is True:
+        parts.append(f"{one.label}が決まっていない{many.label}がある")
+    elif r.optional is False:
+        parts.append(f"{many.label}には必ず{one.label}がある")
     return "、".join(parts) or "-"
 
 
@@ -127,7 +141,7 @@ def markdown(ontology: Ontology) -> str:
     labels = {c.name: c.label for c in ontology.concepts}
     for c in ontology.concepts:
         kind = KIND_LABELS[c.kind]
-        attrs = "、".join(_attribute(a, c, labels) for a in c.attributes) or "-"
+        attrs = "、".join(_attribute(a, c, ontology) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(
             f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
@@ -138,15 +152,14 @@ def markdown(ontology: Ontology) -> str:
             "",
             "## 関係",
             "",
-            "多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。"
-            "「相手が無いことがある」は、列を持つ側に相手の無い行がありうること。",
+            "件数の対応は、列（via）を持つ側から見た、相手との件数の関係。",
             "",
-            "| から | 関係 | へ | 列 | 多重度 |",
+            "| から | 関係 | へ | 列 | 件数の対応 |",
             "|---|---|---|---|---|",
         ]
         for r in ontology.relations:
             ends = (cell(labels[r.from_]), cell(labels[r.to]))
-            many = cell(_multiplicity(r, ontology))
+            many = cell(multiplicity(r, ontology))
             out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` | {many} |")
     if ontology.constraints:
         out += ["", "## 制約", "", "| 概念 | 制約 |", "|---|---|"]

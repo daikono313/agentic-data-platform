@@ -87,7 +87,7 @@ flowchart LR
 | 商品 `product` | もの・人 | 商品 | `raw.products`（`product_id`） | `dim_product` | 商品名（`product_name`）、商品カテゴリ（`category`）、商品サブカテゴリ（`subcategory`）、ブランド（`brand`）、定価（`list_price`）、標準原価（`unit_cost`）、発売日（`launched_on`） |
 | 店舗・チャネル `store` | もの・人 | 店舗・チャネル | `raw.stores`（`store_id`） | `dim_store` | 店舗名（`store_name`）、販売チャネル（`channel`）、所在都道府県（`prefecture`）、所在地方（`region`）、開店日（`opened_on`） |
 | プロモーション `promotion` | もの・人 | 販売 | `raw.promotions`（`promotion_id`） | `dim_promotion` | プロモーション名（`promotion_name`）、種類（`promotion_type`）、割引率（`discount_rate`）、開始日（`start_date`）、終了日（`end_date`） |
-| 注文 `order` | 出来事 | 販売 | `raw.orders`（`order_id`） | 未整備 | 注文日時（`ordered_at`）、注文ステータス（`order_status`）、支払方法（`payment_method`。正本は支払の `payment.payment_method`） |
+| 注文 `order` | 出来事 | 販売 | `raw.orders`（`order_id`） | 未整備 | 注文日時（`ordered_at`）、注文ステータス（`order_status`）、支払方法（`payment_method`。正本は支払の支払方法） |
 | 注文明細 `order_line` | 出来事 | 販売 | `raw.order_items`（`order_item_id`） | `fct_order_lines` | 販売数量（`quantity`）、販売単価（`unit_price`）、値引額（`discount_amount`） |
 | 支払 `payment` | 出来事 | 決済・配送・返品 | `raw.payments`（`payment_id`） | 未整備 | 支払方法（`payment_method`）、支払金額（`amount`）、支払日時（`paid_at`） |
 | 配送 `shipment` | 出来事 | 決済・配送・返品 | `raw.shipments`（`shipment_id`） | 未整備 | 配送方法（`shipping_method`）、出荷日時（`shipped_at`）、配達日時（`delivered_at`） |
@@ -96,9 +96,9 @@ flowchart LR
 
 ## 関係
 
-多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。「相手が無いことがある」は、列を持つ側に相手の無い行がありうること。
+件数の対応は、列（via）を持つ側から見た、相手との件数の関係。
 
-| から | 関係 | へ | 列 | 多重度 |
+| から | 関係 | へ | 列 | 件数の対応 |
 |---|---|---|---|---|
 | 顧客 | 注文する | 注文 | `raw.orders.customer_id` | - |
 | 店舗・チャネル | 受け付ける | 注文 | `raw.orders.store_id` | - |

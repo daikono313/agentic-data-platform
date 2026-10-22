@@ -163,7 +163,12 @@ function OntologyBody({ view }: { view: OntologyView }) {
                   <TableCell className="text-xs">
                     {c.model ? <span className="font-mono">{c.model}</span> : <Badge variant="outline">未整備</Badge>}
                   </TableCell>
-                  <TableCell className="text-xs whitespace-normal">{c.attributes.map((a) => a.label).join('、')}</TableCell>
+                  <TableCell className="text-xs whitespace-normal">{c.attributes
+                      .map((a) => {
+                        const notes = view.attribute_notes?.[`${c.name}.${a.name}`]
+                        return notes?.length ? `${a.label}（${notes.join('。')}）` : a.label
+                      })
+                      .join('、')}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -183,6 +188,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                   <TableHead>関係</TableHead>
                   <TableHead>へ</TableHead>
                   <TableHead>列</TableHead>
+                  <TableHead>件数の対応</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -192,6 +198,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                     <TableCell className="text-xs font-medium">{r.verb}</TableCell>
                     <TableCell className="text-xs">{label.get(r.to)}</TableCell>
                     <TableCell className="font-mono text-xs">{r.via}</TableCell>
+                    <TableCell className="text-xs whitespace-normal">{view.multiplicities?.[i] ?? '-'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

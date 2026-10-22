@@ -385,7 +385,7 @@ def test_same_as_names_the_canonical_attribute() -> None:
     order["attributes"][0]["same_as"] = "customer.region"
     onto = Ontology.model_validate(data)
     assert onto.duplicate_labels() == []
-    assert "地方（`region`。正本は顧客の `customer.region`）" in markdown(onto)
+    assert "地方（`region`。正本は顧客の地方）" in markdown(onto)
     for target, label, message in [
         ("customer.nope", "地方", "ほかの概念の属性に無い"),
         ("order.area", "地方", "ほかの概念の属性に無い"),
@@ -590,11 +590,16 @@ def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
 
     relation |= {"cardinality": "one_to_many", "optional": False}
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
-    assert "| 顧客 1 : 注文 多、必ず相手がある |" in markdown(Ontology.model_validate(data))
+    assert "| 顧客 1 件に注文が複数、注文には必ず顧客がある |" in markdown(
+        Ontology.model_validate(data)
+    )
 
     relation["cardinality"] = "one_to_one"
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
-    assert "1 対 1（one_to_one）なのに、列 raw.orders.customer_id の値が重複している" in error
+    assert (
+        "顧客 1 件に注文は 1 件まで（one_to_one）としているのに、列 raw.orders.customer_id の値が"
+        "重複している" in error
+    )
 
     con = duckdb.connect(str(db))
     con.execute("update raw.orders set customer_id = null where order_id = 11")
@@ -602,10 +607,12 @@ def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
     relation["cardinality"] = "one_to_many"
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
     assert (
-        "相手を必ず持つ（optional: false）のに、列 raw.orders.customer_id が空の行が 1 行" in error
+        "注文には必ず顧客がある（optional: false）としているのに、列 raw.orders.customer_id が"
+        "空の行が 1 行" in error
     )
     relation["optional"] = True
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
+    assert "顧客が決まっていない注文がある" in markdown(Ontology.model_validate(data))
 
 
 def test_new_fields_round_trip_and_are_omitted_when_unset(tmp_path: Path) -> None:
@@ -682,4 +689,38 @@ def test_multiplicity_direction_follows_the_column() -> None:
             "cardinality": "one_to_many",
         }
     ]
-    assert "| 店舗 1 : 注文 多 |" in markdown(Ontology.model_validate(data))
+    assert "| 店舗 1 件に注文が複数 |" in markdown(Ontology.model_validate(data))
+
+
+def test_relation_ends_use_the_key_column_when_sources_are_shared() -> None:
+    """2 つの概念が同じ源泉でも、via の列がどちらのキーかで向きを決める（照合と表示で同じ判定。
+    Ontology.relation_ends）。"""
+    from adp.ontology import multiplicity
+
+    data = _data()
+    data["concepts"].append(
+        {
+            "name": "order_customer",
+            "label": "注文した顧客",
+            "domain": "sales",
+            "kind": "entity",
+            "source": "raw.orders",
+            "key": "customer_id",
+        }
+    )
+    data["relations"] = [
+        {
+            "from": "order",
+            "to": "order_customer",
+            "verb": "注文される",
+            "via": "raw.orders.customer_id",
+            "cardinality": "one_to_many",
+            "optional": False,
+        }
+    ]
+    ontology = Ontology.model_validate(data)
+    ends = ontology.relation_ends(ontology.relations[0])
+    assert ends is not None and [c.name for c in ends] == ["order_customer", "order"]
+    assert multiplicity(ontology.relations[0], ontology) == (
+        "注文した顧客 1 件に注文が複数、注文には必ず注文した顧客がある"
+    )

@@ -125,19 +125,17 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
     for r in ontology.relations:
         table, _, column = r.via.rpartition(".")
         src, dst = by_name[r.from_], by_name[r.to]
+        ends = ontology.relation_ends(r)
         if not has_column(table, column):
             errors.append(f"関係「{r.verb}」: 列 {r.via} が無い")
-        elif not (
-            (table == src.source and column == dst.key)
-            or (table == dst.source and column == src.key)
-        ):
+        elif ends is None:
             # 関係の列は、一方の源泉にある、もう一方のキー（外部キー）
             errors.append(
                 f"関係「{r.verb}」: 列 {r.via} が、{src.source} にある {dst.key} か、"
                 f"{dst.source} にある {src.key} のどちらでもない"
             )
         else:
-            errors += _multiplicity_mismatches(catalog, r, table, column)
+            errors += _multiplicity_mismatches(catalog, r, ends, table, column)
 
     unmapped_models: list[str] = []
     unmodeled: list[str] = []
@@ -193,22 +191,27 @@ _ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timesta
 """役割 → それに合う列の型の種類（column_kind）。説明（descriptive）はどの型でもよい。"""
 
 
-def _multiplicity_mismatches(catalog: Catalog, r: Relation, table: str, column: str) -> list[str]:
-    """関係の多重度（cardinality）と、相手を持たないことがあるか（optional）を、via の列の値と照合
-    する（#137）。宣言していない（未確認の）ものは見ない。"""
+def _multiplicity_mismatches(
+    catalog: Catalog, r: Relation, ends: tuple[Concept, Concept], table: str, column: str
+) -> list[str]:
+    """関係の件数の対応（cardinality）と、相手が決まっていないことがあるか（optional）を、via の列
+    の値と照合する（#137）。宣言していない（未確認の）ものは見ない。文言は表示（multiplicity）と
+    同じ言い方にする。"""
     if r.cardinality is None and r.optional is None:
         return []
+    one, many = ends
     p = catalog.profile_column(table, column, top=0)
     errors = []
     if r.cardinality == "one_to_one" and p.distinct_count != p.row_count - p.null_count:
         errors.append(
-            f"関係「{r.verb}」: 1 対 1（one_to_one）なのに、列 {r.via} の値が重複している"
-            f"（{p.row_count - p.null_count} 行に {p.distinct_count} 種類）"
+            f"関係「{r.verb}」: {one.label} 1 件に{many.label}は 1 件まで（one_to_one）としている"
+            f"のに、列 {r.via} の値が重複している（{p.row_count - p.null_count} 行に"
+            f" {p.distinct_count} 種類）"
         )
     if r.optional is False and p.null_count:
         errors.append(
-            f"関係「{r.verb}」: 相手を必ず持つ（optional: false）のに、列 {r.via} が空の行が"
-            f" {p.null_count} 行ある"
+            f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）としている"
+            f"のに、列 {r.via} が空の行が {p.null_count} 行ある"
         )
     return errors
 
