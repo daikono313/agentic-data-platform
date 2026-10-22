@@ -94,7 +94,11 @@ def test_bus_candidates(catalog: Catalog) -> None:
         update={"concepts": [c.model_copy(update={"kind": "state"}) for c in patch.concepts]}
     )
     out = bus_with_candidates(bus, ONTOLOGY, state)
-    assert any(r.name == "fct_inventory" and r.candidate for r in out.rows)
+    row = next(r for r in out.rows if r.name == "fct_inventory")
+    assert row.candidate and set(row.groups) == {"dim_store", "dim_date"}
+    # 状態の概念の案も、検証を通って適用できる
+    assert validate_patch(ONTOLOGY, state, catalog, "raw.inventory") == []
+    assert apply(ONTOLOGY, state).concept("inventory").kind == "state"
 
 
 def _script(patches: list[dict[str, Any]]) -> list[list[Any]]:

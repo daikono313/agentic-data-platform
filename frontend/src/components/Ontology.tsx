@@ -123,7 +123,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
         <CardHeader className="px-4">
           <CardTitle className="text-sm">概念の関係</CardTitle>
           <p className="text-xs text-muted-foreground">
-            四角 = もの・人・場所（dim の候補）、長円 = 出来事（fact の候補）、灰色 = 属性（一部）、緑 = 制約、矢印 = 関係
+            四角 = もの・人・場所（dim の候補）、長円 = 出来事（fact の候補）、六角形 = 状態（定期的に測る値。fact の候補）、灰色 = 属性（一部）、緑 = 制約、矢印 = 関係
           </p>
         </CardHeader>
         <CardContent className="px-4">

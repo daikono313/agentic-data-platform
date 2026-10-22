@@ -39,7 +39,8 @@ class OnboardingDraft(BaseModel):
 
 
 def bus_with_candidates(bus: BusMatrix, ontology: Ontology, patch: OntologyPatch) -> BusMatrix:
-    """出来事・状態の概念 → fct の候補行（関係でつながる dim に ✓）、もの・人の概念 → dim の候補列。"""
+    """出来事・状態の概念 → fct の候補行（関係でつながる dim に ✓）、もの・人の概念 → dim の
+    候補列。"""
     merged = apply(ontology, patch)
     groups = list(bus.groups)
     rows = list(bus.rows)
