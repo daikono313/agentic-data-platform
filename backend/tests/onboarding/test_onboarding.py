@@ -89,6 +89,12 @@ def test_bus_candidates(catalog: Catalog) -> None:
     out = bus_with_candidates(bus, ONTOLOGY, patch)
     row = next(r for r in out.rows if r.name == "fct_inventory")
     assert row.candidate and set(row.groups) == {"dim_store", "dim_date"}  # dim_product は表に無い
+    # 状態（定期的に測る値）の概念も fct の候補の行になる（ADR 0008）
+    state = patch.model_copy(
+        update={"concepts": [c.model_copy(update={"kind": "state"}) for c in patch.concepts]}
+    )
+    out = bus_with_candidates(bus, ONTOLOGY, state)
+    assert any(r.name == "fct_inventory" and r.candidate for r in out.rows)
 
 
 def _script(patches: list[dict[str, Any]]) -> list[list[Any]]:

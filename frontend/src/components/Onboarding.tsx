@@ -8,6 +8,7 @@ import {
   type CleansingSpec,
   type ColumnProfile,
   type OnboardingDraft,
+  type OntologyConcept,
   type OntologyPatch,
 } from '@/api/datasets'
 import type { JobView } from '@/api/types'
@@ -272,9 +273,10 @@ function DraftBody({
                     aria-label="種類"
                     className={SELECT}
                     value={c.kind}
-                    onChange={(e) => update(i, { kind: e.target.value as 'entity' | 'event' })}
+                    onChange={(e) => update(i, { kind: e.target.value as OntologyConcept['kind'] })}
                   >
                     <option value="event">出来事（fact の候補）</option>
+                    <option value="state">状態（定期的に測る値。fact の候補）</option>
                     <option value="entity">もの・人・場所（dim の候補）</option>
                   </select>
                 </dd>
