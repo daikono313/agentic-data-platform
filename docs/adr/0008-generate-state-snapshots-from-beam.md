@@ -23,7 +23,7 @@ BEAM の `story_type: recurring`（定期的に測る状態。月末在庫など
 
 この計算を書ける場所は限られている。
 
-- クレンジング層は 1 テーブルの中の整形だけで、計算・結合・ウィンドウ関数は書かない（ADR 0004）。
+- クレンジング層は 1 テーブルの中の整形だけで、計算・結合はしない（ADR 0004）。積み上げは計算で、記録の無い月の引き継ぎには暦（`dim_date`）との結合が要る。
 - BEAM の `SourceRef.expr` は 1 行ごとの式だけで、集計・ウィンドウ関数・サブクエリは受け付けない（`_check_row_expr`、#46）。
 
 v5（オーナーの指示、2026-10-12）で、状態をヒアリングから生成まで通しで扱う（#138）。
@@ -51,7 +51,8 @@ recurring のイベントの measure に、次を構造化した値で書く。
 
 - 求め方: 記録が時点の値そのものなら「期間の最後の値」（`last_value`）、増減の記録なら「積み上げ」（`running_total`）。
 - 置き換える行: 積み上げのとき、値を数え直した数に置き換える行。BEAM の絞り込みと同じ形で書く（例: `movement_type` が `count`）。
-- 引き継ぎ: 記録の無い期間は、前の期間の値を引き継ぐ。
+
+記録の無い期間は、前の期間の値を引き継ぐ。これは BEAM に書く項目ではなく、生成器が常にそうする。
 
 スナップショットの粒度は、時間軸（When）の `time_grain`（月など）にする。区切りは、粒度のキーから When を除いたもの（店舗 × 商品）。同じ時刻の行は、源泉の主キーの順に処理する。
 
@@ -69,7 +70,7 @@ recurring のイベントの measure に、次を構造化した値で書く。
 
 - 良い点: 生成器を変えずに済む。SQL の自由度が高い。
 - 悪い点:
-  - クレンジング層に置くと、行をまたぐ計算を入れることになり、ADR 0004 を覆す。
+  - クレンジング層に置くと、計算と暦との結合を入れることになり、ADR 0004 を覆す。
   - 手で書く `int_` は、BEAM から生成する流れから外れる。要求ごとに人が SQL を書くことになり、生成の価値が無くなる。
   - 生成エージェント（LLM）に書かせると、安全の境界（#46）が崩れる。そのため採らない。
 
@@ -78,12 +79,22 @@ recurring のイベントの measure に、次を構造化した値で書く。
 - 良い点: fct を増やさない。
 - 悪い点:
   - 棚卸での置き換えを表せない。cumulative は足し上げだけで、途中で値を置き換えられない。
-  - 記録の外にある期首の在庫を表せない。
-  - semi_additive の measure は、cumulative にできない（`backend/tests/beam/test_beam.py` の `test_semi_additive_measure_cannot_be_cumulative`）。そのため採らない。
+  - 積み上げた結果は時点の値だが、cumulative 指標の結果を、さらに期間の終わり（月末）で切る手段が無い。そのため採らない。
+
+### 案 D: 棚卸の行だけを、MetricFlow の時点の値（semi_additive）として集計する
+
+棚卸の行に絞った measure を semi_additive にし、`non_additive_dimension` を時間軸にして、期間の最後の値を取る。生成器は変えない。
+
+- 良い点: 今の生成器と Semantic Layer だけで作れる（#134 で semi_additive の集計は実装済み）。
+- 悪い点:
+  - 棚卸と棚卸の間の入出庫が反映されない。月末在庫ではなく「最後に数えた数」になる。
+  - 棚卸の無い月は値が出ない（引き継げない）。2026-10-22 の源泉では、棚卸が 1 回も無い組が約 34% ある。そのため採らない。
 
 ## 決定
 
 案 A を採る。判断の基準の「安全の境界を保つこと」と「決定的で、テストで確かめられること」を優先した。求め方が 2 種類に限られることは、要求が来たときに生成器を足して広げる。
+
+periodic snapshot の fct は、状態の記録の粒度（区切り × 期間の終わりの値）を持つ fact で、指標の集計ではない。期間をまたぐ集計（平均・合計）や、店舗・カテゴリへのまとめは Semantic Layer に残す。そのため、集計を Semantic Layer に一元化する R5 と、集計済みの fct を作らない ADR 0007 の案 B の理由とは矛盾しない。
 
 ## 結果
 
@@ -96,13 +107,15 @@ recurring のイベントの measure に、次を構造化した値で書く。
   - 同じ時刻に置き換える行と増減の行があると、結果が源泉の主キーの順に依存する。
 - 後続の作業・ADR（#138）:
   - オントロジーに状態の概念の種類（`state`）を足す。同じ源泉から出来事の fact と状態の fact を作れるよう、ADR 0007 の 1 対 1 を保ったまま、概念を分ける。
+  - 暦は、ADR 0007 の案 D のとおり概念にしない（`dim_date` は共通のモデルのまま）。変えるなら別の ADR にする。
+  - BEAM の `state` は任意の項目なので、`schema_version` は上げない。JSON Schema と frontend の型（`frontend/src/generated/`）は生成し直す。
   - modeling-conventions に、periodic snapshot の列名・テストを書く（T3）。
   - インタビューで聞くことを足す（`docs/knowledge/interview.md`、C10）。
 
 ## 守らせ方
 
 - 生成を止めている確定前の課題: `backend/tests/design/test_builder.py` の `test_duplicate_columns_and_periodic_snapshot_are_blockers`。この ADR に沿って生成器を作る PR で、生成できることを確かめるテストに置き換える。
-- 時点の値（semi_additive）は recurring のイベントにだけ置ける: `backend/src/adp/beam/validation.py` の `finalize_issues`。
+- 前提として既にある検査: 時点の値（semi_additive）は recurring のイベントにだけ置ける（`backend/tests/beam/test_beam.py` の `test_additivity_rules`）。この ADR の決定を守らせるものではない。
 - `state` の検査、生成した SQL の unit test、手で書いたリファレンス fct との突合は、生成器を作る PR で足す。それまでは「無し」。
 
 ## 追記
