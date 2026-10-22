@@ -279,6 +279,11 @@ def test_periodic_snapshot_design(beam: BeamModel) -> None:
     quantity.state = StateSpec(
         method=StateMethod.RUNNING_TOTAL, reset=[MetricFilter.model_validate(reset)]
     )
+    # 区分（注文ステータス）は記録 1 件ごとの項目なので、状態の指標の絞り込みには使えない
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("記録 1 件ごとの項目" in i.message for i in design.blockers)
+    for metric in beam.metrics:
+        metric.filters = []
     design = DesignBuilder(FakeSchema()).build(beam)
     assert design.blockers == []
     [fact] = design.facts

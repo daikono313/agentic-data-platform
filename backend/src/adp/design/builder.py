@@ -692,6 +692,14 @@ class DesignBuilder:
                 continue
             columns.append(col)
             methods[m.name] = m.state.method
+            if m.state.method == StateMethod.RUNNING_TOTAL and not m.state.reset:
+                self._issue(
+                    IssueSeverity.WARNING,
+                    f"{p} measure {m.name} は数え直した記録（置き換える行）が無いので、始まりの数を"
+                    "0 として記録の増減を積み上げます。期首の数が記録の外にあるなら、値は実際より"
+                    "ずれます（PR で確かめてください）",
+                    m.name,
+                )
             conds = [self._filter_sql(event, f, resolve) for f in m.state.reset]
             if any(c is None for c in conds):
                 continue
