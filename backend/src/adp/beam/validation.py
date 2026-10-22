@@ -15,12 +15,20 @@ from adp.beam.models import (
     FactType,
     GapKind,
     MetricType,
+    StateMethod,
     TimeGrain,
     W,
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent, Dimension, MetricRequest
+    from adp.beam.models import (
+        BeamModel,
+        BusinessEvent,
+        Dimension,
+        Measure,
+        MetricFilter,
+        MetricRequest,
+    )
 
 TIME_GRAINS = {g.value for g in TimeGrain}
 _GRAINS = list(TimeGrain)  # 細かい→粗いの順
@@ -139,6 +147,7 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
                     f"{p} measure {m.name} は時点の値（semi_additive）なので、"
                     "定期的な状態の記録（story_type: recurring）のイベントに置いてください"
                 )
+        issues += _state_issues(event, m, p)
 
     fact_keys: dict[str, set[str]] = {}
     for d in event.dimensions:
@@ -215,11 +224,7 @@ def _metric_issues(model: BeamModel) -> list[str]:
             event.time_dimension is None
         ):
             issues.append(f"{p} 時間軸で集計するには agg_time_dimension が必要です")
-        for f in metric.filters:
-            if resolve_ref(event, f.ref) not in ("attribute", "degenerate"):
-                issues.append(
-                    f"{p} filter の {f.ref} がイベントの属性・縮退ディメンションにありません"
-                )
+        issues += _filter_ref_issues(event, metric.filters, f"{p} filter の")
         if metric.filter and not metric.filters:
             issues.append(f"{p} 絞り込み条件（{metric.filter}）が filters として記録されていません")
         if metric.type == MetricType.CUMULATIVE and f"{metric.name}_input" in metrics:
@@ -295,6 +300,60 @@ def _metric_issues(model: BeamModel) -> list[str]:
                         f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
                         "記録の粒度（time_grain）を見直してください"
                     )
+    return issues
+
+
+def _state_issues(event: BusinessEvent, m: Measure, p: str) -> list[str]:
+    """定期的な状態（recurring）の measure は、記録からの値の求め方（state）を持つ（ADR 0008）。"""
+    if event.fact_type != FactType.PERIODIC_SNAPSHOT:
+        if m.state is None:
+            return []
+        return [
+            f"{p} measure {m.name} の値の求め方（state）は、定期的な状態の記録"
+            "（story_type: recurring）のイベントでだけ指定します"
+        ]
+    if m.availability == Availability.UNAVAILABLE:
+        return []  # データの無い measure は作らない（gap に記録する）ので、求め方も要らない
+    if m.state is None:
+        return [
+            f"{p} measure {m.name} は定期的な状態の値なので、記録からの求め方（state）を決めて"
+            "ください（記録がその時点の値そのものなら last_value、増えた・減った数なら"
+            " running_total）"
+        ]
+    issues: list[str] = []
+    if m.additivity == Additivity.ADDITIVE:
+        issues.append(
+            f"{p} measure {m.name} は時点の値なので、期間をまたいで足せません。additivity を"
+            " semi_additive にしてください"
+        )
+    if m.aggregation in (Aggregation.COUNT, Aggregation.COUNT_DISTINCT):
+        issues.append(
+            f"{p} measure {m.name} は件数（{m.aggregation}）なので、記録の値から状態を"
+            "求められません。状態の数（在庫数など）の列を measure にしてください"
+        )
+    elif m.state.method == StateMethod.RUNNING_TOTAL and m.aggregation != Aggregation.SUM:
+        issues.append(
+            f"{p} measure {m.name} は増減を積み上げる（running_total）ので、集計方法は sum に"
+            "してください"
+        )
+    if m.state.reset and m.state.method != StateMethod.RUNNING_TOTAL:
+        issues.append(
+            f"{p} measure {m.name} の置き換える行（reset）は、増減を積み上げる"
+            "（running_total）ときだけ指定します"
+        )
+    issues += _filter_ref_issues(event, m.state.reset, f"{p} measure {m.name} の置き換える行の条件")
+    return issues
+
+
+def _filter_ref_issues(event: BusinessEvent, filters: list[MetricFilter], head: str) -> list[str]:
+    """絞り込み・置き換える行の条件の参照が、イベントの属性か縮退ディメンションにあり、データが
+    あるか（指標の filters と measure の state.reset で共通）。"""
+    issues: list[str] = []
+    for f in filters:
+        if resolve_ref(event, f.ref) not in ("attribute", "degenerate"):
+            issues.append(f"{head} {f.ref} がイベントの属性・縮退ディメンションにありません")
+        elif _attribute_unavailable(event, f.ref):
+            issues.append(f"{head} {f.ref} はデータなしです")
     return issues
 
 

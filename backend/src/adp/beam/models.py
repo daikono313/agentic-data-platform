@@ -262,6 +262,33 @@ ALLOWED_FUNCTIONS = frozenset(
 """expr で使える関数（DuckDB の名前）。名前の分からない関数・ファイルや設定を読む関数は不可。"""
 
 
+class StateMethod(StrEnum):
+    """定期的な状態（recurring）の値の求め方（ADR 0008）。"""
+
+    LAST_VALUE = "last_value"
+    """記録がその時点の値そのもの（測った在庫数など）。期間の最後の記録の値を取る"""
+    RUNNING_TOTAL = "running_total"
+    """記録が増えた・減った数（入出庫など）。時刻の順に積み上げる"""
+
+
+class StateSpec(_Base):
+    """定期的な状態（story_type: recurring）の measure を、記録からどう求めるか（#138、ADR 0008）。
+
+    スナップショットは When の最小粒度（time_grain）の期間ごとに、粒度のキーから When を除いた
+    区切り（店舗 × 商品など）で作る。記録の無い期間は前の期間の値を引き継ぐ。同じ時刻の記録は
+    源泉の主キーの順に処理する。SQL は生成器が決まった形で作る（LLM にも人にも書かせない）。
+    """
+
+    method: StateMethod = Field(
+        description="last_value（記録が時点の値そのもの）か running_total（増減を積み上げる）"
+    )
+    reset: list[MetricFilter] = Field(
+        default_factory=list,
+        description="running_total のとき、値を数え直した数に置き換える行の条件"
+        "（例: movement_type が count の棚卸）。最初のこの行より前の期間は値を出さない",
+    )
+
+
 class Measure(_Base):
     """How many。fct の数値カラムになる。"""
 
@@ -277,6 +304,10 @@ class Measure(_Base):
     )
     source: SourceRef | None = None
     availability: Availability = Availability.UNKNOWN
+    state: StateSpec | None = Field(
+        default=None,
+        description="定期的な状態（recurring）のイベントのとき、記録からの値の求め方",
+    )
 
 
 class DegenerateDimension(_Base):

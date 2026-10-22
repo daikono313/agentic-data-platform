@@ -257,7 +257,60 @@ def test_additivity_rules(model: BeamModel) -> None:
     m.non_additive_dimension = "date"
     assert any("story_type: recurring" in i for i in model.finalize_issues())
     model.events[0].story_type = StoryType.RECURRING
+    issues = model.finalize_issues()
+    assert any(f"measure {m.name} は定期的な状態の値なので" in i for i in issues)
+    assert not any("story_type: recurring" in i for i in issues)
+
+
+def test_state_rules(model: BeamModel) -> None:
+    """定期的な状態の measure は、記録からの値の求め方（state）を持つ（ADR 0008）。"""
+    from adp.beam import Additivity, MetricFilter, StateMethod, StateSpec, StoryType
+
+    event = model.events[0]
+    m = event.measures[0]
+    m.state = StateSpec(method=StateMethod.LAST_VALUE)
+    assert any("recurring）のイベントでだけ" in i for i in model.finalize_issues())
+
+    event.story_type = StoryType.RECURRING
+    for x in event.measures:
+        if x.additivity == Additivity.ADDITIVE:  # 単価（average）は non_additive のまま
+            x.additivity = Additivity.SEMI_ADDITIVE
+            x.non_additive_dimension = "date"
+        x.state = StateSpec(method=StateMethod.LAST_VALUE)
     assert model.finalize_issues() == []
+
+    # 置き換える行は、積み上げるときだけ。条件はイベントの属性か縮退ディメンション
+    count = MetricFilter.model_validate({"ref": "store.no_such", "operator": "in", "values": ["x"]})
+    m.state = StateSpec(method=StateMethod.LAST_VALUE, reset=[count])
+    issues = model.finalize_issues()
+    assert any("running_total）ときだけ" in i for i in issues)
+    assert any("store.no_such がイベントの属性" in i for i in issues)
+    attr = next(f"{d.ref}.{a.name}" for d in event.dimensions for a in d.attributes if a.source)
+    m.state = StateSpec(
+        method=StateMethod.RUNNING_TOTAL,
+        reset=[MetricFilter.model_validate({"ref": attr, "operator": "in", "values": ["x"]})],
+    )
+    assert model.finalize_issues() == []
+
+    # 時点の値は足せない
+    m.additivity = Additivity.ADDITIVE
+    assert any(f"measure {m.name} は時点の値なので" in i for i in model.finalize_issues())
+    m.additivity = Additivity.SEMI_ADDITIVE
+
+    # 件数は状態にできない。積み上げは sum に限る
+    from adp.beam import Aggregation, Availability
+
+    m.aggregation = Aggregation.COUNT
+    assert any(f"measure {m.name} は件数" in i for i in model.finalize_issues())
+    m.aggregation = Aggregation.MAX
+    assert any("集計方法は sum" in i for i in model.finalize_issues())
+    m.aggregation = Aggregation.SUM
+
+    # 求め方が無ければ課題。データの無い measure は作らないので要らない
+    m.state = None
+    assert any("記録からの求め方（state）" in i for i in model.finalize_issues())
+    m.availability = Availability.UNAVAILABLE
+    assert not any("記録からの求め方（state）" in i for i in model.finalize_issues())
 
 
 def test_semi_additive_measure_cannot_be_cumulative(model: BeamModel) -> None:
