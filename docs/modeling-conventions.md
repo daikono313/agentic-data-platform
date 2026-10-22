@@ -22,6 +22,8 @@
 
 fact / dim はオントロジーの概念と 1 対 1 にする（出来事 → fct、もの・人・場所 → dim）。同じ概念の 2 つ目のモデルは作らない（設計の段階で止まり、`make dbt-build` の検査でも落ちる）。共通の暦（`dim_date`）だけは概念を持たない。
 
+属性の言葉（ラベル）は、オントロジーの属性のラベルにそろえる（BEAM の属性のラベルと dim の列の説明。説明は「ラベル（補足）」でもよい）。同じラベルの属性を別々に作らない。同じ値を持つ列なら `same_as` で正本を示し、意味が違えばラベルを分ける（[ADR 0006](adr/0006-make-ontology-labels-the-business-terms.md)。`make dbt-build` の検査で落ちる）。
+
 ## BEAM 成果物との対応（生成ルール）
 
 BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで機械的に名前と構造を決める。例は `backend/tests/fixtures/beam/sales_by_store.yml` → `fct_order_lines`。

@@ -421,6 +421,8 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | R21 | フィードバックは `.adp/app.db` に、その発言を作ったときの段階・質問・選択肢・プロンプトのバージョン（`interview-v<N>+<内容のハッシュ>`）・モデルと一緒に保存する。保持期限は 180 日で、backend の起動時に古いものを削除する（`ADP_FEEDBACK_RETENTION_DAYS` で変更、0 で無期限）。個別に消すときは app.db から削除する。期限で消えるのはフィードバックだけで、会話そのもの（sessions テーブル）は残る（O7 を解決） | #44 |
 | R22 | 個人情報の列は、源泉のプロファイル・ソースカタログの tool・生成するテストとチャートの判定で値を出さない（`meta.pii` か列名の推定）。接続先は `adp.warehouse` に集める | [ADR 0005](adr/0005-real-data.md)（#81） |
 | R23 | 描画の応答時間は、MetricFlow と dbt Charts をプロセス内で使い回すことで、2 回目以降の描き直しを約 0.15 秒（初回 1〜2.5 秒）にする。CLI のサブプロセスでは 1 回約 20 秒かかったため（O8 を解決） | [ADR 0003](adr/0003-chart-view-in-process.md)（#41・#43） |
+| R24 | オントロジーの属性のラベルを業務の言葉の正本にし、BEAM の属性のラベルと dim の列の説明をそろえる。同じラベルは `same_as` で正本を示すか、ラベルを分ける | [ADR 0006](adr/0006-make-ontology-labels-the-business-terms.md)（#137） |
+| R25 | オントロジーの概念と fact / dim を 1 対 1 にする（規則は [modeling-conventions](modeling-conventions.md)） | [ADR 0007](adr/0007-map-each-concept-to-one-model.md)（#67・#113・#114） |
 
 ## Alternatives considered
 
