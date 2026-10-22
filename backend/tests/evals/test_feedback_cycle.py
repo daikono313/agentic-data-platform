@@ -575,6 +575,37 @@ def test_column_checks() -> None:
     assert passed({"ratio_of": ratio})
 
 
+def test_measure_state_check() -> None:
+    """状態の measure の求め方と、置き換える行の列・値で採点する（ADR 0008）。"""
+    from adp.beam import FilterOperator, MetricFilter, StateMethod, StateSpec
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
+    measure = beam.events[0].measure(beam.metrics[0].measure or "")
+    assert measure is not None
+    spec = {
+        "method": "running_total",
+        "reset": {"column": "raw.orders.order_status", "includes": ["completed"]},
+    }
+
+    def passed(opts: Any) -> bool:
+        return _check(beam, {"measure_state": opts}).passed
+
+    assert not passed(spec)  # 求め方なし
+    measure.state = StateSpec(method=StateMethod.LAST_VALUE)
+    assert passed({"method": "last_value"}) and not passed(spec)
+    reset = MetricFilter(
+        ref="order_status.order_status", operator=FilterOperator.IN, values=["completed"]
+    )
+    measure.state = StateSpec(method=StateMethod.RUNNING_TOTAL, reset=[reset])
+    assert passed(spec) and passed({"method": "running_total"})
+    assert not passed(spec | {"reset": {"column": "raw.orders.order_status", "includes": ["x"]}})
+    assert not passed(spec | {"reset": {"column": "raw.stores.channel", "includes": ["completed"]}})
+    with pytest.raises(ValueError, match="method"):
+        passed({"reset": spec["reset"]})
+
+
 def test_purpose_question_check() -> None:
     """要求の目的（何の判断・行動に使うか）を聞いたか（#135）。区分のルールの質問では通らない。"""
     from adp.evals.interview import _transcript_check_map

@@ -15,12 +15,13 @@ from adp.beam.models import (
     FactType,
     GapKind,
     MetricType,
+    StateMethod,
     TimeGrain,
     W,
 )
 
 if TYPE_CHECKING:
-    from adp.beam.models import BeamModel, BusinessEvent, Dimension, MetricRequest
+    from adp.beam.models import BeamModel, BusinessEvent, Dimension, Measure, MetricRequest
 
 TIME_GRAINS = {g.value for g in TimeGrain}
 _GRAINS = list(TimeGrain)  # 細かい→粗いの順
@@ -139,6 +140,7 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
                     f"{p} measure {m.name} は時点の値（semi_additive）なので、"
                     "定期的な状態の記録（story_type: recurring）のイベントに置いてください"
                 )
+        issues += _state_issues(event, m, p)
 
     fact_keys: dict[str, set[str]] = {}
     for d in event.dimensions:
@@ -295,6 +297,41 @@ def _metric_issues(model: BeamModel) -> list[str]:
                         f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
                         "記録の粒度（time_grain）を見直してください"
                     )
+    return issues
+
+
+def _state_issues(event: BusinessEvent, m: Measure, p: str) -> list[str]:
+    """定期的な状態（recurring）の measure は、記録からの値の求め方（state）を持つ（ADR 0008）。"""
+    if event.fact_type != FactType.PERIODIC_SNAPSHOT:
+        if m.state is None:
+            return []
+        return [
+            f"{p} measure {m.name} の値の求め方（state）は、定期的な状態の記録"
+            "（story_type: recurring）のイベントでだけ指定します"
+        ]
+    if m.state is None:
+        return [
+            f"{p} measure {m.name} は定期的な状態の値なので、記録からの求め方（state）を決めて"
+            "ください（記録がその時点の値そのものなら last_value、増えた・減った数なら"
+            " running_total）"
+        ]
+    issues: list[str] = []
+    if m.additivity == Additivity.ADDITIVE:
+        issues.append(
+            f"{p} measure {m.name} は時点の値なので、期間をまたいで足せません。additivity を"
+            " semi_additive にしてください"
+        )
+    if m.state.reset and m.state.method != StateMethod.RUNNING_TOTAL:
+        issues.append(
+            f"{p} measure {m.name} の置き換える行（reset）は、増減を積み上げる"
+            "（running_total）ときだけ指定します"
+        )
+    for f in m.state.reset:
+        if resolve_ref(event, f.ref) not in ("attribute", "degenerate"):
+            issues.append(
+                f"{p} measure {m.name} の置き換える行の条件 {f.ref} が、イベントの属性・"
+                "縮退ディメンションにありません"
+            )
     return issues
 
 

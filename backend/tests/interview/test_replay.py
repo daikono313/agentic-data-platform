@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from adp.beam import BeamModel
 from adp.evals.interview import _check, is_transcript_check
 from adp.interview import Interviewer, new_state
 from adp.llm import LLMSettings, ScriptedRunner
@@ -39,8 +40,10 @@ async def test_replay_recorded_eval(path: Path) -> None:
     for _ in beam_calls:
         async for _event in interviewer.send(state, "（再生）"):
             pass
-    # 記録した成果物と同じものが、今のコードでも tool の呼び出しから組み立てられる
-    assert state.beam.model_dump(mode="json") == record["beam"] | {"finalized_at": None}
+    # 記録した成果物と同じものが、今のコードでも tool の呼び出しから組み立てられる（記録の後に
+    # 足した任意の項目は既定値で比べる）
+    recorded = BeamModel.model_validate(record["beam"]).model_dump(mode="json")
+    assert state.beam.model_dump(mode="json") == recorded | {"finalized_at": None}
     interviewer.finalize(state)
 
     scenario = yaml.safe_load(

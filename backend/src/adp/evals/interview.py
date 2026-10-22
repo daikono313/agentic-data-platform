@@ -229,6 +229,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "metric_filter": lambda: _metric_filter(beam, opts),
         # 比率の指標の分子・分母が、その列の集計になっている
         "ratio_of": lambda: _ratio_of(beam, opts),
+        # 状態の指標の measure の値の求め方（ADR 0008）。reset は置き換えに使う列と値
+        "measure_state": lambda: _measure_state(beam, opts),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -319,6 +321,36 @@ def _metric_filter(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
         if not any(allowed(v) for v in excludes) and all(allowed(v) for v in includes):
             return True, "; ".join(seen)
     return False, "; ".join(seen) or "条件なし"
+
+
+def _measure_state(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """ある指標の measure が、method の求め方で、reset の列の値（includes）の行で置き換えるか。"""
+    if not opts.get("method"):
+        raise ValueError(f"measure_state には method が必要です: {opts}")
+    reset = opts.get("reset") or {}
+    column = str(reset.get("column", ""))
+    includes = [str(v) for v in reset.get("includes", [])]
+    seen: list[str] = []
+    for m, e in _metrics_events(beam):
+        ms = e.measure(m.measure) if e is not None and m.measure else None
+        if ms is None or ms.state is None:
+            continue
+        filters = [f for f in ms.state.reset if _ref_column(e, f.ref) == column]
+        seen.append(
+            f"{ms.name}: {ms.state.method.value}"
+            + "".join(f" / {f.ref} {f.operator.value} {f.values}" for f in ms.state.reset)
+        )
+        if ms.state.method.value != opts["method"]:
+            continue
+        if not column or (
+            filters
+            and all(
+                all(_allows(f.operator, [str(v) for v in f.values], v) for f in filters)
+                for v in includes
+            )
+        ):
+            return True, "; ".join(seen)
+    return False, "; ".join(seen) or "求め方なし"
 
 
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
