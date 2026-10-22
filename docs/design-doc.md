@@ -423,6 +423,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | R23 | 描画の応答時間は、MetricFlow と dbt Charts をプロセス内で使い回すことで、2 回目以降の描き直しを約 0.15 秒（初回 1〜2.5 秒）にする。CLI のサブプロセスでは 1 回約 20 秒かかったため（O8 を解決） | [ADR 0003](adr/0003-chart-view-in-process.md)（#41・#43） |
 | R24 | オントロジーの属性のラベルを業務の言葉の正本にし、BEAM の属性のラベルと dim の列の説明をそろえる。同じラベルは `same_as` で正本を示すか、ラベルを分ける | [ADR 0006](adr/0006-make-ontology-labels-the-business-terms.md)（#137） |
 | R25 | オントロジーの概念と fact / dim を 1 対 1 にする（規則は [modeling-conventions](modeling-conventions.md)） | [ADR 0007](adr/0007-map-each-concept-to-one-model.md)（#67・#113・#114） |
+| R26 | 状態（定期スナップショット）の値は、BEAM の measure に求め方（期間の最後の値か、増減の積み上げと置き換え）を書き、生成器が決まった形の SQL を作る（生成物の状態の計算を、LLM や要求ごとの手書きの SQL にしない） | [ADR 0008](adr/0008-generate-state-snapshots-from-beam.md)（#138） |
 
 ## Alternatives considered
 
