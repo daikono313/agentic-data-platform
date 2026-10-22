@@ -8,9 +8,15 @@
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
+#     - role: 役割（descriptive 説明 / numeric 数値 / temporal 時刻）。列の型と照合する
+#     - parent: 階層で 1 つ上の属性（同じ概念の属性。子の値ごとに親の値は 1 つ）
+#     - synonyms: 業務でほかに呼ぶ言葉（ほかの属性のラベル・同義語と重ねない）
 #   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
+#   - cardinality: キーを持つ側の 1 件に、via を持つ側が 1 件まで（one_to_one）か
+#     複数（one_to_many）か
+#   - optional: via を持つ側が相手を持たないことがあるか（via が空になりうるか）
 # - constraints: 業務上の制約・注意（図の注記）
 version: 1
 domains:

@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from adp.markdown import cell, mermaid_label
-from adp.ontology.models import KIND_LABELS, Attribute, Concept, Ontology, mermaid_id
+from adp.ontology.models import (
+    CARDINALITY_LABELS,
+    KIND_LABELS,
+    ROLE_LABELS,
+    Attribute,
+    Concept,
+    Ontology,
+    Relation,
+    mermaid_id,
+)
 
 MAX_ATTRS_IN_DIAGRAM = 4
 """図に出す属性の数（多いと読めなくなる。全部は md の表に出す）。"""
@@ -66,11 +75,27 @@ def mermaid(ontology: Ontology) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _attribute(a: Attribute, labels: dict[str, str]) -> str:
-    if a.same_as is None:
-        return f"{a.label}（`{a.column}`）"
-    concept = a.same_as.split(".", 1)[0]
-    return f"{a.label}（`{a.column}`。正本は{labels[concept]}の `{a.same_as}`）"
+def _attribute(a: Attribute, c: Concept, labels: dict[str, str]) -> str:
+    notes = [f"`{a.column}`"]
+    if a.role is not None:
+        notes.append(ROLE_LABELS[a.role])
+    if a.parent is not None:
+        notes.append(f"上の階層は{next(p.label for p in c.attributes if p.name == a.parent)}")
+    if a.synonyms:
+        notes.append("同義語: " + "・".join(a.synonyms))
+    if a.same_as is not None:
+        notes.append(f"正本は{labels[a.same_as.split('.', 1)[0]]}の `{a.same_as}`")
+    return f"{a.label}（{'。'.join(notes)}）"
+
+
+def _multiplicity(r: Relation) -> str:
+    """関係の多重度の表示（未確認なら -）。"""
+    parts = []
+    if r.cardinality is not None:
+        parts.append(CARDINALITY_LABELS[r.cardinality])
+    if r.optional is not None:
+        parts.append("相手が無いことがある" if r.optional else "必ず相手がある")
+    return "、".join(parts) or "-"
 
 
 def markdown(ontology: Ontology) -> str:
@@ -99,17 +124,27 @@ def markdown(ontology: Ontology) -> str:
     labels = {c.name: c.label for c in ontology.concepts}
     for c in ontology.concepts:
         kind = KIND_LABELS[c.kind]
-        attrs = "、".join(_attribute(a, labels) for a in c.attributes) or "-"
+        attrs = "、".join(_attribute(a, c, labels) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(
             f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
             f"| `{c.source}`（`{c.key}`） | {model} | {cell(attrs)} |"
         )
     if ontology.relations:
-        out += ["", "## 関係", "", "| から | 関係 | へ | 列 |", "|---|---|---|---|"]
+        out += [
+            "",
+            "## 関係",
+            "",
+            "多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。",
+            "",
+            "| から | 関係 | へ | 列 | 多重度 |",
+            "|---|---|---|---|---|",
+        ]
         for r in ontology.relations:
             ends = (cell(labels[r.from_]), cell(labels[r.to]))
-            out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` |")
+            out.append(
+                f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` | {cell(_multiplicity(r))} |"
+            )
     if ontology.constraints:
         out += ["", "## 制約", "", "| 概念 | 制約 |", "|---|---|"]
         for x in ontology.constraints:
