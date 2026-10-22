@@ -51,6 +51,20 @@ _EXAMPLES = {
 """見えていない確認のエラーで示す、中身を書いた question の例（hidden_confirmation の種類ごと）。"""
 
 
+def _keep_example_kinds(old: list[Any], new: list[Any]) -> list[Any]:
+    """new の具体例に kind・note が無ければ、values が同じ old の具体例から引き継ぐ（#142）。"""
+    before = {json.dumps(x.get("values"), sort_keys=True): x for x in old if isinstance(x, dict)}
+    kept: list[Any] = []
+    for x in new:
+        prev = (
+            before.get(json.dumps(x.get("values"), sort_keys=True)) if isinstance(x, dict) else None
+        )
+        if prev is not None:
+            x = {k: prev[k] for k in ("kind", "note") if k in prev and k not in x} | x
+        kept.append(x)
+    return kept
+
+
 def build_tools(
     state: InterviewState,
     on_change: Callable[[], None] | None = None,
@@ -103,7 +117,15 @@ def build_tools(
         _schema(BusinessEvent),
     )
     async def upsert_event(args: dict[str, Any]) -> dict[str, Any]:
-        return apply(lambda d: upsert(d["events"], "name", args["data"]))
+        def mutate(d: dict[str, Any]) -> None:
+            item = args["data"]
+            old = next((e for e in d["events"] if e["name"] == item.get("name")), None)
+            # 具体例の型と違い（#142）は、後の置き換えで渡し忘れても、値が同じ例から引き継ぐ
+            if old and isinstance(item.get("examples"), list):
+                item = item | {"examples": _keep_example_kinds(old["examples"], item["examples"])}
+            upsert(d["events"], "name", item)
+
+        return apply(mutate)
 
     @tool("remove_event", "ビジネスイベントを削除する", {"name": str})
     async def remove_event(args: dict[str, Any]) -> dict[str, Any]:

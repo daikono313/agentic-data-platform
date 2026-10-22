@@ -192,6 +192,26 @@ async def test_upsert_metric_keeps_purpose(expected: dict[str, Any]) -> None:
     assert state.beam.metrics[0].purpose == "人員配置に使う"
 
 
+async def test_upsert_event_keeps_example_kinds(expected: dict[str, Any]) -> None:
+    """具体例の型と違いは、後の置き換えで渡し忘れても、値が同じ例から引き継ぐ（#142）。"""
+    event = expected["events"][0]
+    typed = [x | {"kind": "missing", "note": "会員でない"} for x in event["examples"]]
+    plain = [{"values": x["values"]} for x in event["examples"]]
+    runner = ScriptedRunner(
+        [
+            [("upsert_event", {"data": event | {"examples": typed}})],
+            # 2 回目は型と違いを省いて渡す
+            [("upsert_event", {"data": event | {"label": "注文", "examples": plain}})],
+        ]
+    )
+    interviewer, state = Interviewer(runner, LLMSettings()), new_state("売上")
+    await collect(interviewer, state, "1")
+    await collect(interviewer, state, "2")
+    [e] = state.beam.events
+    assert e.label == "注文"
+    assert [(x.kind.value, x.note) for x in e.examples] == [("missing", "会員でない")] * len(typed)
+
+
 def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:
     """SDK は input_schema で入力を検証する。$ref が解決できないと全ての呼び出しが失敗する。"""
     import jsonschema

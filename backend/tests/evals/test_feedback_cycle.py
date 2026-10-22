@@ -378,6 +378,8 @@ def test_effort_and_irregular_detection_avoids_false_matches() -> None:
     for text in [
         "取消やマイナスの数量の記録はどう数えますか？",
         "数え方が変わる特別なケースはありますか？",
+        "典型と違うケース（返品・会員でない方など）はありますか？",
+        "別のパターンの注文も 1 件教えていただけますか？",
     ]:
         assert _transcript_check_map([_msg(text)])["asks_irregular_cases"].passed, text
     assert not _transcript_check_map([_msg("例外なく全店舗を含めてよいですか？")])[

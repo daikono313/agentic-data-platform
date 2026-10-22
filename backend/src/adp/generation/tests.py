@@ -212,10 +212,25 @@ def unit_test(
                 result[gm.group(1)][gm.group(2)] = key
         if case == "example":
             set_by_example: set[tuple[str, str]] = set()
+            join_cols = {(j.left_alias, j.left_column) for j in fact.joins}
+            join_cols |= {(j.right.alias, j.right_column) for j in fact.joins}
             for k, (alias, col) in _example_targets(event, fact).items():
                 if k in example.values:
+                    if example.values[k] is None and (alias, col) in join_cols:
+                        continue  # 結合キーを NULL にすると結合が外れる（欠損の具体例。#142）
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
                     set_by_example.add((alias, col))
+            # 欠損の具体例: マスタのあるディメンションの属性がすべて空なら、その外部キーの自然キーも
+            # 空にする（不明メンバーのキーになることを期待値にする。#142）
+            for c in fact.columns:
+                fk = re.search(r"(t\d+)\.(\w+)", c.expr)
+                d = event.dimension(c.source_ref or "")
+                if c.role != ColumnRole.FOREIGN_KEY or fk is None or d is None:
+                    continue
+                keys = [f"{d.ref}.{a.name}" for a in d.attributes]
+                given = [example.values[k] for k in keys if k in example.values]
+                if given and all(v is None for v in given) and (fk[1], fk[2]) not in join_cols:
+                    result[fk[1]][fk[2]] = None
             # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
             for j in fact.joins:
                 left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
