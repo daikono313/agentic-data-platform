@@ -588,6 +588,8 @@ class DesignBuilder:
                 )
 
         for m in event.measures:
+            if m.counts_rows and m.availability == Availability.AVAILABLE:
+                continue  # 行の件数は列を持たない（Semantic Layer で数える。#139）
             if m.availability != Availability.AVAILABLE or m.source is None:
                 self._issue(
                     IssueSeverity.WARNING,
@@ -852,7 +854,12 @@ class DesignBuilder:
             if fact is None or event is None:
                 continue
             p = f"[metric {metric.name}]"
-            if metric.measure and fact.column(metric.measure) is None:
+            measure = event.measure(metric.measure or "")
+            if (
+                metric.measure
+                and fact.column(metric.measure) is None
+                and not (measure and measure.counts_rows)
+            ):
                 self._blocker(f"{p} measure {metric.measure} が {fact.name} にありません")
             for ref in metric.group_by:
                 dim_ref, _, attr = ref.partition(".")

@@ -147,3 +147,41 @@ def test_current_eval_record_can_be_queried(after_s1: Path) -> None:
     assert _dbt(wh, "build").returncode == 0
     for q in generation.queries:
         assert mf_query(wh, q).returncode == 0, q
+
+
+def test_row_count_metric_is_added_to_existing_fact(after_s1: Path) -> None:
+    """既存の fct に、出来事の件数（列の無い count）の指標を足すときは、列を足さずに指標だけを
+    足す（エージェントに任せない。#139）。"""
+    from adp.beam import Aggregation, Availability, Measure, MetricRequest
+
+    wh = after_s1
+    sql_before = (wh / "models/marts/fct_order_lines.sql").read_text(encoding="utf-8")
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+    event.measures.append(
+        Measure(
+            name="line_count",
+            label="明細件数",
+            aggregation=Aggregation.COUNT,
+            availability=Availability.AVAILABLE,
+        )
+    )
+    beam.metrics.append(
+        MetricRequest(
+            name="line_count",
+            label="明細件数",
+            question="q",
+            framed_question="q",
+            event=event.name,
+            measure="line_count",
+            group_by=["store.store_name"],
+        )
+    )
+    info, generation = _generate(wh, beam)
+    assert [t.kind for t in generation.tasks] == []
+    assert {f.path for f in generation.files if f.replaces} == {"models/marts/fct_order_lines.yml"}
+    info.write(generation.files)
+    assert (wh / "models/marts/fct_order_lines.sql").read_text(encoding="utf-8") == sql_before
+    assert _dbt(wh, "build").returncode == 0
+    q = next(q for q in generation.queries if q.metric == "line_count")
+    assert mf_query(wh, q).returncode == 0

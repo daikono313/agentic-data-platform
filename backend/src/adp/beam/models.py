@@ -309,6 +309,12 @@ class Measure(_Base):
         description="定期的な状態（recurring）のイベントのとき、記録からの値の求め方",
     )
 
+    @property
+    def counts_rows(self) -> bool:
+        """出来事の件数（粒度 1 行を 1 件）を数える measure か。count で source の無いもの。
+        fct に列を持たない（中身のない出来事の fact。factless fact。#139）。"""
+        return self.aggregation == Aggregation.COUNT and self.source is None
+
 
 class DegenerateDimension(_Base):
     """dim テーブルを持たない、fct に直接置く識別子（例: 注文番号）。"""

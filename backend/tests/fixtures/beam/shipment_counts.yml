@@ -1,0 +1,67 @@
+schema_version: 1
+name: shipment_counts
+title: 配送方法別の出荷件数
+request: 配送方法ごとの出荷件数を月別に見たい
+events:
+  - name: order_is_shipped
+    table_name: shipments
+    label: 注文が出荷される
+    subject: 店舗
+    verb: 出荷する
+    object: 注文
+    story_type: discrete
+    grain: 出荷 1 件
+    grain_keys: [shipment_id]
+    degenerate_dimensions:
+      - name: shipment_id
+        label: 出荷番号
+        source: {table: raw.shipments, column: shipment_id}
+    source_tables: [raw.shipments]
+    priority: medium
+    impact: medium
+    effort: low
+    measures:
+      # 出来事の件数だけを数える（列を持たない。中身のない出来事の fact。#139）
+      - name: shipment_count
+        label: 出荷件数
+        aggregation: count
+        unit: 件
+        availability: available
+    dimensions:
+      - w: when
+        name: shipped_at
+        label: 出荷日時
+        time_grain: day
+        fact_key: {table: raw.shipments, column: shipped_at}
+      - w: how
+        name: shipping_method
+        label: 配送方法
+        business_key: {table: raw.shipments, column: shipping_method}
+        fact_key: {table: raw.shipments, column: shipping_method}
+        attributes:
+          - name: shipping_method
+            label: 配送方法
+            examples: [express, standard]
+            source: {table: raw.shipments, column: shipping_method}
+            availability: available
+    examples:
+      - values:
+          shipment_id: 1
+          shipped_at: "2025-02-12"
+          shipping_method.shipping_method: express
+      - values:
+          shipment_id: 2
+          shipped_at: "2024-12-23"
+          shipping_method.shipping_method: standard
+metrics:
+  - name: shipment_count
+    label: 出荷件数
+    question: 配送方法ごとの出荷件数を月別に見たい
+    framed_question: 月別・配送方法別の出荷件数は何件か
+    purpose: 配送方法ごとの出荷の量を見て、配送会社との契約を見直す
+    type: simple
+    event: order_is_shipped
+    measure: shipment_count
+    group_by: [shipped_at.month, shipping_method.shipping_method]
+    status: confirmed
+gaps: []
