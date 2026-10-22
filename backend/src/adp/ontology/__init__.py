@@ -12,9 +12,10 @@ from adp.ontology.models import (
     dump,
     load,
 )
-from adp.ontology.render import markdown, mermaid, multiplicity
+from adp.ontology.render import attribute_notes, markdown, mermaid, multiplicity
 
 __all__ = [
+    "attribute_notes",
     "Attribute",
     "KIND_LABELS",
     "Concept",

@@ -27,7 +27,7 @@ const view: OntologyView = {
         source: 'raw.customers',
         key: 'customer_id',
         model: 'dim_customer',
-        attributes: [{ name: 'region', label: '地方', column: 'region', synonyms: ['エリア'] }],
+        attributes: [{ name: 'region', label: '地方', column: 'region' }],
       },
       { name: 'order', label: '注文', domain: 'sales', kind: 'event', source: 'raw.orders', key: 'order_id', attributes: [] },
     ],
@@ -37,7 +37,8 @@ const view: OntologyView = {
   unmapped_sources: ['raw.inventory'],
   unmapped_models: ['dim_date'],
   errors: ['概念 order: キー raw.orders.order_id が無い'],
-  multiplicities: ['顧客 1 : 注文 多、注文には必ず顧客がある'],
+  multiplicities: ['顧客 1 件に注文が複数、注文には必ず顧客がある'],
+  attribute_notes: { 'customer.region': ['説明', '同義語: エリア'] },
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -52,13 +53,23 @@ describe('OntologyScreen', () => {
     expect(screen.getByTestId('concept-order')).toHaveTextContent('未整備')
     expect(screen.getByText(/キャンセルを含む/)).toBeInTheDocument()
     expect(screen.getByRole('table', { name: '関係' })).toHaveTextContent(
-      '顧客注文する注文raw.orders.customer_id顧客 1 : 注文 多、注文には必ず顧客がある',
+      '顧客注文する注文raw.orders.customer_id顧客 1 件に注文が複数、注文には必ず顧客がある',
     )
-    expect(screen.getByTestId('concept-customer')).toHaveTextContent('地方（同義語: エリア）')
+    expect(screen.getByTestId('concept-customer')).toHaveTextContent('地方（説明。同義語: エリア）')
     expect(screen.getByText(/dim_date/)).toBeInTheDocument()
     expect(screen.getByText(/キー raw.orders.order_id が無い/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'raw.inventory（取り込む）' })).toHaveAttribute('href', '?onboard=raw.inventory')
     expect(screen.getByRole('link', { name: /ホーム/ })).toHaveAttribute('href', '/')
+  })
+
+  it('件数の対応・属性の補足が無い応答（古い backend）でも表示する', async () => {
+    const old = { ...view }
+    delete old.multiplicities
+    delete old.attribute_notes
+    vi.spyOn(api, 'ontology').mockResolvedValue(old)
+    render(<OntologyScreen />)
+    expect(await screen.findByRole('table', { name: '関係' })).toHaveTextContent('raw.orders.customer_id-')
+    expect(screen.getByTestId('concept-customer')).toHaveTextContent('地方')
   })
 
   it('読み込めなければエラーを表示する', async () => {

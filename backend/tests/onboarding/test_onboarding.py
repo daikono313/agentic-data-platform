@@ -538,4 +538,4 @@ def test_patch_must_not_duplicate_existing_labels(catalog: Catalog) -> None:
     assert data["relations"], data
     data["relations"][0]["cardinality"] = "one_to_one"
     errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
-    assert [e for e in errors if "1 対 1（one_to_one）なのに" in e], errors
+    assert [e for e in errors if "は 1 件まで（one_to_one）としているのに" in e], errors

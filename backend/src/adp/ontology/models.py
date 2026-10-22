@@ -221,6 +221,18 @@ class Ontology(_Strict):
     def concept(self, name: str) -> Concept:
         return next(c for c in self.concepts if c.name == name)
 
+    def relation_ends(self, r: Relation) -> tuple[Concept, Concept] | None:
+        """関係の (キーを持つ側, via を持つ側)。via は、一方の源泉にある、もう一方のキー
+        （外部キー）。どちらでもなければ None（照合で誤りにする）。件数の対応（cardinality）と、
+        相手が決まっていないことがあるか（optional）は、via を持つ側から見る（#137）。"""
+        table, _, column = r.via.rpartition(".")
+        src, dst = self.concept(r.from_), self.concept(r.to)
+        if table == src.source and column == dst.key:
+            return dst, src
+        if table == dst.source and column == src.key:
+            return src, dst
+        return None
+
     def attribute_at(self, table: str, column: str) -> tuple[Concept, Attribute] | None:
         """源泉の列（<schema>.<table> の column）を属性に持つ概念と、その属性。"""
         for c in self.concepts:
