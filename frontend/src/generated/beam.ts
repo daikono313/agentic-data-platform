@@ -59,6 +59,10 @@ export type W = "who" | "what" | "when" | "where" | "why" | "how";
  */
 export type TimeGrain = "day" | "week" | "month" | "quarter" | "year";
 /**
+ * 具体例の型（typical: 典型 / variant: 別パターン / repeat: 繰り返し / missing: 欠損 / group: グループ）
+ */
+export type ExampleKind = "typical" | "variant" | "repeat" | "missing" | "group";
+/**
  * This interface was referenced by `BEAM`'s JSON-Schema
  * via the `definition` "Level".
  */
@@ -75,6 +79,13 @@ export type GapKind = "data_unavailable" | "unanswered" | "conflict" | "deferred
  * via the `definition` "FactType".
  */
 export type FactType = "transaction" | "periodic_snapshot" | "accumulating_snapshot";
+/**
+ * 具体例（event story）の型（#142）。典型の例のほかに、数え方を確かめる例を集める。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "ExampleKind".
+ */
+export type ExampleKind1 = "typical" | "variant" | "repeat" | "missing" | "group";
 /**
  * This interface was referenced by `BEAM`'s JSON-Schema
  * via the `definition` "LagUnit".
@@ -361,6 +372,11 @@ export interface DegenerateDimension {
  * via the `definition` "EventExample".
  */
 export interface EventExample {
+  kind?: ExampleKind;
+  /**
+   * 典型とどこが違うか（典型なら空でよい）
+   */
+  note?: string;
   /**
    * キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、または When の dimension ref（値は日付・日時の文字列）
    */

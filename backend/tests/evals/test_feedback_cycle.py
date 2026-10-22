@@ -466,6 +466,12 @@ def test_modeling_checks() -> None:
     assert passed({"story_type": "recurring"})
     event.examples = [EventExample(values={}), EventExample(values={})]
     assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
+    # 型の違う具体例（#142）
+    from adp.beam import ExampleKind
+
+    assert not passed({"example_kinds": 2})
+    event.examples[1] = EventExample(kind=ExampleKind.MISSING, note="会員でない", values={})
+    assert passed({"example_kinds": 2}) and not passed({"example_kinds": 3})
     assert not passed("metric_purpose")
     beam.metrics[0].purpose = "販促の計画に使う"
     assert passed("metric_purpose")

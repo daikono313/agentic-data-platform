@@ -747,3 +747,19 @@ def test_stage_and_lag_rules() -> None:
     issues = model.finalize_issues()
     assert any("段階（stage）は、段階を経て進む出来事" in i for i in issues)
     assert any("段階の間の時間（lag）は、段階を経て進む出来事" in i for i in issues)
+
+
+def test_example_kinds(model: BeamModel) -> None:
+    """具体例には型があり、典型が 1 件以上、典型でないものは違いを note に書く（#142）。"""
+    from adp.beam import ExampleKind
+
+    examples = model.events[0].examples
+    assert all(x.kind == ExampleKind.TYPICAL for x in examples)  # 既定は典型
+    examples[0].kind = ExampleKind.MISSING
+    issues = model.finalize_issues()
+    assert any("具体例 1（missing）が典型とどこが違うか" in i for i in issues)
+    examples[0].note = "会員でない顧客"
+    assert not any("どこが違うか" in i for i in model.finalize_issues())
+    for x in examples:
+        x.kind, x.note = ExampleKind.VARIANT, "返品"
+    assert any("典型（kind: typical）の具体例がありません" in i for i in model.finalize_issues())

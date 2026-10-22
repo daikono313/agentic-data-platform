@@ -416,9 +416,30 @@ class Dimension(_Base):
         return self
 
 
+class ExampleKind(StrEnum):
+    """具体例（event story）の型（#142）。典型の例のほかに、数え方を確かめる例を集める。"""
+
+    TYPICAL = "typical"
+    """典型（よくある 1 件）"""
+    VARIANT = "variant"
+    """別パターン（典型と違う区分・経路。例: 店頭受け取り、返品）"""
+    REPEAT = "repeat"
+    """繰り返し（同じ人・ものの 2 回目以降。例: 同じ顧客の再注文）"""
+    MISSING = "missing"
+    """欠損（値の無い項目がある。例: 会員でない顧客、プロモーションなし）"""
+    GROUP = "group"
+    """グループ（1 件に複数が付く、まとめて起きる。例: 1 注文に複数の商品）"""
+
+
 class EventExample(_Base):
     """インタビューで集めた具体例（event story）。unit test の期待値になる。"""
 
+    kind: ExampleKind = Field(
+        default=ExampleKind.TYPICAL,
+        description="具体例の型（typical: 典型 / variant: 別パターン / repeat: 繰り返し / "
+        "missing: 欠損 / group: グループ）",
+    )
+    note: str = Field(default="", description="典型とどこが違うか（典型なら空でよい）")
     values: dict[str, str | int | float | bool | None] = Field(
         description="キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、"
         "または When の dimension ref（値は日付・日時の文字列）"

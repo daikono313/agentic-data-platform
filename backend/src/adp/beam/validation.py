@@ -12,6 +12,7 @@ from adp.beam.models import (
     Additivity,
     Aggregation,
     Availability,
+    ExampleKind,
     FactType,
     GapKind,
     MetricType,
@@ -108,6 +109,15 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
         issues.append(f"{p} 優先度が決まっていません")
     if not event.examples:
         issues.append(f"{p} 具体例がありません（1 件以上聞いて examples に記録してください）")
+    elif all(x.kind != ExampleKind.TYPICAL for x in event.examples):
+        issues.append(
+            f"{p} 典型（kind: typical）の具体例がありません（よくある 1 件を聞いてください）"
+        )
+    for i, x in enumerate(event.examples, 1):
+        if x.kind != ExampleKind.TYPICAL and not x.note.strip():
+            issues.append(
+                f"{p} 具体例 {i}（{x.kind.value}）が典型とどこが違うか（note）を記録してください"
+            )
     if event.table_name is None:
         issues.append(f"{p} fct のテーブル名（table_name）が決まっていません")
 

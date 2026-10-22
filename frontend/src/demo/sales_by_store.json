@@ -429,6 +429,8 @@
         "agg_time_dimension": null,
         "examples": [
           {
+            "kind": "typical",
+            "note": "",
             "values": {
               "order_line_id": 1,
               "customer.membership_rank": "gold",
