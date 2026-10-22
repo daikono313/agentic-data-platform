@@ -28,7 +28,6 @@ ROLE_LABELS: dict[str, str] = {"descriptive": "説明", "numeric": "数値", "te
 Cardinality = Literal["one_to_one", "one_to_many"]
 """関係の多重度。キーを持つ側の概念の 1 件に、関係の列（via）を持つ側の概念が 1 件までか、複数か
 （#137）。"""
-CARDINALITY_LABELS: dict[str, str] = {"one_to_one": "1 対 1", "one_to_many": "1 対多"}
 
 
 def model_prefix(kind: str) -> str:
@@ -207,6 +206,11 @@ class Ontology(_Strict):
                 raise ValueError(
                     f"属性 {ref} の same_as {a.same_as} は正本ではない（same_as を持つ）"
                 )
+            if a.synonyms or a.role:
+                raise ValueError(
+                    f"属性 {ref} は same_as で {a.same_as} を正本にしているので、同義語・役割は"
+                    "正本のほうに書く"
+                )
             if target.label != a.label:
                 raise ValueError(
                     f"属性 {ref} のラベル「{a.label}」が、same_as の {a.same_as}"
@@ -245,20 +249,22 @@ class Ontology(_Strict):
         return text == attr.label or text.startswith(f"{attr.label}（")
 
     def duplicate_labels(self) -> list[str]:
-        """同じラベルなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。#137）。
+        """ラベルか同義語が同じなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。
+        #137）。
 
-        同じものなら same_as で正本を示し、違うものならラベルを分ける（居住地方・所在地方など）。"""
+        同じものなら same_as で正本を示し、違うものなら言葉を分ける（居住地方・所在地方など）。"""
+        return [duplicate_message(w, refs) for w, refs in self.duplicate_words().items()]
+
+    def duplicate_words(self) -> dict[str, list[str]]:
+        """ラベルか同義語が同じなのに same_as で結ばれていない属性（言葉 → `<概念>.<属性>` の
+        並び）。duplicate_labels の元。取り込みの検証は、追加案の概念が入っているかをこれで見る。
+        """
         groups: dict[str, set[str]] = {}
         for c in self.concepts:
             for a in c.attributes:
                 for word in [a.label, *(a.synonyms or [])]:
                     groups.setdefault(word, set()).add(a.same_as or f"{c.name}.{a.name}")
-        return [
-            f"言葉「{word}」（ラベルか同義語）の属性が別々に定義されている（{'、'.join(sorted(refs))}）。"
-            "同じものなら片方に same_as で正本を書き、違うものなら言葉を分ける"
-            for word, refs in groups.items()
-            if len(refs) > 1
-        ]
+        return {word: sorted(refs) for word, refs in groups.items() if len(refs) > 1}
 
     def word_mismatch(self, table: str, column: str, label: str) -> str | None:
         """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
@@ -276,6 +282,14 @@ class Ontology(_Strict):
             f"{table}.{column} は、オントロジーでは「{concept.label}」の属性 {attr.name}"
             f"「{attr.label}」です{synonym}。ラベルを「{attr.label}」にしてください"
         )
+
+
+def duplicate_message(word: str, refs: list[str]) -> str:
+    """業務の言葉の二重定義（Ontology.duplicate_words の 1 組）の説明。"""
+    return (
+        f"言葉「{word}」（ラベルか同義語）の属性が別々に定義されている（{'、'.join(refs)}）。"
+        "同じものなら片方に same_as で正本を書き、違うものなら言葉を分ける"
+    )
 
 
 def link_models(

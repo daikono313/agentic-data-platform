@@ -14,11 +14,12 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import duckdb
 from pydantic import BaseModel
 
+from adp.catalog.types import column_kind
 from adp.yaml_docs import load_yaml_docs, named
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -604,7 +605,8 @@ class Catalog:
 
     def count_multi_valued(self, table: str, column: str, depends_on: str) -> int:
         """column の値のうち、depends_on の値が 2 つ以上あるものの数（階層の照合。子の値ごとに親の
-        値は 1 つ。#137）。空の値は数えない。"""
+        値は 1 つ。#137）。子が空の行は見ない。親の空は 1 つの値として数える（同じ子に、親のある行と
+        空の行があれば食い違い）。"""
         schema, name = self._resolve(table)
         for c in (column, depends_on):
             if not _IDENT.match(c):
@@ -615,8 +617,8 @@ class Catalog:
                 _scalar(
                     con,
                     f"select count(*) from (select {child} from {_table(schema, name)}"
-                    f" where {child} is not null and {parent} is not null"
-                    f" group by {child} having count(distinct {parent}) > 1)",
+                    f" where {child} is not null group by {child}"
+                    f" having count(distinct {parent}) + max(({parent} is null)::int) > 1)",
                 )
             )
 
@@ -683,43 +685,15 @@ def _profile(
         profile.masked = True
         return profile
     if detail and total > nulls:
-        kind = type_kind(column.data_type)
+        kind = column_kind(column.data_type)
         try:
-            if kind == "temporal":
+            if kind in ("timestamp", "date"):
                 profile.monthly = _monthly(con, q, col)
-            elif kind == "numeric":
+            elif kind == "number":
                 profile.histogram = _histogram(con, q, col)
         except duckdb.Error:  # 図が作れなくても、プロファイル全体は返す
             pass
     return profile
-
-
-_NUMERIC = (
-    "UTINYINT",
-    "USMALLINT",
-    "UHUGEINT",
-    "TINYINT",
-    "SMALLINT",
-    "INTEGER",
-    "BIGINT",
-    "HUGEINT",
-    "DOUBLE",
-    "FLOAT",
-    "REAL",
-    "DECIMAL",
-    "UBIGINT",
-    "UINTEGER",
-)
-
-
-def type_kind(data_type: str) -> Literal["temporal", "numeric"] | None:
-    """列の型の種類。日付・日時なら temporal、数値なら numeric、それ以外（文字列など）は None。"""
-    kind = data_type.upper()
-    if kind == "DATE" or kind.startswith("TIMESTAMP"):
-        return "temporal"
-    if kind.startswith(_NUMERIC):
-        return "numeric"
-    return None
 
 
 def _monthly(con: duckdb.DuckDBPyConnection, q: str, col: str) -> list[tuple[str, int]] | None:

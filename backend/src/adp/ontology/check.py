@@ -7,7 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from adp.catalog.catalog import Catalog, type_kind
+from adp.catalog.catalog import Catalog
+from adp.catalog.types import column_kind
 from adp.ontology.models import ROLE_LABELS, Concept, Ontology, Relation
 from adp.yaml_docs import load_yaml_docs, named
 
@@ -102,9 +103,9 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
             if not has_column(c.source, a.column):
                 errors.append(f"概念 {c.name} の属性 {a.name}: 列 {c.source}.{a.column} が無い")
                 continue
-            # 役割は列の型と照合する。文字列などの型からは役割が分からないので見ない
-            kind = type_kind(columns[c.source][a.column])
-            if a.role in ("numeric", "temporal") and kind not in (None, a.role):
+            # 役割は列の型と照合する。文字列の列は（クレンジングで型を変えることがあり）見ない
+            kind = column_kind(columns[c.source][a.column])
+            if a.role in _ROLE_KINDS and kind != "text" and kind not in _ROLE_KINDS[a.role]:
                 errors.append(
                     f"概念 {c.name} の属性 {a.name}: 役割が{ROLE_LABELS[a.role]}（{a.role}）"
                     f"なのに、列 {c.source}.{a.column} の型は {columns[c.source][a.column]}"
@@ -186,6 +187,10 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
         unmapped_models=unmapped_models,
         unmodeled_attributes=unmodeled,
     )
+
+
+_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timestamp", "date"}}
+"""役割 → それに合う列の型の種類（column_kind）。説明（descriptive）はどの型でもよい。"""
 
 
 def _multiplicity_mismatches(catalog: Catalog, r: Relation, table: str, column: str) -> list[str]:

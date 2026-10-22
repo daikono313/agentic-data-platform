@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from adp.markdown import cell, mermaid_label
 from adp.ontology.models import (
-    CARDINALITY_LABELS,
     KIND_LABELS,
     ROLE_LABELS,
     Attribute,
@@ -88,11 +87,15 @@ def _attribute(a: Attribute, c: Concept, labels: dict[str, str]) -> str:
     return f"{a.label}（{'。'.join(notes)}）"
 
 
-def _multiplicity(r: Relation) -> str:
-    """関係の多重度の表示（未確認なら -）。"""
+def _multiplicity(r: Relation, ontology: Ontology) -> str:
+    """関係の多重度の表示（例: 顧客 1 : 注文 多。未確認なら -）。via を持つ側が「多」の側。"""
     parts = []
     if r.cardinality is not None:
-        parts.append(CARDINALITY_LABELS[r.cardinality])
+        table = r.via.rpartition(".")[0]
+        src, dst = ontology.concept(r.from_), ontology.concept(r.to)
+        one, many = (dst, src) if table == src.source and src.source != dst.source else (src, dst)
+        n = "1" if r.cardinality == "one_to_one" else "多"
+        parts.append(f"{one.label} 1 : {many.label} {n}")
     if r.optional is not None:
         parts.append("相手が無いことがある" if r.optional else "必ず相手がある")
     return "、".join(parts) or "-"
@@ -135,16 +138,16 @@ def markdown(ontology: Ontology) -> str:
             "",
             "## 関係",
             "",
-            "多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。",
+            "多重度は、キーを持つ側の 1 件に対する、列（via）を持つ側の件数。"
+            "「相手が無いことがある」は、列を持つ側に相手の無い行がありうること。",
             "",
             "| から | 関係 | へ | 列 | 多重度 |",
             "|---|---|---|---|---|",
         ]
         for r in ontology.relations:
             ends = (cell(labels[r.from_]), cell(labels[r.to]))
-            out.append(
-                f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` | {cell(_multiplicity(r))} |"
-            )
+            many = cell(_multiplicity(r, ontology))
+            out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` | {many} |")
     if ontology.constraints:
         out += ["", "## 制約", "", "| 概念 | 制約 |", "|---|---|"]
         for x in ontology.constraints:

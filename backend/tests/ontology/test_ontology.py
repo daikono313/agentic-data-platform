@@ -523,6 +523,13 @@ def test_hierarchy_parent_is_checked_against_data(tmp_path: Path) -> None:
     con.close()
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
     assert "階層の親 region の値が 2 つ以上ある都道府県が 1 件" in error
+    # 親が空の行も 1 つの値として数える（大阪府に、近畿の行と空の行がある）
+    con = duckdb.connect(str(db))
+    con.execute("delete from raw.customers where customer_id = 5")
+    con.execute("insert into raw.customers values (6, '大阪府', null)")
+    con.close()
+    [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
+    assert "都道府県が 1 件" in error
 
     data["concepts"][0]["attributes"][1]["parent"] = "prefecture"
     with pytest.raises(ValidationError, match="循環"):
@@ -556,6 +563,16 @@ def test_role_is_checked_against_column_type(tmp_path: Path) -> None:
     data["concepts"][0]["attributes"][1]["role"] = "temporal"
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
     assert "役割が時刻（temporal）なのに、列 raw.customers.points の型は INTEGER" in error
+    # 文字列以外で役割の分からない型（真偽値など）は、数値・時刻と食い違う
+    con = duckdb.connect(str(db))
+    con.execute("alter table raw.customers add column active boolean")
+    con.close()
+    data["concepts"][0]["attributes"][1]["role"] = "numeric"
+    data["concepts"][0]["attributes"].append(
+        {"name": "active", "label": "有効", "column": "active", "role": "numeric"}
+    )
+    [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
+    assert "列 raw.customers.active の型は BOOLEAN" in error
 
 
 def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
@@ -573,7 +590,7 @@ def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
 
     relation |= {"cardinality": "one_to_many", "optional": False}
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
-    assert "1 対多、必ず相手がある" in markdown(Ontology.model_validate(data))
+    assert "| 顧客 1 : 注文 多、必ず相手がある |" in markdown(Ontology.model_validate(data))
 
     relation["cardinality"] = "one_to_one"
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
@@ -591,17 +608,78 @@ def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
 
 
-def test_new_fields_are_not_written_when_unset() -> None:
+def test_new_fields_round_trip_and_are_omitted_when_unset(tmp_path: Path) -> None:
     """未確認の項目（役割・階層・同義語・多重度）は、書き直しても yml に出さない（取り込みと生成が
-    正本を書き直すので、差分を増やさない）。"""
-    text = dump(Ontology.model_validate(_data()))
+    正本を書き直すので、差分を増やさない）。値があれば、書き直し（link_models）の後も残る。"""
+    from adp.ontology.models import link_models
+
+    body = dump(Ontology.model_validate(_data())).split("version: 1", 1)[1]
     for key in ("role:", "parent:", "synonyms:", "cardinality:", "optional:"):
-        assert (
-            f"  {key}" not in text.split("relations:", 1)[1]
-            if key
-            in (
-                "cardinality:",
-                "optional:",
-            )
-            else f"    {key}" not in text
-        )
+        assert key not in body
+
+    data = _data()
+    del data["concepts"][0]["model"]
+    data["concepts"][0]["attributes"] = [
+        {
+            "name": "region",
+            "label": "地方",
+            "column": "region",
+            "role": "descriptive",
+            "synonyms": ["エリア"],
+        },
+        {"name": "prefecture", "label": "都道府県", "column": "prefecture", "parent": "region"},
+    ]
+    data["relations"][0] |= {"cardinality": "one_to_many", "optional": True}
+    linked, names = link_models(
+        Ontology.model_validate(data), [("raw.customers", "dim_customer", "entity")]
+    )
+    assert names == ["customer"]
+    path = tmp_path / "o.yml"
+    path.write_text(dump(linked), encoding="utf-8")
+    again = load(path)
+    assert again == linked
+    assert again.concepts[0].attributes[0].synonyms == ["エリア"]
+    assert again.concepts[0].attributes[1].parent == "region"
+    assert again.relations[0].optional is True
+
+
+def test_same_as_attribute_inherits_synonyms_and_role() -> None:
+    """same_as の属性には同義語・役割を書かない（正本のものを使う。写しとずれないように）。"""
+    data = _data()
+    data["concepts"][1]["attributes"] = [
+        {
+            "name": "area",
+            "label": "地方",
+            "column": "region",
+            "same_as": "customer.region",
+            "synonyms": ["エリア"],
+        }
+    ]
+    with pytest.raises(ValidationError, match="同義語・役割は正本のほうに書く"):
+        Ontology.model_validate(data)
+
+
+def test_multiplicity_direction_follows_the_column() -> None:
+    """via を持つ側が「多」。via が from 側の源泉にあれば、to がキーを持つ側
+    （店舗 1 : 注文 多）。"""
+    data = _data()
+    data["concepts"].append(
+        {
+            "name": "store",
+            "label": "店舗",
+            "domain": "sales",
+            "kind": "entity",
+            "source": "raw.stores",
+            "key": "store_id",
+        }
+    )
+    data["relations"] = [
+        {
+            "from": "order",
+            "to": "store",
+            "verb": "受け付けられる",
+            "via": "raw.orders.store_id",
+            "cardinality": "one_to_many",
+        }
+    ]
+    assert "| 店舗 1 : 注文 多 |" in markdown(Ontology.model_validate(data))
