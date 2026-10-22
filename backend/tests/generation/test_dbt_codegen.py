@@ -396,3 +396,50 @@ def test_generated_tests_catch_broken_sql(tmp_path: Path) -> None:
     sql_path.write_text(original.replace("{{ dim_key('t1.promotion_id') }}", "t1.promotion_id"))
     broken = _dbt(warehouse, "test", "--select", "test_type:unit")
     assert broken.returncode != 0, "キーの誤りを unit test が検出できていない"
+
+
+def test_periodic_snapshot_builds_and_matches_reference(tmp_path: Path) -> None:
+    """定期的な状態（月末在庫）の fct を生成し、手で書いたリファレンスと一致する（ADR 0008）。
+
+    在庫の記録は増減（入庫・移動出庫・廃棄）と棚卸（数えた数）が混ざる。増減を積み上げ、棚卸で
+    数えた数に置き換え、記録の無い月は前の月の値を引き継ぐ。
+    """
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "stock_levels.yml")
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    generation = generate_models(design, info, beam)
+    assert [f.path for f in generation.files] == [
+        "models/marts/fct_stock_levels.sql",
+        "models/marts/fct_stock_levels.yml",
+        "tests/assert_fct_stock_levels_reconciles_with_source.sql",
+    ]
+    info.write(generation.files)
+    ref_sql = (FIXTURES / "generation/reference/fct_stock_levels.sql").read_text(encoding="utf-8")
+    (warehouse / "models/marts/ref_fct_stock_levels.sql").write_text(ref_sql, encoding="utf-8")
+
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+    # 生成したテスト（3 か月の履歴の unit test・期間の途切れと棚卸の値の突合）が実行されている
+    assert "test_fct_stock_levels_example_1" in result.stdout
+    assert "assert_fct_stock_levels_reconciles_with_source" in result.stdout
+
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    columns = "store_key, product_key, snapshot_on, stock_qty"
+    assert con.sql("select count(*) from main.fct_stock_levels").fetchone() != (0,)
+    for a, b in (
+        ("fct_stock_levels", "ref_fct_stock_levels"),
+        ("ref_fct_stock_levels", "fct_stock_levels"),
+    ):
+        diff = con.sql(f"select {columns} from main.{a} except select {columns} from main.{b}")
+        assert diff.fetchall() == [], f"{a} にだけある行があります"
+    con.close()
+
+    # 月末在庫を月別に取れる（MetricFlow は区切りごとに期間の最後の日の値だけを足す）
+    [q] = generation.queries
+    assert q.group_by == ["metric_time__month", "store__store_name", "product__category"]
+    query = mf_query(warehouse, q)
+    assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
+    assert conventions_violations(warehouse) == []

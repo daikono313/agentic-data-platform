@@ -77,11 +77,17 @@ export interface OntologyConcept {
   name: string
   label: string
   domain: string
-  kind: 'entity' | 'event'
+  kind: 'entity' | 'event' | 'state'
   source: string
   key: string
   model?: string
   attributes: { name: string; label: string; column: string }[]
+}
+/** 概念の種類の表示名（backend の adp.ontology.KIND_LABELS と同じ） */
+export const KIND_LABELS: Record<OntologyConcept['kind'], string> = {
+  entity: 'もの・人',
+  event: '出来事',
+  state: '状態',
 }
 export interface OntologyView {
   mermaid: string

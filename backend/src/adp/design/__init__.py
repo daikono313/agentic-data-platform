@@ -11,6 +11,7 @@ from adp.design.models import (
     IssueSeverity,
     Join,
     PhysicalDesign,
+    SnapshotDesign,
     SourceTable,
 )
 
@@ -26,6 +27,7 @@ __all__ = [
     "Join",
     "PhysicalDesign",
     "SchemaInfo",
+    "SnapshotDesign",
     "SourceTable",
     "er_diagram",
 ]

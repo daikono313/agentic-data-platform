@@ -251,17 +251,58 @@ def test_base_table_is_the_finest_regardless_of_order(beam: BeamModel) -> None:
     assert design.facts[0].base.table == "raw.order_items"
 
 
-def test_duplicate_columns_and_periodic_snapshot_are_blockers(beam: BeamModel) -> None:
-    from adp.beam import StoryType
-
+def test_duplicate_columns_are_blockers(beam: BeamModel) -> None:
     event = beam.events[0]
     event.measures[0] = event.measures[0].model_copy(update={"name": "order_id"})
     design = DesignBuilder(FakeSchema()).build(beam)
     assert any("order_id が重複" in i.message for i in design.blockers)
 
+
+def test_periodic_snapshot_design(beam: BeamModel) -> None:
+    """定期的な状態の fct は、区切り × 期間の終わりの日付と、値の求め方を持つ（ADR 0008）。"""
+    from adp.beam import MetricFilter, StateMethod, StateSpec, StoryType, TimeGrain
+    from adp.design.builder import SNAPSHOT_TIME_COLUMN
+
+    event = beam.events[0]
     event.story_type = StoryType.RECURRING
+    # 記録 1 件の番号を粒度にした状態は作れない
     design = DesignBuilder(FakeSchema()).build(beam)
-    assert any("定期スナップショット" in i.message for i in design.blockers)
+    assert any("区切り（店舗 × 商品など）× 時点" in i.message for i in design.blockers)
+
+    event.grain_keys = ["store", "product", "date"]
+    event.dimensions[[d.ref for d in event.dimensions].index("date")].time_grain = TimeGrain.MONTH
+    for m in event.measures:
+        m.state = StateSpec(method=StateMethod.LAST_VALUE)
+    quantity = event.measure("quantity")
+    assert quantity is not None
+    reset = {"ref": "order_status.order_status", "operator": "in", "values": ["completed"]}
+    quantity.state = StateSpec(
+        method=StateMethod.RUNNING_TOTAL, reset=[MetricFilter.model_validate(reset)]
+    )
+    # 区分（注文ステータス）は記録 1 件ごとの項目なので、状態の指標の絞り込みには使えない
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("記録 1 件ごとの項目" in i.message for i in design.blockers)
+    for metric in beam.metrics:
+        metric.filters = []
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert design.blockers == []
+    [fact] = design.facts
+    assert fact.snapshot is not None
+    assert fact.grain_columns == ["store_key", "product_key", SNAPSHOT_TIME_COLUMN]
+    assert fact.agg_time_column == SNAPSHOT_TIME_COLUMN
+    assert fact.snapshot.grain == TimeGrain.MONTH
+    assert fact.snapshot.recorded_at == "t1.ordered_at"
+    # 記録 1 件ごとの列（日時・注文番号・区分）は持たない。区分は置き換える行の条件にだけ使う
+    names = [c.name for c in fact.columns]
+    assert "ordered_at" not in names and "order_id" not in names and "order_status" not in names
+    assert fact.snapshot.methods["quantity"] == StateMethod.RUNNING_TOTAL
+    assert fact.snapshot.resets == {"quantity": "(t1.order_status in ('completed'))"}
+
+    # 時点（When）が 2 つあると、どちらの時点の状態か決まらない
+    date = next(d for d in event.dimensions if d.ref == "date")
+    event.dimensions.append(date.model_copy(update={"name": "shipped", "role": None}))
+    design = DesignBuilder(FakeSchema()).build(beam)
+    assert any("時点（When）を 1 つ" in i.message for i in design.blockers)
 
 
 def test_metric_group_by_must_exist_in_design(beam: BeamModel) -> None:

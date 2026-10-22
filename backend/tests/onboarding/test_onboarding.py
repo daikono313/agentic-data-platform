@@ -131,12 +131,16 @@ def test_link_models() -> None:
     )
     onto = apply(ONTOLOGY, patch)
     linked, names = link_models(
-        onto, [("raw.inventory", "fct_inventory_movements"), ("raw.stores", "dim_other")]
+        onto,
+        [
+            ("raw.inventory", "fct_inventory_movements", "event"),
+            ("raw.stores", "dim_other", "entity"),
+        ],
     )
     assert names == ["inventory"]  # 既にモデルのある概念（store）は変えない
     assert linked.concept("inventory").model == "fct_inventory_movements"
     assert linked.concept("store").model == "dim_store"
-    assert link_models(onto, [("raw.inventory", "dim_x")])[1] == []  # 種類と接頭辞が合わない
+    assert link_models(onto, [("raw.inventory", "dim_x", "entity")])[1] == []  # 種類が合わない
 
 
 def test_design_blocks_dimension_that_conflicts_with_ontology(catalog: Catalog) -> None:
@@ -229,8 +233,17 @@ def test_link_models_picks_model_by_kind() -> None:
         }
     )
     onto = apply(ONTOLOGY, patch)
-    linked, names = link_models(onto, [("raw.inventory", "fct_inv"), ("raw.inventory", "dim_inv")])
+    linked, names = link_models(
+        onto, [("raw.inventory", "fct_inv", "event"), ("raw.inventory", "dim_inv", "entity")]
+    )
     assert names == ["inventory"] and linked.concept("inventory").model == "fct_inv"
+    # 同じ源泉の出来事と状態の概念は、fct の種類（出来事か定期スナップショットか）で選ぶ
+    state = linked.concept("inventory")
+    assert state is not None
+    level = state.model_copy(update={"name": "stock_level", "kind": "state", "model": None})
+    onto = onto.model_copy(update={"concepts": [*onto.concepts, level]})
+    linked, names = link_models(onto, [("raw.inventory", "fct_stock_levels", "state")])
+    assert names == ["stock_level"] and linked.concept("inventory").model is None
 
 
 def test_link_models_keeps_one_concept_per_model() -> None:
@@ -239,10 +252,10 @@ def test_link_models_keeps_one_concept_per_model() -> None:
     assert line is not None and line.model == "fct_order_lines"
     extra = line.model_copy(update={"name": "order_line_pipeline", "model": None})
     onto = ONTOLOGY.model_copy(update={"concepts": [*ONTOLOGY.concepts, extra]})
-    linked, names = link_models(onto, [("raw.order_items", "fct_order_lines")])
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_lines", "event")])
     assert names == [] and linked.concept("order_line_pipeline").model is None
     # 新しい名前の fct なら、モデルの無い概念に書き込む
-    linked, names = link_models(onto, [("raw.order_items", "fct_order_pipelines")])
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_pipelines", "event")])
     assert names == ["order_line_pipeline"]
 
 

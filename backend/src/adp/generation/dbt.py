@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 import yaml
 
-from adp.beam import BeamModel
+from adp.beam import BeamModel, StateMethod, TimeGrain
 from adp.catalog.types import is_text_type
 from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_spec, spec_path
 from adp.cleansing.render import SourceColumn
@@ -261,17 +261,29 @@ def fact_files(
     has_date_entity: bool = False,
     info: WarehouseInfo | None = None,
 ) -> tuple[list[GeneratedFile], list[MetricQuery]]:
-    from adp.generation.tests import fact_column_tests, reconciliation_test, unit_test
+    from adp.generation.tests import (
+        fact_column_tests,
+        reconciliation_test,
+        snapshot_reconciliation_test,
+        snapshot_unit_test,
+        unit_test,
+    )
 
     extra = fact_column_tests(fact, info) if info else {}
-    sql = (
+    head = (
         f"-- adp により生成\n-- 元イベント: {fact.label}（{fact.fact_type.value}）\n"
         f"-- 粒度: {fact.grain}\n"
-        + _select([(c.name, c.expr) for c in fact.columns])
-        + "\n"
-        + _from_clause(fact.base, fact.joins)
-        + "\n"
     )
+    if fact.snapshot is not None:
+        sql = head + periodic_snapshot_sql(fact, info)
+    else:
+        sql = (
+            head
+            + _select([(c.name, c.expr) for c in fact.columns])
+            + "\n"
+            + _from_clause(fact.base, fact.joins)
+            + "\n"
+        )
     event = beam.event(fact.event) if beam else None
     col_sem = fact_semantics(fact, event) if event else {}
     columns: list[dict[str, Any]] = []
@@ -317,14 +329,173 @@ def fact_files(
         ]
     unit_tests: list[dict[str, Any]] = []
     if beam is not None and event is not None and info is not None:
+        make_unit_test = snapshot_unit_test if fact.snapshot is not None else unit_test
         for i, example in enumerate(event.examples):
-            if (ut := unit_test(beam, fact, info, example, i)) is not None:
+            if (ut := make_unit_test(beam, fact, info, example, i)) is not None:
                 unit_tests.append(ut)
     return [
         GeneratedFile(f"models/marts/{fact.name}.sql", sql),
         GeneratedFile(f"models/marts/{fact.name}.yml", _yaml([model], top_metrics, unit_tests)),
-        reconciliation_test(fact),
+        snapshot_reconciliation_test(fact, info)
+        if fact.snapshot is not None
+        else reconciliation_test(fact),
     ], queries
+
+
+_PERIOD_LENGTH = {
+    TimeGrain.WEEK: "7 day",
+    TimeGrain.MONTH: "1 month",
+    TimeGrain.QUARTER: "3 month",
+    TimeGrain.YEAR: "1 year",
+}
+
+
+def period_end(expr: str, grain: TimeGrain) -> str:
+    """日時の式を、その期間（週・月など）の終わりの日付にする（DuckDB。週は月曜始まり）。"""
+    if grain == TimeGrain.DAY:
+        return f"cast({expr} as date)"
+    trunc = "week" if grain == TimeGrain.WEEK else grain.value
+    return (
+        f"cast(date_trunc('{trunc}', {expr}) + interval {_PERIOD_LENGTH[grain]}"
+        " - interval 1 day as date)"
+    )
+
+
+def snapshot_order_key(fact: FactTable, info: WarehouseInfo | None) -> str:
+    """同じ時刻の記録を並べる順の列（源泉の主キー。分からなければ null）。"""
+    pk = info.source_primary_key(fact.base.table) if info else None
+    return f"{fact.base.alias}.{pk}" if pk else "null"
+
+
+def snapshot_order(fact: FactTable, descending: bool = False) -> str:
+    """records の記録を並べる順。時刻 → 源泉の主キー → measure と置き換える行の印。
+
+    主キーが分からなくても順が実行ごとに変わらないよう、値に使う列すべてで並べる（すべて同じ
+    行は、どの順でも結果が同じ）。生成した fct と突合テストで同じ順を使う。"""
+    snap = fact.snapshot
+    assert snap is not None
+    cols = ["recorded_at", "record_order", *snap.methods]
+    cols += [f"{m}__is_reset" for m in snap.resets]
+    return "order by " + ", ".join(f"{c} desc" if descending else c for c in cols)
+
+
+def snapshot_records(fact: FactTable, info: WarehouseInfo | None) -> str:
+    """記録ごとの区切りの列・期間の終わりの日付・時刻・順・measure・置き換える行の印の SELECT。
+
+    置き換える行でも measure が NULL なら置き換えない（数えた数の無い棚卸は記録として使わない）。
+    """
+    from adp.generation.tests import snapshot_partition
+
+    snap = fact.snapshot
+    assert snap is not None
+    cols = {c.name: c for c in fact.columns}
+    records = [(n, cols[n].expr) for n in snapshot_partition(fact)]
+    records += [
+        (snap.time_column, period_end(snap.recorded_at, snap.grain)),
+        ("recorded_at", snap.recorded_at),
+        ("record_order", snapshot_order_key(fact, info)),
+    ]
+    records += [(m, cols[m].expr) for m in snap.methods]
+    records += [
+        (f"{m}__is_reset", f"coalesce({cond}, false) and {cols[m].expr} is not null")
+        for m, cond in snap.resets.items()
+    ]
+    return _select(records) + "\n" + _from_clause(fact.base, fact.joins)
+
+
+def periodic_snapshot_sql(fact: FactTable, info: WarehouseInfo | None) -> str:
+    """定期スナップショットの fct の SQL（ADR 0008）。決まった形で作り、LLM には書かせない。
+
+    1. records: 記録ごとに、区切りの列・期間の終わりの日付・measure・置き換える行の印を取る
+    2. sequenced: 区切りごとに時刻（同じ時刻は源泉の主キー）の順に並べ、置き換えた回数を数える
+    3. states: 記録の時点の値（last_value はその値、running_total は積み上げ。置き換える行が
+       あれば、その行から積み直し、最初のその行より前は値を出さない）
+    4. periods: 期間ごとに最後の記録の値
+    5. grid: 区切りごとに、最初の値のある期間から最後の期間までの期間の終わりの日付（dim_date）
+    6. 記録の無い期間は、前の期間の値を引き継ぐ
+    """
+    from adp.generation.tests import snapshot_partition
+
+    snap = fact.snapshot
+    assert snap is not None
+    measures = [c for c in fact.columns if c.name in snap.methods]
+    p_names = snapshot_partition(fact)
+    by = f"partition by {', '.join(p_names)} " if p_names else ""
+
+    def by_reset(measure: str) -> str:
+        return f"partition by {', '.join([*p_names, f'{measure}__resets'])} "
+
+    order = snapshot_order(fact)
+    running = "rows between unbounded preceding and current row"
+    sequenced = [
+        f"        row_number() over ({by}{order}) as record_seq",
+        *(
+            f"        sum(case when {m}__is_reset then 1 else 0 end) over ({by}{order} {running})"
+            f" as {m}__resets"
+            for m in snap.resets
+        ),
+    ]
+    states: list[str] = []
+    for c in measures:
+        method = snap.methods[c.name]
+        if method == StateMethod.LAST_VALUE:
+            states.append(f"        {c.name}")
+        elif c.name in snap.resets:
+            states.append(
+                f"        case when {c.name}__resets > 0 then sum({c.name}) over"
+                f" ({by_reset(c.name)}order by record_seq {running}) end as {c.name}"
+            )
+        else:
+            states.append(
+                f"        sum({c.name}) over ({by}order by record_seq {running}) as {c.name}"
+            )
+    keys = ", ".join([*p_names, snap.time_column])
+    periods = [
+        f"        arg_max({c.name}, record_seq) filter (where {c.name} is not null) as {c.name}"
+        for c in measures
+    ]
+    having = " or ".join(f"count({c.name}) > 0" for c in measures)
+    join = " and ".join(
+        [f"grid.{n} is not distinct from periods.{n}" for n in p_names]
+        + [f"grid.{snap.time_column} = periods.{snap.time_column}"]
+    )
+    grid_by = f"partition by {', '.join(f'grid.{n}' for n in p_names)} " if p_names else ""
+    final = [f"    grid.{n}" for n in [*p_names, snap.time_column]]
+    final += [
+        f"    last_value(periods.{c.name} ignore nulls) over"
+        f" ({grid_by}order by grid.{snap.time_column} {running}) as {c.name}"
+        for c in measures
+    ]
+    start_cols = "".join(f"{n}, " for n in p_names)
+    group = f"\n    group by {', '.join(p_names)}" if p_names else ""
+    return (
+        "-- 状態の値（ADR 0008）: 区切りごとに記録を時刻の順にたどり、期間の終わりの値にする。"
+        "記録の無い期間は前の期間の値を引き継ぐ\n"
+        "with records as (\n"
+        + "\n".join("    " + line for line in snapshot_records(fact, info).splitlines())
+        + "\n),\n\nsequenced as (\n    select\n        *,\n"
+        + ",\n".join(sequenced)
+        + "\n    from records\n),\n\nstates as (\n    select\n"
+        + "".join(f"        {n},\n" for n in p_names)
+        + f"        {snap.time_column},\n        record_seq,\n"
+        + ",\n".join(states)
+        + "\n    from sequenced\n),\n\nperiods as (\n    select\n"
+        + "".join(f"        {n},\n" for n in [*p_names, snap.time_column])
+        + ",\n".join(periods)
+        + f"\n    from states\n    group by {keys}\n    having {having}\n),\n\n"
+        "spine as (\n"
+        f"    select date_day as {snap.time_column}\n"
+        "    from {{ ref('dim_date') }}\n"
+        f"    where date_day = {period_end('date_day', snap.grain)}\n"
+        f"        and date_day <= (select max({snap.time_column}) from periods)\n),\n\n"
+        "starts as (\n"
+        f"    select {start_cols}min({snap.time_column}) as first_on\n"
+        f"    from periods{group}\n),\n\n"
+        "grid as (\n"
+        "    select " + "".join(f"starts.{n}, " for n in p_names) + f"spine.{snap.time_column}\n"
+        f"    from starts\n    inner join spine on spine.{snap.time_column} >= starts.first_on\n"
+        ")\n\nselect\n" + ",\n".join(final) + f"\nfrom grid\nleft join periods on {join}\n"
+    )
 
 
 def _extend_existing_fact(
@@ -337,8 +508,10 @@ def _extend_existing_fact(
     既存の列・指標は変えない。
     """
     model_file = getattr(info, "model_file", None)
-    if model_file is None:
-        return None
+    if model_file is None or fact.snapshot is not None:
+        return (
+            None  # 定期スナップショットの SQL は、列を足すと作り直しになる（エージェントに任せる）
+        )
     yml, sql = model_file(fact.name, ".yml"), model_file(fact.name, ".sql")
     if yml is None or sql is None:
         return None
@@ -512,6 +685,19 @@ def generate_models(
                 result.reused.append(fact.name)
                 result.files += files
                 result.queries += queries
+                continue
+            if fact.snapshot is not None:
+                # 状態の SQL は決まった形でしか作らない（ADR 0008）。記録 1 件の式は渡さない
+                result.tasks.append(
+                    AgentTask(
+                        kind="fact_exists",
+                        target=fact.name,
+                        instruction=f"{fact.name} は既に存在する定期スナップショット（状態）の"
+                        " fct。SQL は変更しない。この要求の指標を、既存の measure の列だけを"
+                        "使って既存の semantic model に追加する。必要な列が無ければ追加せず、"
+                        "人に渡す",
+                    )
+                )
                 continue
             result.tasks.append(
                 AgentTask(

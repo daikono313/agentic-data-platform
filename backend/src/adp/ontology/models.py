@@ -13,6 +13,18 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+ConceptKind = Literal["entity", "event", "state"]
+"""概念の種類。entity（もの・人・場所。dim の候補）、event（出来事。fact の候補）、state（定期的に
+測る状態。periodic snapshot の fact の候補。ADR 0008）。"""
+KIND_LABELS: dict[str, str] = {"entity": "もの・人", "event": "出来事", "state": "状態"}
+"""画面と docs/ontology.md に出す種類の名前。"""
+
+
+def model_prefix(kind: str) -> str:
+    """概念の種類に対応するモデルの接頭辞（entity → dim_、event・state → fct_）。"""
+    return "dim_" if kind == "entity" else "fct_"
+
+
 _NAME = r"^[a-z][a-z0-9_]*$"
 _TABLE = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 _COLUMN = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
@@ -54,17 +66,16 @@ class Concept(_Strict):
     name: str = Field(pattern=_NAME)
     label: str = Field(min_length=1)
     domain: str
-    kind: Literal["entity", "event"]
-    """entity（もの・人・場所。dim の候補）か event（出来事。fact の候補）。"""
+    kind: ConceptKind
     source: str = Field(pattern=_TABLE)
     key: str = Field(pattern=_NAME)
     model: str | None = Field(default=None, pattern=r"^(dim|fct)_[a-z0-9_]+$")
-    """対応する整備済みモデル。entity → dim_*、event → fct_*。まだ無ければ None。"""
+    """対応する整備済みモデル。entity → dim_*、event・state → fct_*。まだ無ければ None。"""
     attributes: list[Attribute] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _model_matches_kind(self) -> Concept:
-        expected = "dim_" if self.kind == "entity" else "fct_"
+        expected = model_prefix(self.kind)
         if self.model is not None and not self.model.startswith(expected):
             raise ValueError(f"概念 {self.name}（{self.kind}）のモデルは {expected}* にする")
         for what, values in (
@@ -211,10 +222,14 @@ class Ontology(_Strict):
         )
 
 
-def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Ontology, list[str]]:
-    """(源泉, モデル) の組から、まだモデルの無い概念にモデルを書き込む（#69 の fact / dim の整理）。
+def link_models(
+    ontology: Ontology, models: list[tuple[str, str, ConceptKind]]
+) -> tuple[Ontology, list[str]]:
+    """(源泉, モデル, 概念の種類) の組から、まだモデルの無い概念にモデルを書き込む（#69 の fact /
+    dim の整理）。
 
-    概念の種類と接頭辞が合うもの（entity ↔ dim_、event ↔ fct_）だけ。書き込んだ概念の名前も返す。
+    概念の種類が合うものだけ（dim は entity、fct は出来事なら event、定期スナップショットなら
+    state）。書き込んだ概念の名前も返す。
     """
     linked: list[str] = []
     concepts = []
@@ -222,10 +237,9 @@ def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Onto
     # 同じ源泉のほかの概念に書き込まない
     taken = {c.model for c in ontology.concepts if c.model}
     for c in ontology.concepts:
-        prefix = "dim_" if c.kind == "entity" else "fct_"
-        # 同じ源泉に fct と dim があっても、概念の種類に合うものを選ぶ
+        # 同じ源泉に fct と dim（出来事と状態の fct）があっても、概念の種類に合うものを選ぶ
         model = next(
-            (m for s, m in models if s == c.source and m.startswith(prefix) and m not in taken),
+            (m for s, m, k in models if s == c.source and k == c.kind and m not in taken),
             None,
         )
         if c.model is None and model is not None:
@@ -259,11 +273,12 @@ HEADER = """\
 # この形で書き直すので、コメントはここ（adp.ontology.models.HEADER）に書く。
 #
 # - domains: 業務のまとまり（図の枠）
-# - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
+# - concepts: 概念。kind は entity（もの・人・場所）、event（出来事。fact の候補）、
+#   state（定期的に測る状態。月末在庫など。定期スナップショットの fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
-#   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
+#   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
 # - constraints: 業務上の制約・注意（図の注記）

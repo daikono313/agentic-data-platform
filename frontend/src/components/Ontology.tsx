@@ -2,7 +2,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { api, errorText } from '@/api/client'
-import { onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
+import { KIND_LABELS, onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -153,7 +153,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                     <p className="font-medium">{c.label}</p>
                     <p className="font-mono text-xs text-muted-foreground">{c.name}</p>
                   </TableCell>
-                  <TableCell className="text-xs">{c.kind === 'entity' ? 'もの・人' : '出来事'}</TableCell>
+                  <TableCell className="text-xs">{KIND_LABELS[c.kind]}</TableCell>
                   <TableCell className="text-xs">{domain.get(c.domain)}</TableCell>
                   <TableCell className="text-xs">
                     <a href={sourceUrl(c.source)} className="font-mono text-primary underline">
