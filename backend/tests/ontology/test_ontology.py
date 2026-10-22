@@ -590,7 +590,7 @@ def test_relation_multiplicity_is_checked_against_data(tmp_path: Path) -> None:
 
     relation |= {"cardinality": "one_to_many", "optional": False}
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
-    assert "| 顧客 1 : 注文 多、必ず相手がある |" in markdown(Ontology.model_validate(data))
+    assert "| 顧客 1 : 注文 多、注文には必ず顧客がある |" in markdown(Ontology.model_validate(data))
 
     relation["cardinality"] = "one_to_one"
     [error] = check(Ontology.model_validate(data), Catalog(db), None).errors

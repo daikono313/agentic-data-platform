@@ -12,7 +12,7 @@ from adp.ontology.models import (
     dump,
     load,
 )
-from adp.ontology.render import markdown, mermaid
+from adp.ontology.render import markdown, mermaid, multiplicity
 
 __all__ = [
     "Attribute",
@@ -27,4 +27,5 @@ __all__ = [
     "load",
     "markdown",
     "mermaid",
+    "multiplicity",
 ]

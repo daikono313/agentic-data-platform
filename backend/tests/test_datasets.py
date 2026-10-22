@@ -317,6 +317,11 @@ def test_ontology_api(repo: Path, tmp_path: Path) -> None:
     assert body["mermaid"].startswith("flowchart")
     # 後から追加された源泉の例（オントロジーに未整理）: 在庫（#69）と商品レビュー（S5）
     assert body["errors"] == [] and body["unmapped_sources"] == ["raw.inventory", "raw.reviews"]
+    # 関係ごとの多重度の表示（画面は backend の文言をそのまま出す。#137）
+    relations = body["ontology"]["relations"]
+    assert len(body["multiplicities"]) == len(relations)
+    first = relations.index(next(r for r in relations if r["verb"] == "注文する"))
+    assert body["multiplicities"][first] == "顧客 1 : 注文 多、注文には必ず顧客がある"
     (repo / "ontology" / "ontology.yml").write_text("version: 1\ndomains: []\nconcepts: [1]\n")
     assert client.get("/ontology").status_code == 422
     shutil.rmtree(repo / "ontology")

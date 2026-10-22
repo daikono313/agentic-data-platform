@@ -81,7 +81,15 @@ export interface OntologyConcept {
   source: string
   key: string
   model?: string
-  attributes: { name: string; label: string; column: string }[]
+  attributes: {
+    name: string
+    label: string
+    column: string
+    same_as?: string
+    role?: 'descriptive' | 'numeric' | 'temporal'
+    parent?: string
+    synonyms?: string[]
+  }[]
 }
 /** 概念の種類の表示名（backend の adp.ontology.KIND_LABELS と同じ） */
 export const KIND_LABELS: Record<OntologyConcept['kind'], string> = {
@@ -94,12 +102,21 @@ export interface OntologyView {
   ontology: {
     domains: { name: string; label: string }[]
     concepts: OntologyConcept[]
-    relations: { from: string; to: string; verb: string; via: string }[]
+    relations: {
+      from: string
+      to: string
+      verb: string
+      via: string
+      cardinality?: 'one_to_one' | 'one_to_many'
+      optional?: boolean
+    }[]
     constraints: { concept: string; text: string }[]
   }
   unmapped_sources: string[]
   unmapped_models: string[]
   errors: string[]
+  /** 関係ごとの多重度の表示（relations と同じ並び。未確認なら -。#137） */
+  multiplicities: string[]
 }
 
 /** GET /sources/{table}/cleansing の型（#68） */

@@ -27,7 +27,7 @@ const view: OntologyView = {
         source: 'raw.customers',
         key: 'customer_id',
         model: 'dim_customer',
-        attributes: [{ name: 'region', label: '地方', column: 'region' }],
+        attributes: [{ name: 'region', label: '地方', column: 'region', synonyms: ['エリア'] }],
       },
       { name: 'order', label: '注文', domain: 'sales', kind: 'event', source: 'raw.orders', key: 'order_id', attributes: [] },
     ],
@@ -37,6 +37,7 @@ const view: OntologyView = {
   unmapped_sources: ['raw.inventory'],
   unmapped_models: ['dim_date'],
   errors: ['概念 order: キー raw.orders.order_id が無い'],
+  multiplicities: ['顧客 1 : 注文 多、注文には必ず顧客がある'],
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -50,7 +51,10 @@ describe('OntologyScreen', () => {
     expect(screen.getByTestId('concept-customer')).toHaveTextContent('dim_customer')
     expect(screen.getByTestId('concept-order')).toHaveTextContent('未整備')
     expect(screen.getByText(/キャンセルを含む/)).toBeInTheDocument()
-    expect(screen.getByRole('table', { name: '関係' })).toHaveTextContent('顧客注文する注文raw.orders.customer_id')
+    expect(screen.getByRole('table', { name: '関係' })).toHaveTextContent(
+      '顧客注文する注文raw.orders.customer_id顧客 1 : 注文 多、注文には必ず顧客がある',
+    )
+    expect(screen.getByTestId('concept-customer')).toHaveTextContent('地方（同義語: エリア）')
     expect(screen.getByText(/dim_date/)).toBeInTheDocument()
     expect(screen.getByText(/キー raw.orders.order_id が無い/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'raw.inventory（取り込む）' })).toHaveAttribute('href', '?onboard=raw.inventory')
