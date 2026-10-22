@@ -331,7 +331,8 @@ def _stage_issues(event: BusinessEvent, p: str) -> list[str]:
     if len(when) < 2:
         issues.append(
             f"{p} 段階を経て進む出来事なので、段階ごとの日時（When）を 2 つ以上記録してください"
-            "（例: 注文日時・出荷日時）"
+            "（例: 注文日時・出荷日時）。源泉に日時が 1 つしか無ければ、1 回で終わる出来事"
+            "（story_type: discrete）として記録してください"
         )
     for d in when:
         if d.stage is None:
@@ -357,10 +358,15 @@ def _lag_issues(event: BusinessEvent, m: Measure, p: str) -> list[str]:
             f"{p} measure {m.name} は段階の間の時間（lag）なので、source は書きません（段階の日時"
             "から計算します）"
         )
-    if m.aggregation in (Aggregation.COUNT, Aggregation.COUNT_DISTINCT):
+    if m.aggregation not in (Aggregation.AVERAGE, Aggregation.MIN, Aggregation.MAX):
         issues.append(
-            f"{p} measure {m.name} は時間なので、件数（{m.aggregation}）ではなく平均（average）"
-            "などで集計してください"
+            f"{p} measure {m.name} は 1 件ごとにかかった時間なので、平均（average）・最短（min）・"
+            f"最長（max）のどれかで集計してください（今は {m.aggregation}）"
+        )
+    if m.additivity == Additivity.SEMI_ADDITIVE:
+        issues.append(
+            f"{p} measure {m.name} は時点の値（semi_additive）ではありません。additivity を"
+            " non_additive にしてください"
         )
     start, end = event.dimension(m.lag.start), event.dimension(m.lag.end)
     for ref, d in ((m.lag.start, start), (m.lag.end, end)):

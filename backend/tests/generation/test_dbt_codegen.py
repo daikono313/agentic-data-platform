@@ -500,8 +500,10 @@ def test_accumulating_snapshot_stage_lags(tmp_path: Path) -> None:
     [fact] = design.facts
     lags = {c.name: c.expr for c in fact.columns if c.name.endswith("_days")}
     assert lags == {
-        "order_to_ship_days": "date_diff('day', t1.ordered_at, t0.shipped_at)",
-        "ship_to_delivery_days": "date_diff('day', t0.shipped_at, t0.delivered_at)",
+        "order_to_ship_days": "date_diff('day', cast(t1.ordered_at as timestamp),"
+        " cast(t0.shipped_at as timestamp))",
+        "ship_to_delivery_days": "date_diff('day', cast(t0.shipped_at as timestamp),"
+        " cast(t0.delivered_at as timestamp))",
     }
     # 後の段階の日時は、その段階に達するまで NULL でよい
     assert {c.name: c.nullable for c in fact.columns if c.name.endswith("_on")} == {
@@ -537,3 +539,77 @@ def test_accumulating_snapshot_stage_lags(tmp_path: Path) -> None:
         ).fetchall()
     }
     assert got == expected
+
+
+def test_stage_lag_in_hours(tmp_path: Path) -> None:
+    """時間の単位のラグは、時の境目の数（DuckDB の date_diff('hour')。#140）。"""
+    from datetime import datetime
+
+    from adp.beam import LagUnit
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    measure = beam.events[0].measure("ship_to_delivery_days")
+    assert measure is not None and measure.lag is not None
+    measure.lag.unit = LagUnit.HOUR
+    beam.events[0].examples = []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+
+    def hours(a: datetime, b: datetime) -> int:
+        floor = [t.replace(minute=0, second=0, microsecond=0) for t in (a, b)]
+        return int((floor[1] - floor[0]).total_seconds() // 3600)
+
+    expected = {
+        r[0]: hours(r[1], r[2])
+        for r in con.sql(
+            "select shipment_id, shipped_at, delivered_at from raw.shipments"
+        ).fetchall()
+    }
+    got = dict(
+        con.sql("select shipment_id, ship_to_delivery_days from main.fct_fulfillments").fetchall()
+    )
+    assert got == expected
+
+
+def test_lag_unit_test_is_skipped_when_times_cannot_be_read() -> None:
+    """段階の日時の型が分からない（入力行の既定値が日時でない）ときは、ラグの期待値を独立に
+    計算できないので unit test を作らない（生成は止めない。#140）。"""
+    from adp.beam import load as load_beam
+    from adp.design import ForeignKey
+    from adp.generation.tests import unit_test
+
+    class Schema:
+        def columns(self, table: str) -> list[str]:
+            return {
+                "raw.shipments": [
+                    "shipment_id",
+                    "order_id",
+                    "shipping_method",
+                    "shipped_at",
+                    "delivered_at",
+                ],
+                "raw.orders": ["order_id", "ordered_at"],
+            }.get(table, [])
+
+        def foreign_keys(self, table: str) -> list[ForeignKey]:
+            fk = ForeignKey("order_id", "raw.orders", "order_id")
+            return [fk] if table == "raw.shipments" else []
+
+    beam = load_beam(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    design = DesignBuilder(Schema()).build(beam)
+    assert design.blockers == []
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return []  # 型が分からない → 既定値 "x"
+
+        def source_primary_key(self, table: str) -> str | None:
+            return None
+
+    example = beam.events[0].examples[0].model_copy(update={"values": {}})
+    assert unit_test(beam, design.facts[0], Info(), example, 0) is None  # type: ignore[arg-type]
