@@ -358,67 +358,64 @@ def snapshot_reconciliation_test(fact: FactTable, info: WarehouseInfo | None) ->
     """定期スナップショットの fct と源泉の突合。合計は期間をまたいで足せないので、次を見る。
 
     - 区切りごとに、最初の期間から最後の期間まで、期間の終わりの日付が途切れていない
-    - 期間の最後の記録の値と一致する（last_value はすべての期間、running_total は最後の記録が
-      置き換える行の期間）
+    - last_value: 記録のある期間は、その期間の NULL でない最後の記録の値と一致する
+    - running_total（置き換える行あり）: その期間の NULL でない最後の記録が置き換える行なら、その値
+    - running_total（置き換える行なし）: その期間の終わりまでの記録の合計と一致する
+    fct に行が無いものも違いとして出す（left join）。
     """
-    from adp.generation.dbt import _from_clause, _select, period_end, snapshot_order_key
+    from adp.generation.dbt import period_end, snapshot_order, snapshot_records
 
     snap = fact.snapshot
     assert snap is not None
     names = snapshot_partition(fact)
-    cols = {c.name: c for c in fact.columns}
-    checked = [
-        m
-        for m, method in snap.methods.items()
-        if method == StateMethod.LAST_VALUE or m in snap.resets
+    t = snap.time_column
+    on = " and ".join([f"r.{n} is not distinct from f.{n}" for n in names] + [f"r.{t} = f.{t}"])
+    keys = ", ".join([*names, t])
+    ctes = [
+        "records as (\n"
+        + "\n".join("    " + line for line in snapshot_records(fact, info).splitlines())
+        + "\n)",
+        "counts as (\n"
+        f"    select {''.join(f'{n}, ' for n in names)}count(*) as n,"
+        f" min({t}) as first_on, max({t}) as last_on\n"
+        f"    from {{{{ ref('{fact.name}') }}}}"
+        + (f"\n    group by {', '.join(names)}" if names else "")
+        + "\n)",
+        "periods as (\n    select date_day\n    from {{ ref('dim_date') }}\n"
+        f"    where date_day = {period_end('date_day', snap.grain)}\n)",
     ]
-    records = [(n, cols[n].expr) for n in names]
-    records += [
-        (snap.time_column, period_end(snap.recorded_at, snap.grain)),
-        ("recorded_at", snap.recorded_at),
-        ("record_order", snapshot_order_key(fact, info)),
-    ]
-    records += [(m, cols[m].expr) for m in checked]
-    records += [(f"{m}__is_reset", f"coalesce({snap.resets[m]}, false)") for m in snap.resets]
-    body = _select(records) + "\n" + _from_clause(fact.base, fact.joins)
-    keys = [*names, snap.time_column]
-    on = " and ".join(
-        [f"r.{n} is not distinct from f.{n}" for n in names]
-        + [f"r.{snap.time_column} = f.{snap.time_column}"]
-    )
-    parts = [
+    checks = [
         "select '期間が途切れている' as reason\nfrom counts\nwhere n <> (\n"
         "    select count(*) from periods\n"
         "    where date_day between counts.first_on and counts.last_on\n)"
     ]
-    for m in checked:
-        cond = f"r.{m} is distinct from f.{m}"
-        if snap.methods[m] == StateMethod.RUNNING_TOTAL:
-            cond = f"r.{m}__is_reset and {cond}"
-        parts.append(
-            f"select '{m} が期間の最後の記録の値と違う' as reason\n"
-            f"from last_records as r\n"
-            f"inner join {{{{ ref('{fact.name}') }}}} as f on {on}\n"
-            f"where {cond}"
+    for m, method in snap.methods.items():
+        if method == StateMethod.RUNNING_TOTAL and m not in snap.resets:
+            ctes.append(
+                f"expected_{m} as (\n"
+                f"    select {keys}, sum(sum({m})) over ("
+                + (f"partition by {', '.join(names)} " if names else "")
+                + f"order by {t} rows between unbounded preceding and current row) as {m}\n"
+                f"    from records\n    where {m} is not null\n    group by {keys}\n)"
+            )
+            cond = ""
+        else:
+            ctes.append(
+                f"expected_{m} as (\n    select *\n    from records\n    where {m} is not null\n"
+                f"    qualify row_number() over (partition by {keys}"
+                f" {snapshot_order(fact, descending=True)}) = 1\n)"
+            )
+            cond = f"r.{m}__is_reset and " if method == StateMethod.RUNNING_TOTAL else ""
+        checks.append(
+            f"select '{m} が源泉から求めた値と違う（行が無いものを含む）' as reason\n"
+            f"from expected_{m} as r\n"
+            f"left join {{{{ ref('{fact.name}') }}}} as f on {on}\n"
+            f"where {cond}(f.{t} is null or r.{m} is distinct from f.{m})"
         )
-    group = f"\n    group by {', '.join(names)}" if names else ""
-    partition = ", ".join(keys)
     sql = (
         f"-- adp により生成。{fact.name}（定期スナップショット）が、区切りごとに期間が途切れず、\n"
-        "-- 期間の最後の記録の値と一致すること（ADR 0008）\n"
-        "with counts as (\n"
-        f"    select {''.join(f'{n}, ' for n in names)}count(*) as n,"
-        f" min({snap.time_column}) as first_on, max({snap.time_column}) as last_on\n"
-        f"    from {{{{ ref('{fact.name}') }}}}{group}\n),\n\n"
-        "periods as (\n    select date_day\n    from {{ ref('dim_date') }}\n"
-        f"    where date_day = {period_end('date_day', snap.grain)}\n),\n\n"
-        "records as (\n"
-        + "\n".join("    " + line for line in body.splitlines())
-        + "\n),\n\nlast_records as (\n    select *\n    from records\n"
-        f"    qualify row_number() over (partition by {partition}"
-        " order by recorded_at desc, record_order desc) = 1\n)\n\n"
-        + "\n\nunion all\n\n".join(parts)
-        + "\n"
+        "-- 源泉の記録から求めた値と一致すること（ADR 0008）\n"
+        "with " + ",\n\n".join(ctes) + "\n\n" + "\n\nunion all\n\n".join(checks) + "\n"
     )
     return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
 
@@ -456,10 +453,12 @@ def snapshot_unit_test(
 ) -> dict[str, Any] | None:
     """具体例の値 E と時点から、3 期間の記録の履歴を作り、期待値を独立に計算する（ADR 0008）。
 
-    - 2 期間前: 増減（置き換える行より前なので数えない）と、置き換える行（E − 2）
+    - 3 期間前: 増減（置き換える行より前なので、running_total（置き換えあり）は値を出さない）
+    - 2 期間前: 置き換える行（E − 2）
     - 1 期間前: 記録なし（前の期間の値を引き継ぐ）
     - 当期: +5 と −3
-    期待値は E − 2・E − 2・E。last_value は各記録をその時点の値として同じ結果になるようにする。
+    期待値は 2 期間前から E − 2・E − 2・E。3 期間前は last_value なら 1、running_total（置き換え
+    なし）なら 0、置き換えありなら行を出さない（すべての measure が値を出さなければ行が無い）。
     入力に書けるのはベースのテーブルの列だけ（結合が要る fct は作らない）。
     """
     from adp.design.builder import filter_source
@@ -491,19 +490,23 @@ def snapshot_unit_test(
             known = info.distinct_values(src.table, src.column, ACCEPTED_VALUES_MAX) or []
             listed = [str(v) for v in f.values]
             outside = next((v for v in known if v not in listed), None)
-            if f.operator.value in ("=", "in"):
-                reset_values[src.column], other_values[src.column] = f.values[0], outside
-            else:
-                reset_values[src.column], other_values[src.column] = outside, f.values[0]
             if outside is None:
                 return None
+            pair = (
+                (f.values[0], outside)
+                if f.operator.value in ("=", "in")
+                else (outside, f.values[0])
+            )
+            if reset_values.get(src.column, pair[0]) != pair[0]:
+                return None  # measure ごとに置き換える値が違う列は、1 つの入力行で表せない
+            reset_values[src.column], other_values[src.column] = pair
     time_col = fact.column(snap.time_column)
     raw_when = example.values.get(time_col.source_ref) if time_col and time_col.source_ref else None
     try:
         last_day = date.fromisoformat(str(raw_when)[:10]) if raw_when else date(2025, 3, 31)
     except ValueError:
         last_day = date(2025, 3, 31)
-    p2, p1, p0 = _period_ends(last_day, snap.grain, 3)
+    p3, p2, p1, p0 = _period_ends(last_day, snap.grain, 4)
 
     finals: dict[str, int] = {}
     for m in snap.methods:
@@ -520,7 +523,7 @@ def snapshot_unit_test(
             return [4, e - 2, 5, -3][step]
         return [0, e - 2, 5, -3][step]
 
-    plan = [(p2, 9, False), (p2, 10, True), (p0, 10, False), (p0, 11, False)]
+    plan = [(p3, 9, False), (p2, 10, True), (p0, 10, False), (p0, 11, False)]
     parts = snapshot_partition(fact)
     natural: dict[str, object] = {}
     expected_keys: dict[str, object] = {}
@@ -548,8 +551,17 @@ def snapshot_unit_test(
         rows.append(row)
     columns = sorted({k for r in rows for k in r})
     given_rows = [{c: r.get(c) for c in columns} for r in rows]
-    spine = [p2, p1, p0, p0 - timedelta(days=1) if snap.grain != TimeGrain.DAY else p0]
-    expect = [
+    spine = [p3, p2, p1, p0, p0 - timedelta(days=1) if snap.grain != TimeGrain.DAY else p0]
+    first: dict[str, object] = {
+        m: None if m in snap.resets else 1 if method == StateMethod.LAST_VALUE else 0
+        for m, method in snap.methods.items()
+    }
+    expect = (
+        [{**expected_keys, snap.time_column: p3.isoformat(), **first}]
+        if any(v is not None for v in first.values())
+        else []
+    )
+    expect += [
         {
             **expected_keys,
             snap.time_column: d.isoformat(),

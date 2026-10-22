@@ -14,7 +14,6 @@ from adp.beam import (
     Aggregation,
     BeamModel,
     BusinessEvent,
-    FilterOperator,
     Measure,
     MetricFilter,
     MetricRequest,
@@ -22,7 +21,7 @@ from adp.beam import (
     W,
 )
 from adp.design import ColumnRole, DimTable, FactTable, PhysicalDesign
-from adp.metricflow import literal
+from adp.metricflow import condition
 
 _AGG = {
     Aggregation.SUM: "sum",
@@ -86,22 +85,12 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
     return f"{d.ref}__{attr}"
 
 
-def _literal(value: str | int | float | bool) -> str:
-    try:
-        return literal(value)
-    except ValueError as e:
-        raise SemanticError(str(e)) from e
-
-
 def filter_expr(event: BusinessEvent, fact: FactTable, f: MetricFilter) -> str:
     dim = "{{ Dimension('" + mf_name(event, fact, f.ref) + "') }}"
-    values = [_literal(v) for v in f.values]
-    if f.operator == FilterOperator.EQUALS:
-        return f"{dim} = {values[0]}"
-    if f.operator == FilterOperator.NOT_EQUALS:
-        return f"{dim} <> {values[0]}"
-    op = "in" if f.operator == FilterOperator.IN else "not in"
-    return f"{dim} {op} ({', '.join(values)})"
+    try:
+        return condition(dim, f.operator.value, list(f.values))
+    except ValueError as e:
+        raise SemanticError(str(e)) from e
 
 
 def _filters(event: BusinessEvent, fact: FactTable, m: MetricRequest) -> str | None:

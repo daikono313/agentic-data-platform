@@ -17,8 +17,8 @@ from adp.beam import (
     BusinessEvent,
     Dimension,
     FactType,
-    FilterOperator,
     MetricFilter,
+    MetricRequest,
     SourceRef,
     StateMethod,
     TimeGrain,
@@ -37,7 +37,7 @@ from adp.design.models import (
     SnapshotDesign,
     SourceTable,
 )
-from adp.metricflow import literal
+from adp.metricflow import condition
 from adp.ontology.models import KIND_LABELS, Concept, ConceptKind, Ontology, link_models
 
 SNAPSHOT_TIME_COLUMN = "snapshot_on"
@@ -396,10 +396,11 @@ class DesignBuilder:
           確かめるよう課題に出す
         同じ BEAM の中で、同じ源泉から 2 つの fact を作ることも止める。
         """
-        by_base: dict[str, list[FactTable]] = {}
+        # 同じ源泉の出来事の fact と状態の fact（入出庫と月末在庫）は別の概念なので並べてよい
+        by_base: dict[tuple[str, str], list[FactTable]] = {}
         for fact in facts:
-            by_base.setdefault(fact.base.table, []).append(fact)
-        for table, same_base in by_base.items():
+            by_base.setdefault((fact.base.table, concept_kind(fact)), []).append(fact)
+        for (table, _), same_base in by_base.items():
             if len(same_base) > 1:
                 names = "、".join(f"{f.name}（{f.event}）" for f in same_base)
                 self._blocker(
@@ -424,7 +425,7 @@ class DesignBuilder:
             model = concept.model or ""
             table_name = model.removeprefix("fct_")
             head = (
-                f"{fact.name} の源泉 {fact.base.table} の出来事は、既に"
+                f"{fact.name} の源泉 {fact.base.table} の{KIND_LABELS[concept_kind(fact)]}は、既に"
                 f"「{concept.label}」（{model}）としてあります。"
             )
             if self.existing_facts is None:
@@ -635,7 +636,7 @@ class DesignBuilder:
             agg_time_grain=agg_time[1].time_grain if agg_time else None,
         )
         if event.fact_type == FactType.PERIODIC_SNAPSHOT:
-            return self._snapshot(event, fact, resolve)
+            return self._snapshot(event, fact, resolve, src)
         return fact
 
     def _snapshot(
@@ -643,6 +644,7 @@ class DesignBuilder:
         event: BusinessEvent,
         fact: FactTable,
         resolve: Callable[[SourceRef, str, str], str | None],
+        src: _Sources,
     ) -> FactTable | None:
         """記録の列から、定期スナップショットの fct（区切り × 期間の終わりの値）にする（ADR 0008）。
 
@@ -700,6 +702,8 @@ class DesignBuilder:
         return fact.model_copy(
             update={
                 "columns": columns,
+                # 置き換える行の条件が別のテーブルの列なら、その結合も要る（resolve が足す）
+                "joins": list(src.joins),
                 "grain_columns": [*partition, SNAPSHOT_TIME_COLUMN],
                 "agg_time_column": SNAPSHOT_TIME_COLUMN,
                 "agg_time_grain": grain,
@@ -729,16 +733,10 @@ class DesignBuilder:
         if column is None:
             return None
         try:
-            values = [literal(v) for v in f.values]
+            return condition(column, f.operator.value, list(f.values))
         except ValueError as e:
             self._blocker(f"{p} 置き換える行の条件 {f.ref}: {e}", f.ref)
             return None
-        if f.operator == FilterOperator.EQUALS:
-            return f"{column} = {values[0]}"
-        if f.operator == FilterOperator.NOT_EQUALS:
-            return f"{column} <> {values[0]}"
-        op = "in" if f.operator == FilterOperator.IN else "not in"
-        return f"{column} {op} ({', '.join(values)})"
 
     # --- dim -------------------------------------------------------------------------------
 
@@ -860,6 +858,27 @@ class DesignBuilder:
                         self._blocker(f"{p} 切り口 {ref} の列が {fact.name} にありません", ref)
                 elif (dim := dims.get(d.name)) is None or all(c.name != attr for c in dim.columns):
                     self._blocker(f"{p} 切り口 {ref} の列が dim_{d.name} にありません", ref)
+            if fact.snapshot is not None:
+                self._check_snapshot_refs(metric, event, fact, p)
+
+    def _check_snapshot_refs(
+        self, metric: MetricRequest, event: BusinessEvent, fact: FactTable, p: str
+    ) -> None:
+        """定期スナップショットの指標の切り口・絞り込みは、区切りのディメンションか時点に限る。
+        記録 1 件ごとの項目（区分・番号）は、状態の fct に列として残らない（ADR 0008）。"""
+        partition = {c.source_ref for c in fact.columns if c.name in fact.grain_columns}
+        for ref in dict.fromkeys([*metric.group_by, *(f.ref for f in metric.filters)]):
+            dim_ref = ref.partition(".")[0]
+            d = event.dimension(dim_ref)
+            if d is not None and (d.w == W.WHEN or d.ref in partition):
+                continue
+            self._blocker(
+                f"{p} {ref} は記録 1 件ごとの項目なので、状態（{fact.name}）の切り口・絞り込みに"
+                "使えません。区切り（"
+                + "・".join(c.description for c in fact.columns if c.name in fact.grain_columns)
+                + "）の項目で切ってください",
+                ref,
+            )
 
 
 def filter_source(event: BusinessEvent, ref: str) -> SourceRef | None:

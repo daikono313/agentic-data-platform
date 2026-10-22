@@ -84,6 +84,7 @@ def markdown(ontology: Ontology) -> str:
         "源泉が増えたら、まず `ontology/ontology.yml` を更新し、それを元に fact / dim を整理する。",
         "",
         "凡例: 四角 = もの・人・場所（entity → dim の候補）、長円 = 出来事（event → fact の候補）、"
+        "六角形 = 状態（state → 定期スナップショットの fact の候補）、"
         "灰色 = 属性（一部）、緑 = 制約、矢印 = 関係",
         "",
         "```mermaid",
