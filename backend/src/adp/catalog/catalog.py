@@ -462,14 +462,8 @@ class Catalog:
                 try:
                     if not _is_unique(con, rs, rt, c.name):
                         continue
-                    col = quote_ident(c.name)
-                    ratio = _scalar(
-                        con,
-                        f"select coalesce(avg(case when r.{col} is null then 0 else 1.0"
-                        f" end), 0) from {_table(schema, name)} t left join {_table(rs, rt)} r"
-                        f" on cast(t.{col} as varchar) = cast(r.{col} as varchar)"
-                        f" where t.{col} is not null",
-                    )
+                    total, unmatched = _unmatched(con, (schema, name, c.name), (rs, rt, c.name))
+                    ratio = (total - unmatched) / total if total else 0.0
                 except duckdb.Error:
                     continue
                 if float(ratio) >= FK_MIN_MATCH_RATIO:
@@ -481,6 +475,17 @@ class Catalog:
                 for _, ref, r in found
             ]
         return candidates
+
+    def count_unmatched(self, table: str, column: str, ref_table: str, ref_column: str) -> int:
+        """table.column の値（空を除く）のうち、ref_table.ref_column に無いものの行数（関係の
+        照合。相手が必ずあるか。#137）。"""
+        schema, name = self._resolve(table)
+        ref_schema, ref_name = self._resolve(ref_table)
+        for c in (column, ref_column):
+            if not _IDENT.match(c):
+                raise ValueError(f"不正な列名です: {c}")
+        with self.connect() as con:
+            return _unmatched(con, (schema, name, column), (ref_schema, ref_name, ref_column))[1]
 
     def is_unique(self, table: str, column: str) -> bool:
         """列の値が NULL を含まず一意か（主キーとして使えるか）。"""
@@ -750,6 +755,23 @@ def _is_unique(con: duckdb.DuckDBPyConnection, schema: str, name: str, column: s
             f" from {_table(schema, name)}",
         )
     )
+
+
+def _unmatched(
+    con: duckdb.DuckDBPyConnection, child: tuple[str, str, str], parent: tuple[str, str, str]
+) -> tuple[int, int]:
+    """(子の列の空でない行数, そのうち親の列に値が無い行数)。外部キーの一致の判定に使う。
+    型が違っても比べられるよう、文字列にして比べる。"""
+    cs, cn, cc = child
+    ps, pn, pc = parent
+    row = con.execute(
+        f"select count(*), count(*) filter (where r.k is null) from {_table(cs, cn)} t"
+        f" left join (select distinct cast({quote_ident(pc)} as varchar) as k"
+        f" from {_table(ps, pn)}) r on cast(t.{quote_ident(cc)} as varchar) = r.k"
+        f" where t.{quote_ident(cc)} is not null"
+    ).fetchone()
+    assert row is not None
+    return int(row[0]), int(row[1])
 
 
 def _scalar(con: duckdb.DuckDBPyConnection, sql: str) -> Any:

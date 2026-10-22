@@ -724,3 +724,29 @@ def test_relation_ends_use_the_key_column_when_sources_are_shared() -> None:
     assert multiplicity(ontology.relations[0], ontology) == (
         "注文した顧客 1 件に注文が複数、注文には必ず注文した顧客がある"
     )
+
+
+def test_required_relation_must_find_the_other_key(tmp_path: Path) -> None:
+    """必ず相手がある（optional: false）なら、via の値は相手のキーにある（空でなくても、相手の無い
+    値は食い違い。#137）。"""
+    import duckdb
+
+    db = _db(tmp_path, "order_id int, customer_id int")
+    con = duckdb.connect(str(db))
+    con.execute("update raw.orders set customer_id = 1")
+    con.close()
+    data = _data()
+    data["relations"][0]["optional"] = False
+    assert check(Ontology.model_validate(data), Catalog(db), None).errors == []
+
+    con = duckdb.connect(str(db))
+    con.execute("update raw.orders set customer_id = 999 where order_id = 11")
+    con.close()
+    [error] = check(Ontology.model_validate(data), Catalog(db), None).errors
+    assert (
+        "注文には必ず顧客がある（optional: false）としているのに、列 raw.orders.customer_id の値が"
+        " raw.customers.customer_id に無い行が 1 行ある" in error
+    )
+    # 相手が決まっていないことがある関係では見ない
+    data["relations"][0]["optional"] = True
+    assert check(Ontology.model_validate(data), Catalog(db), None).errors == []

@@ -208,11 +208,18 @@ def _multiplicity_mismatches(
             f"のに、列 {r.via} の値が重複している（{p.row_count - p.null_count} 行に"
             f" {p.distinct_count} 種類）"
         )
-    if r.optional is False and p.null_count:
-        errors.append(
-            f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）としている"
-            f"のに、列 {r.via} が空の行が {p.null_count} 行ある"
-        )
+    if r.optional is False:
+        if p.null_count:
+            errors.append(
+                f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）として"
+                f"いるのに、列 {r.via} が空の行が {p.null_count} 行ある"
+            )
+        missing = catalog.count_unmatched(table, column, one.source, one.key)
+        if missing:
+            errors.append(
+                f"関係「{r.verb}」: {many.label}には必ず{one.label}がある（optional: false）として"
+                f"いるのに、列 {r.via} の値が {one.source}.{one.key} に無い行が {missing} 行ある"
+            )
     return errors
 
 
