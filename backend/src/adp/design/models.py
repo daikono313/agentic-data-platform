@@ -98,6 +98,10 @@ class FactTable(BaseModel):
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)
 
+    def column_for(self, ref: str, role: ColumnRole) -> Column | None:
+        """BEAM の参照（When の ref など）と役割に対応する列（例: When の日付列・日時列）。"""
+        return next((c for c in self.columns if c.source_ref == ref and c.role == role), None)
+
 
 class DimTable(BaseModel):
     name: str

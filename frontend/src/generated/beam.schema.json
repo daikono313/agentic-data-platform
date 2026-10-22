@@ -369,6 +369,19 @@
           "default": null,
           "description": "When の最小粒度"
         },
+        "stage": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "段階を経て進む出来事（evolving）の When の、段階の順番（1 から。例: 注文 1・出荷 2・配達 3）"
+        },
         "business_key": {
           "anyOf": [
             {
@@ -538,6 +551,40 @@
         "deferred"
       ],
       "title": "GapKind",
+      "type": "string"
+    },
+    "LagSpec": {
+      "additionalProperties": false,
+      "description": "段階を経て進む出来事（evolving）の、2 つの段階の間の時間（ラグ。#140）。\n\n生成器が段階の日時の列から `date_diff(unit, start, end)` で計算する（日・時の境目を数える）。\n終わりの段階にまだ達していない行は NULL。",
+      "properties": {
+        "start": {
+          "description": "始まりの段階の When の ref",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "end": {
+          "description": "終わりの段階の When の ref（start より後の段階）",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "unit": {
+          "$ref": "#/$defs/LagUnit",
+          "default": "day"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "LagSpec",
+      "type": "object"
+    },
+    "LagUnit": {
+      "enum": [
+        "day",
+        "hour"
+      ],
+      "title": "LagUnit",
       "type": "string"
     },
     "Level": {
@@ -729,6 +776,18 @@
           ],
           "default": null,
           "description": "定期的な状態（recurring）のイベントのとき、記録からの値の求め方"
+        },
+        "lag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LagSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "段階を経て進む出来事（evolving）で、2 つの段階の間の時間を measure にするとき（source は書かない）"
         }
       },
       "required": [

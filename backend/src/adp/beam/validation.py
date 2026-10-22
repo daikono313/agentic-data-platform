@@ -119,7 +119,12 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
     for m in event.measures:
         if m.availability == Availability.UNKNOWN:
             issues.append(f"{p} measure {m.name} がソースで作れるか未確認です")
-        if m.availability == Availability.AVAILABLE and m.source is None and not m.counts_rows:
+        if (
+            m.availability == Availability.AVAILABLE
+            and m.source is None
+            and not m.counts_rows
+            and m.lag is None
+        ):
             issues.append(f"{p} measure {m.name} のソースが指定されていません")
         if m.counts_rows and any(
             m.name in x.values and str(x.values[m.name]) != "1" for x in event.examples
@@ -155,6 +160,8 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
                     "定期的な状態の記録（story_type: recurring）のイベントに置いてください"
                 )
         issues += _state_issues(event, m, p)
+        issues += _lag_issues(event, m, p)
+    issues += _stage_issues(event, p)
 
     fact_keys: dict[str, set[str]] = {}
     for d in event.dimensions:
@@ -307,6 +314,75 @@ def _metric_issues(model: BeamModel) -> list[str]:
                         f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
                         "記録の粒度（time_grain）を見直してください"
                     )
+    return issues
+
+
+def _stage_issues(event: BusinessEvent, p: str) -> list[str]:
+    """段階を経て進む出来事（evolving）は、When ごとに段階の順番（stage）を持つ（#140）。"""
+    when = [d for d in event.dimensions if d.w == W.WHEN]
+    staged = [d for d in when if d.stage is not None]
+    if event.fact_type != FactType.ACCUMULATING_SNAPSHOT:
+        return [
+            f"{p} When {d.ref} の段階（stage）は、段階を経て進む出来事（story_type: evolving）で"
+            "だけ指定します"
+            for d in staged
+        ]
+    issues: list[str] = []
+    if len(when) < 2:
+        issues.append(
+            f"{p} 段階を経て進む出来事なので、段階ごとの日時（When）を 2 つ以上記録してください"
+            "（例: 注文日時・出荷日時）。源泉に日時が 1 つしか無ければ、1 回で終わる出来事"
+            "（story_type: discrete）として記録してください"
+        )
+    for d in when:
+        if d.stage is None:
+            issues.append(f"{p} When {d.ref} が何番目の段階か（stage）が決まっていません")
+    stages = [d.stage for d in staged if d.stage is not None]
+    if len(stages) != len(set(stages)):
+        issues.append(f"{p} 段階の順番（stage）が重なっています: {sorted(stages)}")
+    return issues
+
+
+def _lag_issues(event: BusinessEvent, m: Measure, p: str) -> list[str]:
+    """段階の間の時間（lag）の measure は、evolving のイベントの 2 つの段階を前から後へ指す。"""
+    if m.lag is None:
+        return []
+    if event.fact_type != FactType.ACCUMULATING_SNAPSHOT:
+        return [
+            f"{p} measure {m.name} の段階の間の時間（lag）は、段階を経て進む出来事"
+            "（story_type: evolving）でだけ指定します"
+        ]
+    issues: list[str] = []
+    if m.source is not None:
+        issues.append(
+            f"{p} measure {m.name} は段階の間の時間（lag）なので、source は書きません（段階の日時"
+            "から計算します）"
+        )
+    if m.aggregation not in (Aggregation.AVERAGE, Aggregation.MIN, Aggregation.MAX):
+        issues.append(
+            f"{p} measure {m.name} は 1 件ごとにかかった時間なので、平均（average）・最短（min）・"
+            f"最長（max）のどれかで集計してください（今は {m.aggregation}）"
+        )
+    if m.additivity == Additivity.SEMI_ADDITIVE:
+        issues.append(
+            f"{p} measure {m.name} は時点の値（semi_additive）ではありません。additivity を"
+            " non_additive にしてください"
+        )
+    start, end = event.dimension(m.lag.start), event.dimension(m.lag.end)
+    for ref, d in ((m.lag.start, start), (m.lag.end, end)):
+        if d is None or d.w != W.WHEN:
+            issues.append(f"{p} measure {m.name} の段階 {ref} が When にありません")
+    if (
+        start is not None
+        and end is not None
+        and start.stage is not None
+        and end.stage is not None
+        and start.stage >= end.stage
+    ):
+        issues.append(
+            f"{p} measure {m.name} の段階の間の時間は、前の段階（{m.lag.start}）から後の段階"
+            f"（{m.lag.end}）へ指定してください"
+        )
     return issues
 
 

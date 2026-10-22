@@ -692,3 +692,58 @@ def test_row_count_measure_needs_no_source(model: BeamModel) -> None:
     # 具体例の件数は 1 行 1 件
     model.events[0].examples[0].values[m.name] = 3
     assert any("粒度 1 行の件数" in i for i in model.finalize_issues())
+
+
+def test_stage_and_lag_rules() -> None:
+    """段階を経て進む出来事は When ごとに段階の順番を持ち、ラグは前の段階から後の段階へ（#140）。"""
+    from adp.beam import LagSpec, StoryType
+
+    model = load(Path(__file__).parents[1] / "fixtures" / "beam" / "order_fulfillment_stages.yml")
+    assert model.finalize_issues() == []
+    event = model.events[0]
+    shipped = event.dimension("shipped_at")
+    assert shipped is not None
+    shipped.stage = None
+    assert any("shipped_at が何番目の段階か" in i for i in model.finalize_issues())
+    shipped.stage = 1
+    assert any("段階の順番（stage）が重なっています" in i for i in model.finalize_issues())
+    shipped.stage = 2
+
+    lag = event.measure("order_to_ship_days")
+    assert lag is not None and lag.lag is not None
+    lag.lag = LagSpec(start="shipped_at", end="ordered_at")
+    assert any("前の段階（shipped_at）から後の段階" in i for i in model.finalize_issues())
+    lag.lag = LagSpec(start="ordered_at", end="no_such")
+    assert any("段階 no_such が When にありません" in i for i in model.finalize_issues())
+    lag.lag = LagSpec(start="ordered_at", end="shipped_at")
+
+    # ラグは平均・最短・最長で、時点の値ではない。source は書かない。データが無いなら作らない
+    from adp.beam import Additivity, Aggregation, Availability, SourceRef
+
+    lag.aggregation = Aggregation.SUM
+    lag.additivity = Additivity.ADDITIVE
+    assert any("平均（average）・最短（min）・最長（max）" in i for i in model.finalize_issues())
+    lag.aggregation, lag.additivity = Aggregation.MAX, Additivity.SEMI_ADDITIVE
+    lag.non_additive_dimension = "ordered_at"
+    assert any("時点の値（semi_additive）ではありません" in i for i in model.finalize_issues())
+    lag.aggregation, lag.additivity = Aggregation.AVERAGE, Additivity.NON_ADDITIVE
+    lag.non_additive_dimension = None
+    lag.source = SourceRef(table="raw.shipments", column="shipped_at")
+    assert any("source は書きません" in i for i in model.finalize_issues())
+    lag.source = None
+    lag.availability = Availability.UNAVAILABLE
+    assert not any("source" in i for i in model.finalize_issues() if "order_to_ship" in i)
+    lag.availability = Availability.AVAILABLE
+    assert model.finalize_issues() == []
+
+    # 日時が 1 つしか無ければ段階を経て進む出来事にできない（出来事として記録する）
+    stages = list(event.dimensions)
+    event.dimensions = [d for d in stages if d.ref not in ("shipped_at", "delivered_at")]
+    assert any("story_type: discrete）として記録" in i for i in model.finalize_issues())
+    event.dimensions = stages
+
+    # 段階とラグは evolving のイベントでだけ
+    event.story_type = StoryType.DISCRETE
+    issues = model.finalize_issues()
+    assert any("段階（stage）は、段階を経て進む出来事" in i for i in issues)
+    assert any("段階の間の時間（lag）は、段階を経て進む出来事" in i for i in issues)
