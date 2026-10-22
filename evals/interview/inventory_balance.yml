@@ -17,7 +17,7 @@ checks:
   # 増減の記録を積み上げ、棚卸の行で数え直した数に置き換える（ADR 0008）
   - measure_state:
       method: running_total
-      reset: {column: raw.inventory.movement_type, includes: [count]}
+      reset: {column: raw.inventory.movement_type, includes: [count], excludes: [receipt, transfer_out, disposal]}
   - grain_keys_w: [what, where, when]
   - has_w: [what, where, when]
   - has_hierarchy: product

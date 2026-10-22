@@ -584,9 +584,13 @@ def test_measure_state_check() -> None:
     beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
     measure = beam.events[0].measure(beam.metrics[0].measure or "")
     assert measure is not None
-    spec = {
+    spec: dict[str, Any] = {
         "method": "running_total",
-        "reset": {"column": "raw.orders.order_status", "includes": ["completed"]},
+        "reset": {
+            "column": "raw.orders.order_status",
+            "includes": ["completed"],
+            "excludes": ["returned"],
+        },
     }
 
     def passed(opts: Any) -> bool:
@@ -600,10 +604,27 @@ def test_measure_state_check() -> None:
     )
     measure.state = StateSpec(method=StateMethod.RUNNING_TOTAL, reset=[reset])
     assert passed(spec) and passed({"method": "running_total"})
-    assert not passed(spec | {"reset": {"column": "raw.orders.order_status", "includes": ["x"]}})
-    assert not passed(spec | {"reset": {"column": "raw.stores.channel", "includes": ["completed"]}})
+    other = {"includes": ["x"], "excludes": ["returned"]}
+    assert not passed(spec | {"reset": {"column": "raw.orders.order_status"} | other})
+    channel = {"column": "raw.stores.channel", "includes": ["completed"], "excludes": ["x"]}
+    assert not passed(spec | {"reset": channel})
+    # 広すぎる条件（除くべき値の行でも置き換える）は通らない
+    measure.state.reset = [reset.model_copy(update={"values": ["completed", "returned"]})]
+    assert not passed(spec)
+    measure.state.reset = [
+        reset.model_copy(update={"operator": FilterOperator.NOT_IN, "values": ["cancelled"]})
+    ]
+    assert not passed(spec)
+    measure.state.reset = [
+        reset.model_copy(update={"operator": FilterOperator.NOT_IN, "values": ["returned"]})
+    ]
+    assert passed(spec)
     with pytest.raises(ValueError, match="method"):
         passed({"reset": spec["reset"]})
+    with pytest.raises(ValueError):
+        passed({"method": "running_totl"})
+    with pytest.raises(ValueError, match="includes と excludes"):
+        passed({"method": "running_total", "reset": {"column": "raw.orders.order_status"}})
 
 
 def test_purpose_question_check() -> None:
