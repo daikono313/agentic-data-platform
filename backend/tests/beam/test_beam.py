@@ -692,3 +692,33 @@ def test_row_count_measure_needs_no_source(model: BeamModel) -> None:
     # 具体例の件数は 1 行 1 件
     model.events[0].examples[0].values[m.name] = 3
     assert any("粒度 1 行の件数" in i for i in model.finalize_issues())
+
+
+def test_stage_and_lag_rules() -> None:
+    """段階を経て進む出来事は When ごとに段階の順番を持ち、ラグは前の段階から後の段階へ（#140）。"""
+    from adp.beam import LagSpec, StoryType
+
+    model = load(Path(__file__).parents[1] / "fixtures" / "beam" / "order_fulfillment_stages.yml")
+    assert model.finalize_issues() == []
+    event = model.events[0]
+    shipped = event.dimension("shipped_at")
+    assert shipped is not None
+    shipped.stage = None
+    assert any("shipped_at が何番目の段階か" in i for i in model.finalize_issues())
+    shipped.stage = 1
+    assert any("段階の順番（stage）が重なっています" in i for i in model.finalize_issues())
+    shipped.stage = 2
+
+    lag = event.measure("order_to_ship_days")
+    assert lag is not None and lag.lag is not None
+    lag.lag = LagSpec(start="shipped_at", end="ordered_at")
+    assert any("前の段階（shipped_at）から後の段階" in i for i in model.finalize_issues())
+    lag.lag = LagSpec(start="ordered_at", end="no_such")
+    assert any("段階 no_such が When にありません" in i for i in model.finalize_issues())
+    lag.lag = LagSpec(start="ordered_at", end="shipped_at")
+
+    # 段階とラグは evolving のイベントでだけ
+    event.story_type = StoryType.DISCRETE
+    issues = model.finalize_issues()
+    assert any("段階（stage）は、段階を経て進む出来事" in i for i in issues)
+    assert any("段階の間の時間（lag）は、段階を経て進む出来事" in i for i in issues)

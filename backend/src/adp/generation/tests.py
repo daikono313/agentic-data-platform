@@ -16,7 +16,15 @@ from typing import Any
 
 import duckdb
 
-from adp.beam import BeamModel, BusinessEvent, EventExample, StateMethod, TimeGrain
+from adp.beam import (
+    BeamModel,
+    BusinessEvent,
+    EventExample,
+    LagSpec,
+    LagUnit,
+    StateMethod,
+    TimeGrain,
+)
 from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
@@ -268,6 +276,9 @@ def _expected(
             out[c.name] = str(v)[:10] if v is not None else None
         elif c.role == ColumnRole.MEASURE:
             measure = event.measure(c.source_ref or "")
+            if measure is not None and measure.lag is not None:
+                out[c.name] = _lag(fact, measure.lag, row)
+                continue
             if measure is None or measure.source is None:
                 continue
             alias = next(
@@ -285,6 +296,29 @@ def _expected(
             source_expr = measure.source.column or measure.source.expr or ""
             out[c.name] = _evaluate(source_expr, row[alias], types[alias])
     return out
+
+
+def _lag(fact: FactTable, lag: LagSpec, row: dict[str, dict[str, object]]) -> int | None:
+    """段階の間の時間の期待値。SQL の date_diff と同じく、日・時の境目の数（#140）。"""
+
+    def at(ref: str) -> datetime | None:
+        col = next(
+            (c for c in fact.columns if c.role == ColumnRole.TIMESTAMP and c.source_ref == ref),
+            None,
+        )
+        m = _COLUMN_REF.match(col.expr) if col else None
+        v = row[m.group(1)][m.group(2)] if m else None
+        return v if isinstance(v, datetime) or v is None else datetime.fromisoformat(str(v))
+
+    start, end = at(lag.start), at(lag.end)
+    if start is None or end is None:
+        return None
+    if lag.unit == LagUnit.DAY:
+        return (end.date() - start.date()).days
+    hours = end.replace(minute=0, second=0, microsecond=0) - start.replace(
+        minute=0, second=0, microsecond=0
+    )
+    return int(hours.total_seconds() // 3600)
 
 
 def _measure_alias(fact: FactTable, table: str) -> str | None:

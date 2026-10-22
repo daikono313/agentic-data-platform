@@ -45,6 +45,7 @@ export type StateMethod = "last_value" | "running_total";
  * via the `definition` "FilterOperator".
  */
 export type FilterOperator = "=" | "!=" | "in" | "not_in";
+export type LagUnit = "day" | "hour";
 /**
  * How many 以外の 6W。How many は measure として別に持つ。
  *
@@ -74,6 +75,11 @@ export type GapKind = "data_unavailable" | "unanswered" | "conflict" | "deferred
  * via the `definition` "FactType".
  */
 export type FactType = "transaction" | "periodic_snapshot" | "accumulating_snapshot";
+/**
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "LagUnit".
+ */
+export type LagUnit1 = "day" | "hour";
 /**
  * This interface was referenced by `BEAM`'s JSON-Schema
  * via the `definition` "MetricStatus".
@@ -238,6 +244,10 @@ export interface Measure {
    * 定期的な状態（recurring）のイベントのとき、記録からの値の求め方
    */
   state?: StateSpec | null;
+  /**
+   * 段階を経て進む出来事（evolving）で、2 つの段階の間の時間を measure にするとき（source は書かない）
+   */
+  lag?: LagSpec | null;
 }
 /**
  * 定期的な状態（story_type: recurring）の measure を、記録からどう求めるか（#138、ADR 0008）。
@@ -274,6 +284,26 @@ export interface MetricFilter {
   values: [string | number | number | boolean, ...(string | number | number | boolean)[]];
 }
 /**
+ * 段階を経て進む出来事（evolving）の、2 つの段階の間の時間（ラグ。#140）。
+ *
+ * 生成器が段階の日時の列から `date_diff(unit, start, end)` で計算する（日・時の境目を数える）。
+ * 終わりの段階にまだ達していない行は NULL。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "LagSpec".
+ */
+export interface LagSpec {
+  /**
+   * 始まりの段階の When の ref
+   */
+  start: string;
+  /**
+   * 終わりの段階の When の ref（start より後の段階）
+   */
+  end: string;
+  unit?: LagUnit;
+}
+/**
  * 6W のいずれかに対応するディメンション。
  *
  * This interface was referenced by `BEAM`'s JSON-Schema
@@ -300,6 +330,10 @@ export interface Dimension {
    * When の最小粒度
    */
   time_grain?: TimeGrain | null;
+  /**
+   * 段階を経て進む出来事（evolving）の When の、段階の順番（1 から。例: 注文 1・出荷 2・配達 3）
+   */
+  stage?: number | null;
   /**
    * ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）
    */

@@ -483,3 +483,57 @@ def test_factless_fact_counts_events(tmp_path: Path) -> None:
         con.sql("select shipping_method, count(*) from raw.shipments group by 1").fetchall()
     )
     assert got == expected
+
+
+def test_accumulating_snapshot_stage_lags(tmp_path: Path) -> None:
+    """段階を経て進む出来事（注文 → 出荷 → 配達）の段階の日時と、段階の間の日数（ラグ）を
+    生成する（#140）。ラグは段階の日時の列から計算し、源泉から独立に求めた値と一致する。"""
+    from datetime import datetime
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    assert beam.finalize_issues() == []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    [fact] = design.facts
+    lags = {c.name: c.expr for c in fact.columns if c.name.endswith("_days")}
+    assert lags == {
+        "order_to_ship_days": "date_diff('day', t1.ordered_at, t0.shipped_at)",
+        "ship_to_delivery_days": "date_diff('day', t0.shipped_at, t0.delivered_at)",
+    }
+    # 後の段階の日時は、その段階に達するまで NULL でよい
+    assert {c.name: c.nullable for c in fact.columns if c.name.endswith("_on")} == {
+        "ordered_on": False,
+        "shipped_on": True,
+        "delivered_on": True,
+    }
+    generation = generate_models(design, info, beam)
+    info.write(generation.files)
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+    assert "test_fct_fulfillments_example_1" in result.stdout
+    assert conventions_violations(warehouse) == []
+    for q in generation.queries:
+        query = mf_query(warehouse, q)
+        assert query.returncode == 0, query.stdout[-2000:] + query.stderr[-1000:]
+
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    raw = con.sql(
+        "select s.shipment_id, o.ordered_at, s.shipped_at, s.delivered_at"
+        " from raw.shipments s left join raw.orders o using (order_id)"
+    ).fetchall()
+
+    def days(a: datetime | None, b: datetime | None) -> int | None:
+        return None if a is None or b is None else (b.date() - a.date()).days
+
+    expected = {r[0]: (days(r[1], r[2]), days(r[2], r[3])) for r in raw}
+    got = {
+        r[0]: (r[1], r[2])
+        for r in con.sql(
+            "select shipment_id, order_to_ship_days, ship_to_delivery_days"
+            " from main.fct_fulfillments"
+        ).fetchall()
+    }
+    assert got == expected

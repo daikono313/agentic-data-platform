@@ -627,6 +627,31 @@ def test_measure_state_check() -> None:
         passed({"method": "running_total", "reset": {"column": "raw.orders.order_status"}})
 
 
+def test_measure_lag_check() -> None:
+    """段階の間の時間（ラグ）の measure を、段階の日時の元の列で採点する（#140）。"""
+    from adp.beam import LagSpec
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(
+        Path(__file__).parents[1] / "fixtures" / "beam" / "order_fulfillment_stages.yml"
+    )
+
+    def passed(opts: Any) -> bool:
+        return _check(beam, {"measure_lag": opts}).passed
+
+    ship = {"start": "raw.shipments.shipped_at", "end": "raw.shipments.delivered_at"}
+    assert passed(ship)
+    assert passed({"start": "raw.orders.ordered_at", "end": "raw.shipments.shipped_at"})
+    assert not passed({"start": "raw.shipments.delivered_at", "end": "raw.shipments.shipped_at"})
+    measure = beam.events[0].measure("ship_to_delivery_days")
+    assert measure is not None
+    measure.lag = LagSpec(start="ordered_at", end="delivered_at")
+    assert not passed(ship)
+    with pytest.raises(ValueError, match="start と end"):
+        passed({"start": "raw.shipments.shipped_at"})
+
+
 def test_purpose_question_check() -> None:
     """要求の目的（何の判断・行動に使うか）を聞いたか（#135）。区分のルールの質問では通らない。"""
     from adp.evals.interview import _transcript_check_map

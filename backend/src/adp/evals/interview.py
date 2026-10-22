@@ -233,6 +233,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "ratio_of": lambda: _ratio_of(beam, opts),
         # 状態の指標の measure の値の求め方（ADR 0008）。reset は置き換えに使う列と値
         "measure_state": lambda: _measure_state(beam, opts),
+        # 段階の間の時間（ラグ）を、段階の日時の元の列から計算する measure がある（#140）
+        "measure_lag": lambda: _measure_lag(beam, opts),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -360,6 +362,23 @@ def _measure_state(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
         if not column or (filters and _keeps_exactly(filters, includes, excludes)):
             return True, "; ".join(seen)
     return False, "; ".join(seen) or "求め方なし"
+
+
+def _measure_lag(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """ある指標の measure が、start の列の段階から end の列の段階までの時間（lag）か。"""
+    if not opts.get("start") or not opts.get("end"):
+        raise ValueError(f"measure_lag には start と end（元の列）が必要です: {opts}")
+    seen: list[str] = []
+    for m, e in _metrics_events(beam):
+        ms = e.measure(m.measure) if e is not None and m.measure else None
+        if ms is None or ms.lag is None:
+            continue
+        start, end = e.dimension(ms.lag.start), e.dimension(ms.lag.end)
+        cols = (_column(start.fact_key) if start else None, _column(end.fact_key) if end else None)
+        seen.append(f"{ms.name}: {cols[0]} → {cols[1]}")
+        if cols == (str(opts["start"]), str(opts["end"])):
+            return True, "; ".join(seen)
+    return False, "; ".join(seen) or "ラグなし"
 
 
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:

@@ -271,6 +271,22 @@ class StateMethod(StrEnum):
     """記録が増えた・減った数（入出庫など）。時刻の順に積み上げる"""
 
 
+class LagUnit(StrEnum):
+    DAY = "day"
+    HOUR = "hour"
+
+
+class LagSpec(_Base):
+    """段階を経て進む出来事（evolving）の、2 つの段階の間の時間（ラグ。#140）。
+
+    生成器が段階の日時の列から `date_diff(unit, start, end)` で計算する（日・時の境目を数える）。
+    終わりの段階にまだ達していない行は NULL。"""
+
+    start: Identifier = Field(description="始まりの段階の When の ref")
+    end: Identifier = Field(description="終わりの段階の When の ref（start より後の段階）")
+    unit: LagUnit = LagUnit.DAY
+
+
 class StateSpec(_Base):
     """定期的な状態（story_type: recurring）の measure を、記録からどう求めるか（#138、ADR 0008）。
 
@@ -307,6 +323,11 @@ class Measure(_Base):
     state: StateSpec | None = Field(
         default=None,
         description="定期的な状態（recurring）のイベントのとき、記録からの値の求め方",
+    )
+    lag: LagSpec | None = Field(
+        default=None,
+        description="段階を経て進む出来事（evolving）で、2 つの段階の間の時間を measure にする"
+        "とき（source は書かない）",
     )
 
     @property
@@ -353,6 +374,12 @@ class Dimension(_Base):
         default_factory=list, description="粗い→細かいの順の属性名（例: region, prefecture）"
     )
     time_grain: TimeGrain | None = Field(default=None, description="When の最小粒度")
+    stage: int | None = Field(
+        default=None,
+        ge=1,
+        description="段階を経て進む出来事（evolving）の When の、段階の順番（1 から。例: 注文 1・"
+        "出荷 2・配達 3）",
+    )
     business_key: SourceRef | None = Field(
         default=None,
         description="ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）",

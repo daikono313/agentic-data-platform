@@ -1,0 +1,108 @@
+schema_version: 1
+name: order_fulfillment_stages
+title: 配送方法別の注文から出荷・配達までの日数
+request: 注文してから出荷・お届けまでに何日かかっているかを、配送方法ごとに月別で見たい
+events:
+  - name: order_is_fulfilled
+    table_name: fulfillments
+    label: 注文が出荷され、配達される
+    subject: 店舗
+    verb: 届ける
+    object: 注文
+    story_type: evolving
+    grain: 配送 1 件（注文 → 出荷 → 配達と進む）
+    grain_keys: [shipment_id]
+    agg_time_dimension: ordered_at
+    degenerate_dimensions:
+      - name: shipment_id
+        label: 配送番号
+        source: {table: raw.shipments, column: shipment_id}
+    source_tables: [raw.shipments, raw.orders]
+    priority: medium
+    impact: medium
+    effort: medium
+    measures:
+      # 段階の間の時間（ラグ）。生成器が段階の日時から計算する（#140）
+      - name: order_to_ship_days
+        label: 注文から出荷までの日数
+        aggregation: average
+        additivity: non_additive
+        unit: 日
+        availability: available
+        lag: {start: ordered_at, end: shipped_at, unit: day}
+      - name: ship_to_delivery_days
+        label: 出荷から配達までの日数
+        aggregation: average
+        additivity: non_additive
+        unit: 日
+        availability: available
+        lag: {start: shipped_at, end: delivered_at, unit: day}
+    dimensions:
+      - w: when
+        name: ordered_at
+        label: 注文日時
+        time_grain: day
+        stage: 1
+        fact_key: {table: raw.orders, column: ordered_at}
+      - w: when
+        name: shipped_at
+        label: 出荷日時
+        time_grain: day
+        stage: 2
+        fact_key: {table: raw.shipments, column: shipped_at}
+      - w: when
+        name: delivered_at
+        label: 配達日時
+        time_grain: day
+        stage: 3
+        fact_key: {table: raw.shipments, column: delivered_at}
+      - w: how
+        name: shipping_method
+        label: 配送方法
+        business_key: {table: raw.shipments, column: shipping_method}
+        fact_key: {table: raw.shipments, column: shipping_method}
+        attributes:
+          - name: shipping_method
+            label: 配送方法
+            examples: [express, standard]
+            source: {table: raw.shipments, column: shipping_method}
+            availability: available
+    examples:
+      - values:
+          shipment_id: 2
+          ordered_at: "2024-12-21"
+          shipped_at: "2024-12-23"
+          delivered_at: "2024-12-27"
+          shipping_method.shipping_method: standard
+          order_to_ship_days: 2
+          ship_to_delivery_days: 4
+      - values:
+          shipment_id: 1
+          ordered_at: "2025-02-12"
+          shipped_at: "2025-02-12"
+          delivered_at: "2025-02-13"
+          shipping_method.shipping_method: express
+          order_to_ship_days: 0
+          ship_to_delivery_days: 1
+metrics:
+  - name: avg_order_to_ship_days
+    label: 注文から出荷までの平均日数
+    question: 注文してから出荷までに何日かかっているか
+    framed_question: 月別・配送方法別の、注文から出荷までの平均日数は何日か
+    purpose: 出荷が遅い配送方法を見直す
+    type: simple
+    event: order_is_fulfilled
+    measure: order_to_ship_days
+    group_by: [ordered_at.month, shipping_method.shipping_method]
+    status: confirmed
+  - name: avg_ship_to_delivery_days
+    label: 出荷から配達までの平均日数
+    question: 出荷してからお届けまでに何日かかっているか
+    framed_question: 月別・配送方法別の、出荷から配達までの平均日数は何日か
+    purpose: お届けが遅い配送方法を見直す
+    type: simple
+    event: order_is_fulfilled
+    measure: ship_to_delivery_days
+    group_by: [ordered_at.month, shipping_method.shipping_method]
+    status: confirmed
+gaps: []

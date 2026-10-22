@@ -32,7 +32,8 @@
               "expr": null
             },
             "availability": "available",
-            "state": null
+            "state": null,
+            "lag": null
           },
           {
             "name": "sales_amount",
@@ -48,7 +49,8 @@
               "expr": "quantity * unit_price - discount_amount"
             },
             "availability": "available",
-            "state": null
+            "state": null,
+            "lag": null
           },
           {
             "name": "unit_price",
@@ -64,7 +66,8 @@
               "expr": null
             },
             "availability": "available",
-            "state": null
+            "state": null,
+            "lag": null
           },
           {
             "name": "gross_margin",
@@ -76,7 +79,8 @@
             "non_additive_dimension": null,
             "source": null,
             "availability": "unavailable",
-            "state": null
+            "state": null,
+            "lag": null
           }
         ],
         "dimensions": [
@@ -148,6 +152,7 @@
               "prefecture"
             ],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.customers",
               "column": "customer_id",
@@ -203,6 +208,7 @@
               "subcategory"
             ],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.products",
               "column": "product_id",
@@ -223,6 +229,7 @@
             "attributes": [],
             "hierarchy": [],
             "time_grain": "day",
+            "stage": null,
             "business_key": null,
             "fact_key": {
               "table": "raw.orders",
@@ -271,6 +278,7 @@
             ],
             "hierarchy": [],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.stores",
               "column": "store_id",
@@ -308,6 +316,7 @@
             ],
             "hierarchy": [],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.promotions",
               "column": "promotion_id",
@@ -346,6 +355,7 @@
             ],
             "hierarchy": [],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.orders",
               "column": "order_status",
@@ -383,6 +393,7 @@
             ],
             "hierarchy": [],
             "time_grain": null,
+            "stage": null,
             "business_key": {
               "table": "raw.orders",
               "column": "payment_method",
