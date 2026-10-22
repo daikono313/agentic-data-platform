@@ -164,7 +164,7 @@ def propose_from_profile(profile: TableProfile, ontology: Ontology) -> OntologyP
             {
                 "from": target.name,
                 "to": name,
-                "verb": "関わる" if kind == "event" else "持つ",
+                "verb": "持つ" if kind == "entity" else "関わる",
                 "via": f"{source}.{column}",
             }
         )
