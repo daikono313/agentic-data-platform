@@ -38,7 +38,7 @@ v5（オーナーの指示、2026-10-12、#141）で、履歴の要る属性を�
 
 ### 案 A: snapshot と、別の履歴モデル `dim_<name>_history` を作る（採用）
 
-- 履歴の要る属性を持つディメンションごとに、snapshot（`snapshots/snp_<table>.yml`）と、そこから作る SCD2 のモデル `dim_<name>_history` を生成する。
+- 履歴の要る属性を持つディメンションごとに、snapshot（`warehouse/` の `snapshots` に置く `snp_<table>.yml`）と、そこから作る SCD2 のモデル `dim_<name>_history` を生成する。
 - 履歴モデルの中身:
   - 版のキー
   - 現在の値の dim と同じキー（`<name>_key`）。natural の entity の名前は、現在の値の dim の primary の entity と同じ `<name>` にする。だから fct を変えずに結合できる
