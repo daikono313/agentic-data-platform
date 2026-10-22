@@ -187,22 +187,22 @@ def test_snapshot_needs_a_state_concept() -> None:
     """定期スナップショットの fct は、同じ源泉の出来事の fct（入出庫）とは別の、状態の概念に
     結び付ける（ADR 0008。概念とモデルは 1 対 1）。状態の概念が無ければ止める。"""
     beam = load(FIXTURES / "stock_levels.yml")
-    design, _ = _design(beam)
+    ontology = load_ontology(REPO_ROOT / "ontology" / "ontology.yml")
+    assert ontology is not None
+    # 正本には在庫数（状態）の概念があり、それに結び付けて作れる
+    level = ontology.concept("stock_level")
+    assert level is not None and level.kind == "state" and level.source == "raw.inventory"
+    design = DesignBuilder(CatalogSchema(Catalog(DB)), ontology=ontology).build(beam)
+    assert design.blockers == [], [b.message for b in design.blockers]
+
+    without = ontology.model_copy(
+        update={"concepts": [c for c in ontology.concepts if c.kind != "state"]}
+    )
+    design = DesignBuilder(CatalogSchema(Catalog(DB)), ontology=without).build(beam)
     messages = [b.message for b in design.blockers]
     # 入出庫の fct（出来事の概念）への指標の追加は案内しない
     assert not any("table_name を stock_movements" in m for m in messages), messages
     assert any("fct_stock_levels" in m and "モデルの無い状態の概念" in m for m in messages)
-
-    ontology = load_ontology(REPO_ROOT / "ontology" / "ontology.yml")
-    assert ontology is not None
-    movement = ontology.concept("inventory_movement")
-    assert movement is not None
-    level = movement.model_copy(
-        update={"name": "stock_level", "label": "在庫数", "kind": "state", "model": None}
-    )
-    ontology = ontology.model_copy(update={"concepts": [*ontology.concepts, level]})
-    design = DesignBuilder(CatalogSchema(Catalog(DB)), ontology=ontology).build(beam)
-    assert design.blockers == [], [b.message for b in design.blockers]
 
 
 # --- 設計の確認（DB なし。FakeSchema とオントロジーの写し） --------------------------------

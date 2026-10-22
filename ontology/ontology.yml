@@ -230,6 +230,13 @@ concepts:
   - name: quantity
     label: 入出庫数量
     column: quantity
+- name: stock_level
+  label: 在庫数
+  domain: inventory
+  kind: state
+  source: raw.inventory
+  key: inventory_id
+  attributes: []
 relations:
 - from: customer
   to: order
@@ -271,6 +278,14 @@ relations:
   to: product
   verb: 動かす
   via: raw.inventory.product_id
+- from: store
+  to: stock_level
+  verb: 持つ
+  via: raw.inventory.store_id
+- from: stock_level
+  to: product
+  verb: 数える
+  via: raw.inventory.product_id
 constraints:
 - concept: store
   text: channel が online / app の店舗は都道府県・地方を持たない
@@ -282,3 +297,5 @@ constraints:
   text: unit_cost は標準原価で、実績原価ではない
 - concept: inventory_movement
   text: 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。月末在庫は、その月までの最新の棚卸の数か、そこから後の入庫・移動出庫・廃棄を足した帳簿の数
+- concept: stock_level
+  text: 店舗 × 商品の月末の在庫数。入出庫の増減を積み上げ、棚卸で数えた数に置き換える。期首の在庫は記録の外にあるので、最初の棚卸より前の月は出さない
