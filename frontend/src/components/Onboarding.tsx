@@ -7,7 +7,9 @@ import {
   type CleansingRule,
   type CleansingSpec,
   type ColumnProfile,
+  KIND_LABELS,
   type OnboardingDraft,
+  type OntologyConcept,
   type OntologyPatch,
 } from '@/api/datasets'
 import type { JobView } from '@/api/types'
@@ -272,10 +274,11 @@ function DraftBody({
                     aria-label="種類"
                     className={SELECT}
                     value={c.kind}
-                    onChange={(e) => update(i, { kind: e.target.value as 'entity' | 'event' })}
+                    onChange={(e) => update(i, { kind: e.target.value as OntologyConcept['kind'] })}
                   >
-                    <option value="event">出来事（fact の候補）</option>
-                    <option value="entity">もの・人・場所（dim の候補）</option>
+                    <option value="event">{KIND_LABELS.event}（fact の候補）</option>
+                    <option value="state">{KIND_LABELS.state}（定期的に測る値。fact の候補）</option>
+                    <option value="entity">{KIND_LABELS.entity}・場所（dim の候補）</option>
                   </select>
                 </dd>
                 <dt className="font-semibold">1 件を見分けるキー</dt>
@@ -459,7 +462,7 @@ function withFallbackLabels(patch: OntologyPatch): OntologyPatch {
 }
 
 /** backend の adp.cleansing.check.column_kind の種類 → 表示 */
-const KIND_LABELS: Record<string, string> = {
+const COLUMN_KIND_LABELS: Record<string, string> = {
   text: '文字',
   timestamp: '日時',
   date: '日付',
@@ -474,7 +477,7 @@ function ValueHint({ profile: p, kind }: { profile?: ColumnProfile; kind?: strin
   const ranged = !p.masked && p.min !== null && (p.histogram || p.monthly) && p.distinct_count > 10
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Badge variant="secondary">{KIND_LABELS[kind ?? ''] ?? 'その他'}</Badge>
+      <Badge variant="secondary">{COLUMN_KIND_LABELS[kind ?? ''] ?? 'その他'}</Badge>
       {ranged ? (
         <span>
           {p.min} 〜 {p.max}

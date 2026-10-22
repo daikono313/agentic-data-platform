@@ -232,7 +232,7 @@ flowchart LR
 - **conformed dimension（共通ディメンション）**: 複数の fct で共有されるディメンション。
 - **BEAM 成果物**: Canvas と Matrix とメトリクス要求をまとめた構造化データ（`beam/*.yml`）。
 - **certificate**: PR をマージしてよいと機械的に判定できる条件の集合（[certificate.md](certificate.md)）。
-- **オントロジー**: 業務の概念（もの・人・場所 = entity、出来事 = event）と、その属性・関係・制約の整理（[ontology.md](ontology.md)、正本は `ontology/ontology.yml`）。entity は dim、event は fact の候補になる。源泉が増えたら、まずオントロジーを更新してから fact / dim を整理する。
+- **オントロジー**: 業務の概念（もの・人・場所 = entity、出来事 = event、定期的に測る状態 = state）と、その属性・関係・制約の整理（[ontology.md](ontology.md)、正本は `ontology/ontology.yml`）。entity は dim、event は fact、state は定期スナップショットの fact の候補になる（[ADR 0008](adr/0008-generate-state-snapshots-from-beam.md)）。源泉が増えたら、まずオントロジーを更新してから fact / dim を整理する。
 
 ## Constraints
 
