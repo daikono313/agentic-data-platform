@@ -213,6 +213,34 @@ def test_repeats_after_clarification_or_confirmation_are_allowed() -> None:
     assert _checks(confirm)["no_repeated_questions"]
 
 
+def test_compare_splits_content_and_style(tmp_path: Path) -> None:
+    """合格率を、中身（シナリオのチェック）と言い回し（どのシナリオでも行うチェック）に分けて出す
+    （#218）。"""
+    checks = [
+        {"name": "finalizable", "passed": True},
+        {"name": "metric_aggregation: count", "passed": True},
+        {"name": "no_choice_position_words", "passed": False},
+    ]
+    for d in ("b", "a"):
+        path = tmp_path / d / "s.1.json"
+        path.parent.mkdir(parents=True)
+        talk = [{"role": "assistant", "text": "1 行は何を表しますか？"}]
+        data = {"scenario": "s", "passed": False, "transcript": talk, "checks": checks}
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    table = compare(tmp_path / "b", tmp_path / "a")
+    header = next(line for line in table.splitlines() if line.startswith("| シナリオ |"))
+    row = next(line for line in table.splitlines() if line.startswith("| s |"))
+    cells = dict(zip(header.split("|"), row.split("|"), strict=True))
+    assert cells[" 合格率 "].strip() == "0% → 0%"
+    assert cells[" 合格率（中身） "].strip() == "100% → 100%"
+    assert cells[" 合格率（言い回し） "].strip() == "0% → 0%"
+    # エラーで終わった回は、チェックが通っていても中身を不合格にする
+    from adp.evals.compare import _pass_rates
+
+    failed = {"passed": False, "error": "API", "checks": checks[:2]}
+    assert _pass_rates(failed)["content_passed"] == 0
+
+
 def test_compare_totals_only_shared_scenarios(tmp_path: Path) -> None:
     import pytest
 
