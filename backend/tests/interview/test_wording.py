@@ -342,8 +342,25 @@ def test_drops_paragraph_repeated_word_for_word() -> None:
         "| 店舗 | 数量 |\n|---|---|\n| A | 1 |\n\n| 店舗 | 数量 |\n|---|---|\n| A | 1 |",
         "- 東京都01号店\n- 大阪府02号店\n\n- 東京都01号店\n- 大阪府02号店",
         "```\nselect 1\n```\n\n```\nselect 1\n```",
+        "例です。\n\n    select a from b;\n\n    select a from b;",  # インデントのコード
         "はい。\n\nはい。",
+        # 離れた場所の同じ段落は残す（予告と表示が合わなくなるため）
+        "言い換えを改めてお見せします。\n\n「月ごとの金額はいくらか？」\n\n"
+        "言い換えを改めてお見せします。",
     ],
 )
 def test_keeps_paragraphs_that_are_not_word_for_word_repeats(text: str) -> None:
     assert clean_reply(text) == (text, [])
+
+
+def test_drops_repeated_block_of_paragraphs() -> None:
+    """段落のまとまりの書き直し（A B A B）は、後ろのまとまりを取り除く（#161）。"""
+    a, b = "次のように言い換えました。", "「月ごとの入荷数量はいくつか」"
+    assert clean_reply(f"{a}\n\n{b}\n\n{a}\n\n{b}") == (f"{a}\n\n{b}", [a, b])
+
+
+def test_drops_repeat_left_after_removing_closing_sentence() -> None:
+    """締めの一言を取り除いた後に同じになった段落も取り除く。"""
+    lead = "顧客の属性を確認しました。"
+    text = f"{lead}回答をお待ちしています。\n\n{lead}"
+    assert clean_reply(text, question="質問？") == (lead, ["回答をお待ちしています。", lead])
