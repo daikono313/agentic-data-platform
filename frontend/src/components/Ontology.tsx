@@ -168,7 +168,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                         const notes = view.attribute_notes?.[`${c.name}.${a.name}`]
                         return notes?.length ? `${a.label}（${notes.join('。')}）` : a.label
                       })
-                      .join('、')}</TableCell>
+                      .join('、') || '-'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
