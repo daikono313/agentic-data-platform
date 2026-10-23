@@ -21,6 +21,7 @@ from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
 from adp.design.builder import dim_key_expr
 from adp.generation.semantic import (
+    ROW_COUNT_EXPR,
     MetricQuery,
     SemanticError,
     dim_semantics,
@@ -555,7 +556,11 @@ def _extend_existing_fact(
             col.name in str(x.get("filter") or "") for x in new_in_model
         ):
             m["expr"] = existing_name
-    needed = {m["expr"] for m in new_in_model if isinstance(m.get("expr"), str)}
+    needed = {
+        m["expr"]
+        for m in new_in_model
+        if isinstance(m.get("expr"), str) and m["expr"] != ROW_COUNT_EXPR  # 行の件数は列が要らない
+    }
     missing = [c for c in fact.columns if c.name in needed and c.name not in have]
     if needed - have - {c.name for c in missing}:
         return None

@@ -17,6 +17,7 @@ from adp.beam import (
     BusinessEvent,
     Dimension,
     FactType,
+    Measure,
     MetricFilter,
     MetricRequest,
     SourceRef,
@@ -588,6 +589,12 @@ class DesignBuilder:
                 )
 
         for m in event.measures:
+            if m.counts_rows and m.availability == Availability.AVAILABLE:
+                continue  # 行の件数は列を持たない（Semantic Layer で数える。#139）
+            if m.lag is not None and m.availability == Availability.AVAILABLE:
+                if (lag := self._lag_column(event, m, columns)) is not None:
+                    columns.append(lag)
+                continue
             if m.availability != Availability.AVAILABLE or m.source is None:
                 self._issue(
                     IssueSeverity.WARNING,
@@ -638,6 +645,30 @@ class DesignBuilder:
         if event.fact_type == FactType.PERIODIC_SNAPSHOT:
             return self._snapshot(event, fact, resolve, src)
         return fact
+
+    def _lag_column(self, event: BusinessEvent, m: Measure, columns: list[Column]) -> Column | None:
+        """段階の間の時間（lag）の measure の列。段階の日時の列（`<base>_at`）から計算する
+        （日・時の境目を数える。終わりの段階に達していない行は NULL。#140）。"""
+        assert m.lag is not None
+        at = {c.source_ref: c.expr for c in columns if c.role == ColumnRole.TIMESTAMP}
+        start, end = at.get(m.lag.start), at.get(m.lag.end)  # FactTable を作る前なので列から引く
+        if start is None or end is None:
+            self._blocker(
+                f"[{event.name}] measure {m.name} の段階 {m.lag.start} / {m.lag.end} の日時が"
+                " fct にありません",
+                m.name,
+            )
+            return None
+        return Column(
+            name=m.name,
+            role=ColumnRole.MEASURE,
+            # 源泉の日時が文字列でも計算できるよう timestamp にそろえる（日付列の cast と同じ）
+            expr=f"date_diff('{m.lag.unit.value}', cast({start} as timestamp),"
+            f" cast({end} as timestamp))",
+            description=m.label + (f"（{m.unit}）" if m.unit else ""),
+            nullable=True,
+            source_ref=m.name,
+        )
 
     def _snapshot(
         self,
@@ -852,7 +883,12 @@ class DesignBuilder:
             if fact is None or event is None:
                 continue
             p = f"[metric {metric.name}]"
-            if metric.measure and fact.column(metric.measure) is None:
+            measure = event.measure(metric.measure or "")
+            if (
+                metric.measure
+                and fact.column(metric.measure) is None
+                and not (measure and measure.counts_rows)
+            ):
                 self._blocker(f"{p} measure {metric.measure} が {fact.name} にありません")
             for ref in metric.group_by:
                 dim_ref, _, attr = ref.partition(".")

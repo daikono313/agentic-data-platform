@@ -271,6 +271,22 @@ class StateMethod(StrEnum):
     """記録が増えた・減った数（入出庫など）。時刻の順に積み上げる"""
 
 
+class LagUnit(StrEnum):
+    DAY = "day"
+    HOUR = "hour"
+
+
+class LagSpec(_Base):
+    """段階を経て進む出来事（evolving）の、2 つの段階の間の時間（ラグ。#140）。
+
+    生成器が段階の日時の列から `date_diff(unit, start, end)` で計算する（日・時の境目を数える）。
+    終わりの段階にまだ達していない行は NULL。"""
+
+    start: Identifier = Field(description="始まりの段階の When の ref")
+    end: Identifier = Field(description="終わりの段階の When の ref（start より後の段階）")
+    unit: LagUnit = LagUnit.DAY
+
+
 class StateSpec(_Base):
     """定期的な状態（story_type: recurring）の measure を、記録からどう求めるか（#138、ADR 0008）。
 
@@ -302,12 +318,26 @@ class Measure(_Base):
         default=None,
         description="semi_additive のとき、足し上げできない When の ref（例: 残高の date）",
     )
-    source: SourceRef | None = None
+    source: SourceRef | None = Field(
+        default=None,
+        description="集計する列。1 行を 1 件と数える件数（count）なら書かない",
+    )
     availability: Availability = Availability.UNKNOWN
     state: StateSpec | None = Field(
         default=None,
         description="定期的な状態（recurring）のイベントのとき、記録からの値の求め方",
     )
+    lag: LagSpec | None = Field(
+        default=None,
+        description="段階を経て進む出来事（evolving）で、2 つの段階の間の時間を measure にする"
+        "とき（source は書かない）",
+    )
+
+    @property
+    def counts_rows(self) -> bool:
+        """出来事の件数（粒度 1 行を 1 件）を数える measure か。count で source の無いもの。
+        fct に列を持たない（中身のない出来事の fact。factless fact。#139）。"""
+        return self.aggregation == Aggregation.COUNT and self.source is None
 
 
 class DegenerateDimension(_Base):
@@ -347,6 +377,12 @@ class Dimension(_Base):
         default_factory=list, description="粗い→細かいの順の属性名（例: region, prefecture）"
     )
     time_grain: TimeGrain | None = Field(default=None, description="When の最小粒度")
+    stage: int | None = Field(
+        default=None,
+        ge=1,
+        description="段階を経て進む出来事（evolving）の When の、段階の順番（1 から。例: 注文 1・"
+        "出荷 2・配達 3）",
+    )
     business_key: SourceRef | None = Field(
         default=None,
         description="ディメンション自身のソース上の自然キー。When は不要（カレンダーを生成）",
@@ -383,9 +419,30 @@ class Dimension(_Base):
         return self
 
 
+class ExampleKind(StrEnum):
+    """具体例（event story）の型（#142）。典型の例のほかに、数え方を確かめる例を集める。"""
+
+    TYPICAL = "typical"
+    """典型（よくある 1 件）"""
+    VARIANT = "variant"
+    """別パターン（典型と違う区分・経路。例: 店頭受け取り、返品）"""
+    REPEAT = "repeat"
+    """繰り返し（同じ人・ものの 2 回目以降。例: 同じ顧客の再注文）"""
+    MISSING = "missing"
+    """欠損（値の無い項目がある。例: 会員でない顧客、プロモーションなし）"""
+    GROUP = "group"
+    """グループ（1 件に複数が付く、まとめて起きる。例: 1 注文に複数の商品）"""
+
+
 class EventExample(_Base):
     """インタビューで集めた具体例（event story）。unit test の期待値になる。"""
 
+    kind: ExampleKind = Field(
+        default=ExampleKind.TYPICAL,
+        description="具体例の型（typical: 典型 / variant: 別パターン / repeat: 繰り返し / "
+        "missing: 欠損 / group: グループ）",
+    )
+    note: str = Field(default="", description="典型とどこが違うか（典型なら空でよい）")
     values: dict[str, str | int | float | bool | None] = Field(
         description="キーは measure 名、縮退ディメンション名、`<dimension ref>.<attribute>`、"
         "または When の dimension ref（値は日付・日時の文字列）"

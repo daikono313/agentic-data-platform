@@ -29,6 +29,7 @@ from adp.beam import (
     BusinessEvent,
     FilterOperator,
     GapKind,
+    Measure,
     MetricFilter,
     MetricType,
     SourceRef,
@@ -48,8 +49,10 @@ from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_st
 from adp.interview.prompts import prompt_version
 from adp.interview.wording import (
     CONFIRMED,
+    english_sentences,
     hidden_confirmation,
     is_closing_sentence,
+    is_english_sentence,
     is_position_sentence,
     normalize,
     prose_sentences,
@@ -220,6 +223,14 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             and all(len(e.examples) >= int(arg) for e in _metric_event_list(beam)),
             str([len(e.examples) for e in _metric_event_list(beam)]),
         ),
+        # 指標の出来事それぞれに、型の違う具体例（典型と、別パターン・欠損など）がある（#142）
+        "example_kinds": lambda: (
+            bool(_metric_event_list(beam))
+            and all(
+                len({x.kind for x in e.examples}) >= int(arg) for e in _metric_event_list(beam)
+            ),
+            str([[x.kind.value for x in e.examples] for e in _metric_event_list(beam)]),
+        ),
         # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
         "shared_dimensions": lambda: _shared_dimensions(beam, args),
         # 以下は名前の揺れによらず、元の列（raw.orders.ordered_at）で採点する（#155）
@@ -233,6 +244,10 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "ratio_of": lambda: _ratio_of(beam, opts),
         # 状態の指標の measure の値の求め方（ADR 0008）。reset は置き換えに使う列と値
         "measure_state": lambda: _measure_state(beam, opts),
+        # 段階の間の時間（ラグ）を、段階の日時の元の列から計算する measure がある（#140）
+        "measure_lag": lambda: _measure_lag(beam, opts),
+        # 指標が、その源泉の出来事の件数（source の無い count。factless fact）を数える（#204）
+        "metric_counts_rows": lambda: _metric_counts_rows(beam, raw),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -362,16 +377,59 @@ def _measure_state(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
     return False, "; ".join(seen) or "求め方なし"
 
 
+def _measure_lag(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
+    """ある指標の measure が、start の列の段階から end の列の段階までの時間（lag）か。"""
+    if not opts.get("start") or not opts.get("end"):
+        raise ValueError(f"measure_lag には start と end（元の列）が必要です: {opts}")
+    seen: list[str] = []
+    for m, e in _metrics_events(beam):
+        ms = e.measure(m.measure) if e is not None and m.measure else None
+        if ms is None or ms.lag is None:
+            continue
+        start, end = e.dimension(ms.lag.start), e.dimension(ms.lag.end)
+        cols = (_column(start.fact_key) if start else None, _column(end.fact_key) if end else None)
+        seen.append(f"{ms.name}: {cols[0]} → {cols[1]}")
+        if cols == (str(opts["start"]), str(opts["end"])):
+            return True, "; ".join(seen)
+    return False, "; ".join(seen) or "ラグなし"
+
+
+def _measure_target(
+    event: BusinessEvent, measure: Measure | None, schema: SchemaInfo
+) -> str | None:
+    """measure が集計する元の列。出来事の件数（counts_rows）なら `rows:<1 行の元>`（#204）。"""
+    if measure is None:
+        return None
+    if measure.counts_rows:
+        return f"rows:{base_table(event, schema)}"
+    return _column(measure.source)
+
+
+def _metric_counts_rows(beam: BeamModel, table: Any) -> tuple[bool, str]:
+    """指標の measure が、table を 1 行の元にした出来事の件数（source の無い count）か。"""
+    if not isinstance(table, str) or not table:
+        raise ValueError(f"metric_counts_rows には源泉（<schema>.<table>）が必要です: {table}")
+    schema = _schema()
+    seen = [
+        _measure_target(e, e.measure(m.measure), schema)
+        for m, e in _metrics_events(beam)
+        if e is not None and m.measure is not None
+    ]
+    return f"rows:{table}" in seen, str(seen)
+
+
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
-    """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か。"""
+    """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か（件数は
+    `rows:<源泉>`）。"""
+
+    schema = _schema()
 
     def measure_column(name: str | None) -> str | None:
         metric = next((m for m in beam.metrics if m.name == name), None)
         event = beam.event(metric.event) if metric else None
         if metric is None or event is None or metric.measure is None:
             return None
-        measure = event.measure(metric.measure)
-        return _column(measure.source) if measure else None
+        return _measure_target(event, event.measure(metric.measure), schema)
 
     pairs = [
         (measure_column(m.numerator), measure_column(m.denominator))
@@ -426,6 +484,12 @@ def _repeated_text(m: Any) -> bool:
 def _position_words(m: Any) -> bool:
     """画面の位置を指す言い方があったか。"""
     return any(is_position_sentence(x) for x in _sentences(m))
+
+
+def _english_text(m: Any) -> bool:
+    """地の文に英語の作業メモがあったか（取り除いた文も数える。#161）。"""
+    removed = getattr(m, "removed", None) or []
+    return bool(english_sentences(m.text)) or any(is_english_sentence(x) for x in removed)
 
 
 def _closing_phrase(m: Any) -> bool:
@@ -502,6 +566,7 @@ _EFFORT = re.compile(
 _IRREGULAR = re.compile(
     r"イレギュラー|例外(?!なく)|(特殊|特別|まれ)(な|に扱)|普段と違う"
     r"|取消|取り消し|マイナス|二重に|除きたい(ケース|もの)"
+    r"|典型と違う|いつもと違う|別の?パターン|欠損|返品"
 )
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
 _PURPOSE = re.compile(
@@ -595,6 +660,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "position_words": sum(1 for m in assistant if _position_words(m)),
         "closing_phrases": sum(1 for m in assistant if _closing_phrase(m)),
         "repeated_text": sum(1 for m in assistant if _repeated_text(m)),
+        "english_text": sum(1 for m in assistant if _english_text(m)),
         "effort_questions": len(_questions_matching(messages, _EFFORT)),
     }
 
@@ -659,6 +725,12 @@ def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
     """会話の質のチェック（#36、#45）。どのシナリオでも行う。"""
     checks = _transcript_check_map(messages)
     return [checks[name] for name in TRANSCRIPT_CHECKS]
+
+
+def is_style_check(name: str) -> bool:
+    """結果のチェック名（`<チェック>` か `<チェック>: <引数>`）が、どのシナリオでも行う言い回しの
+    チェック（TRANSCRIPT_CHECKS）か。シナリオに書いても言い回しとして数える（#218）。"""
+    return name.split(":")[0].strip() in TRANSCRIPT_CHECKS
 
 
 def is_transcript_check(spec: Any) -> bool:
