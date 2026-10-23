@@ -51,7 +51,7 @@ def _data(**over: Any) -> dict[str, Any]:
 def test_repository_ontology_is_valid_and_doc_is_current() -> None:
     """正本が読め、docs/ontology.md が正本からの生成物と一致する（make ontology 忘れを防ぐ）。"""
     onto = load(ONTOLOGY)
-    assert {c.kind for c in onto.concepts} == {"entity", "event"}
+    assert {c.kind for c in onto.concepts} == {"entity", "event", "state"}
     # 正本は dump の形（取り込み・生成が書き直しても、追加した行だけが差分になる。#69）
     assert ONTOLOGY.read_text(encoding="utf-8") == dump(onto)
     assert DOC.read_text(encoding="utf-8") == markdown(onto)
