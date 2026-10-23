@@ -1,10 +1,16 @@
 -- adp により生成。商品の属性の履歴（SCD Type 2。ADR 0009）
-with versions as (
+with snapshot_rows as (
+    select * from {{ ref('snp_products') }}
+    where product_id is not null
+    -- 同じ自然キー・同じ時刻の版は 1 つにする（stg に同じキーの行が複数ある場合）
+    qualify row_number() over (partition by product_id, dbt_valid_from order by dbt_scd_id) = 1
+),
+
+versions as (
     select
         *,
         row_number() over (partition by product_id order by dbt_valid_from) as version_no
-    from {{ ref('snp_products') }}
-    where product_id is not null
+    from snapshot_rows
 ),
 
 calendar as (
@@ -15,17 +21,17 @@ calendar as (
 )
 
 select
-    md5(cast(product_id as varchar) || '|' || cast(dbt_valid_from as varchar)) as product_version_key,
+    dbt_scd_id as product_version_key,
     {{ dim_key('product_id') }} as product_key,
     category as category,
     product_name as product_name,
-    case when version_no = 1 then calendar.starts_at else dbt_valid_from end as valid_from,
-    coalesce(dbt_valid_to, calendar.ends_at) as valid_to
+    case when version_no = 1 then calendar.starts_at else least(greatest(dbt_valid_from, calendar.starts_at), calendar.ends_at) end as valid_from,
+    least(coalesce(dbt_valid_to, calendar.ends_at), calendar.ends_at) as valid_to
 from versions
 cross join calendar
 
 union all
 
 -- 不明メンバー（期間は暦の全体）
-select md5('__unknown__'), {{ unknown_key() }}, '不明', '不明', calendar.starts_at, calendar.ends_at
+select {{ unknown_key() }}, {{ unknown_key() }}, '不明', '不明', calendar.starts_at, calendar.ends_at
 from calendar

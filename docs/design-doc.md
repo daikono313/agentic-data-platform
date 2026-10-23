@@ -170,7 +170,7 @@ flowchart TB
 | クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
 | eval のシナリオ | **人間**（フィードバックからプログラムが下書きを作る） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)）。既存のシナリオは開発時に Claude Code が書いたもので、これからは人間が確かめて足す |
 | アプリのコード・プロンプト | **AI**（Claude Code） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/`・`warehouse/macros/`・`warehouse/dbt_project.yml` など | 人間は issue で要求し、PR をレビューする |
-| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`・`_marts.yml`・`warehouse/models/staging/_sources.yml` | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
+| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`（生成した `dim_*_history` を除く）・`_marts.yml`・`warehouse/models/staging/_sources.yml` | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
 | データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・`models/staging/_<source>__sources.yml`（取り込み・生成が、宣言の無い源泉を宣言する）・生成した `fct_*` と Semantic Layer・属性の履歴（`warehouse/snapshots/snp_*.yml`・`dim_*_history`）・テスト（`warehouse/tests/assert_<fct>_reconciles_with_source.sql` を含む）・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
 | 実行時のデータ | アプリ | `.adp/`（セッション・フィードバック・worktree・ログ。git では追跡しない） | — |
 

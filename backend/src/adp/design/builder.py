@@ -880,6 +880,13 @@ class DesignBuilder:
                 name,
             )
         natural_column = first.business_key.column
+        if history and natural_column is None:
+            self._issue(
+                IssueSeverity.WARNING,
+                f"dim_{name} の自然キーが列ではない（式）ため、属性の履歴は作らず、今の値（Type1）"
+                "だけで作る（ADR 0009）",
+                name,
+            )
         return DimTable(
             name=f"dim_{name}",
             dimension=name,
@@ -900,7 +907,7 @@ class DesignBuilder:
                 natural_key=natural_column,
                 columns=history,
             )
-            if history and natural_column and first.business_key.table == src.base.table
+            if history and natural_column
             else None,
         )
 

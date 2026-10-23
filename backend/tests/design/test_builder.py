@@ -154,6 +154,20 @@ def test_history_from_joined_table_or_expr_is_a_warning(beam: BeamModel) -> None
     assert any("履歴は作らず" in i.message for i in design.issues)
 
 
+def test_history_needs_a_natural_key_column(beam: BeamModel) -> None:
+    """自然キーが式の dim では履歴を作らず、警告にする（黙って Type1 にしない）。"""
+    from adp.beam import SourceRef
+
+    for e in beam.events:
+        for d in e.dimensions:
+            if d.name == "customer" and d.business_key is not None:
+                d.business_key = SourceRef(table=d.business_key.table, expr="customer_id + 0")
+    design = DesignBuilder(FakeSchema()).build(beam)
+    customer = next(d for d in design.dims if d.name == "dim_customer")
+    assert customer.history is None
+    assert any("自然キーが列ではない" in i.message for i in design.issues)
+
+
 def test_missing_join_path_is_a_blocker(beam: BeamModel) -> None:
     class NoFks(FakeSchema):
         FKS: dict[str, list[ForeignKey]] = {}

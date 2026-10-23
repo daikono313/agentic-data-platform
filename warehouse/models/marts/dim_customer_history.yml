@@ -14,7 +14,7 @@ models:
   primary_entity: customer_version
   columns:
   - name: customer_version_key
-    description: 版のキー（自然キーと版の始まり）
+    description: 版のキー（dbt snapshot の dbt_scd_id）
     data_tests:
     - unique
     - not_null

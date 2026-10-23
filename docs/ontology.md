@@ -89,9 +89,9 @@ flowchart LR
 
 | 概念 | 種類 | ドメイン | 源泉（キー） | モデル | 属性 |
 |---|---|---|---|---|---|
-| 顧客 `customer` | もの・人 | 顧客 | `raw.customers`（`customer_id`） | `dim_customer` | 顧客名（`customer_name`。説明）、性別（`gender`。説明）、生年月日（`birth_date`。時刻）、居住都道府県（`prefecture`。説明。上の階層は居住地方）、居住地方（`region`。説明）、会員ランク（`membership_rank`。説明）、会員登録日（`signup_date`。時刻） |
-| 商品 `product` | もの・人 | 商品 | `raw.products`（`product_id`） | `dim_product` | 商品名（`product_name`。説明。上の階層は商品サブカテゴリ）、商品カテゴリ（`category`。説明）、商品サブカテゴリ（`subcategory`。説明。上の階層は商品カテゴリ）、ブランド（`brand`。説明）、定価（`list_price`。数値）、標準原価（`unit_cost`。数値）、発売日（`launched_on`。時刻） |
-| 店舗・チャネル `store` | もの・人 | 店舗・チャネル | `raw.stores`（`store_id`） | `dim_store` | 店舗名（`store_name`。説明）、販売チャネル（`channel`。説明）、所在都道府県（`prefecture`。説明。上の階層は所在地方）、所在地方（`region`。説明）、開店日（`opened_on`。時刻） |
+| 顧客 `customer` | もの・人 | 顧客 | `raw.customers`（`customer_id`） | `dim_customer`（履歴: `dim_customer_history`） | 顧客名（`customer_name`。説明）、性別（`gender`。説明）、生年月日（`birth_date`。時刻）、居住都道府県（`prefecture`。説明。上の階層は居住地方）、居住地方（`region`。説明）、会員ランク（`membership_rank`。説明）、会員登録日（`signup_date`。時刻） |
+| 商品 `product` | もの・人 | 商品 | `raw.products`（`product_id`） | `dim_product`（履歴: `dim_product_history`） | 商品名（`product_name`。説明。上の階層は商品サブカテゴリ）、商品カテゴリ（`category`。説明）、商品サブカテゴリ（`subcategory`。説明。上の階層は商品カテゴリ）、ブランド（`brand`。説明）、定価（`list_price`。数値）、標準原価（`unit_cost`。数値）、発売日（`launched_on`。時刻） |
+| 店舗・チャネル `store` | もの・人 | 店舗・チャネル | `raw.stores`（`store_id`） | `dim_store`（履歴: `dim_store_history`） | 店舗名（`store_name`。説明）、販売チャネル（`channel`。説明）、所在都道府県（`prefecture`。説明。上の階層は所在地方）、所在地方（`region`。説明）、開店日（`opened_on`。時刻） |
 | プロモーション `promotion` | もの・人 | 販売 | `raw.promotions`（`promotion_id`） | `dim_promotion` | プロモーション名（`promotion_name`。説明）、種類（`promotion_type`。説明）、割引率（`discount_rate`。数値）、開始日（`start_date`。時刻）、終了日（`end_date`。時刻） |
 | 注文 `order` | 出来事 | 販売 | `raw.orders`（`order_id`） | 未整備 | 注文日時（`ordered_at`。時刻）、注文ステータス（`order_status`。説明）、支払方法（`payment_method`。正本は支払の支払方法） |
 | 注文明細 `order_line` | 出来事 | 販売 | `raw.order_items`（`order_item_id`） | `fct_order_lines` | 販売数量（`quantity`。数値）、販売単価（`unit_price`。数値）、値引額（`discount_amount`。数値） |

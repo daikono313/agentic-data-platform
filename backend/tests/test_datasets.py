@@ -282,6 +282,45 @@ def test_bus_matrix_join_rules() -> None:
     assert [g.name for g in bus.groups if g.kind == "degenerate"] == ["fct_sales"]
 
 
+def test_bus_matrix_history_model() -> None:
+    """履歴モデル（ADR 0009）は natural の entity の dim として出し、属性は問い合わせできる名前
+    （<entity>__<属性>_at_event）にする。期間（validity_params）は切り口に出さない。"""
+    index = DatasetIndex(Path("."), None)
+    manifest = {
+        "semantic_models": [
+            {
+                "name": "dim_customer_history",
+                "primary_entity": "customer_version",
+                "entities": [{"name": "customer", "type": "natural"}],
+                "dimensions": [
+                    {
+                        "name": "region_at_event",
+                        "type": "categorical",
+                        "description": "地方（当時）",
+                    },
+                    {
+                        "name": "valid_from",
+                        "type": "time",
+                        "type_params": {"validity_params": {"is_start": True}},
+                    },
+                ],
+            },
+            {
+                "name": "fct_sales",
+                "entities": [
+                    {"name": "sale", "type": "primary"},
+                    {"name": "customer", "type": "foreign"},
+                ],
+                "dimensions": [],
+            },
+        ]
+    }
+    bus = index.bus_matrix(manifest)
+    [group] = [g for g in bus.groups if g.kind == "dim"]
+    assert [a.name for a in group.attributes] == ["customer__region_at_event"]
+    assert {r.name: r.groups for r in bus.rows}["fct_sales"] == ["dim_customer_history"]
+
+
 def test_broken_bus_matrix_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     index = DatasetIndex(Path("."), None)
 

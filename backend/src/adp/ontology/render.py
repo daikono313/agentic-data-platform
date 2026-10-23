@@ -143,6 +143,8 @@ def markdown(ontology: Ontology) -> str:
         kind = KIND_LABELS[c.kind]
         attrs = "、".join(_attribute(a, c, ontology) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
+        if c.history_model:  # 当時の値の履歴モデルは dim の従属（ADR 0009）
+            model += f"（履歴: `{c.history_model}`）"
         out.append(
             f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
             f"| `{c.source}`（`{c.key}`） | {model} | {cell(attrs)} |"

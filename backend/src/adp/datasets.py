@@ -450,7 +450,9 @@ class DatasetIndex:
             return [e["name"] for e in sm.get("entities", []) if e.get("type") in types]
 
         def primary(sm: dict[str, Any]) -> str | None:
-            found = entities(sm, "primary")
+            # 履歴モデル（ADR 0009）は natural の entity で fct と結合する（model 単位の
+            # primary_entity は版の単位で、結合には使わない）
+            found = entities(sm, "natural") or entities(sm, "primary")
             return found[0] if found else sm.get("primary_entity")
 
         def attributes(sm: dict[str, Any], entity: str) -> list[BusAttribute]:
@@ -460,7 +462,8 @@ class DatasetIndex:
                     label=d.get("label") or _short(d.get("description") or "") or d["name"],
                 )
                 for d in sm.get("dimensions", [])
-                if d.get("name")
+                # 履歴モデルの期間（validity_params）は切り口ではない
+                if d.get("name") and not (d.get("type_params") or {}).get("validity_params")
             ]
 
         groups: list[BusGroup] = []

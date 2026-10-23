@@ -186,6 +186,7 @@ HISTORY = _model(
         "store_key": {"entity": {"type": "natural", "name": "store"}},
         "channel": {"dimension": {"type": "categorical", "name": "channel_at_event"}},
         "valid_from": {"dimension": {"type": "time", "validity_params": {"is_start": True}}},
+        "valid_to": {"dimension": {"type": "time", "validity_params": {"is_end": True}}},
     },
 )
 HISTORY_TESTS = [
@@ -230,3 +231,23 @@ def test_history_model_violations() -> None:
     # 今の値の dim が無い履歴モデル
     messages = [v.message for v in structural_violations(_manifest(HISTORY, *HISTORY_TESTS))]
     assert messages == ["entity store を primary に持つ今の値の dim がありません"]
+
+
+def test_history_coverage_is_checked_against_the_calendar() -> None:
+    """履歴モデルの版が暦（dim_date）の全体を覆わないキーがあれば違反（ADR 0009）。"""
+    dim_date = _model("dim_date", {"date_day": {}})
+    manifest = _manifest(dim_date, HISTORY, *HISTORY_TESTS)
+    sqls: list[str] = []
+
+    def query(sql: str) -> list[tuple[object, ...]]:
+        sqls.append(sql)
+        if "information_schema" in sql:
+            return [("store_key", "VARCHAR"), ("channel", "VARCHAR")]
+        if "count(*)" in sql:
+            return [(3,)]
+        return [("x", "不明")]  # 不明メンバーの行
+
+    messages = [v.message for v in data_violations(manifest, query)]
+    assert any("覆っていないキーが 3 件" in m for m in messages)
+    # 不明メンバーは、fct と結合する natural の entity の列で探す
+    assert any('where "store_key" = ' in s for s in sqls)
