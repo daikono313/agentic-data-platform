@@ -16,8 +16,9 @@
 本文が全部消えてもよい（質問とボタンだけが表示される）。
 
 英語だけの地の文（「Now the metrics.」「Fix: use expr only.」など、tool 呼び出しの合間のモデルの
-作業メモ）も取り除く（#161）。日本語を含まず、英単語が 3 つ以上あり、文によく出る短い語
-（the・to・add・fix・now など）を含む文だけを対象にする（英語の値だけを並べた行は消さない）。
+作業メモ）も取り除く（#161）。日本語を含まず、英単語が 3 つ以上あり、作業メモに特有の語
+（now・next・fix・retry・add など）を含む文だけを対象にする。商品名・値に普通に出る語（of・and・on）
+では判定しない。ユーザーへの英語の質問（? で終わる文）は消さない。
 
 確認の質問は、確かめてもらう中身がユーザーに見えているときだけ出せる（`hidden_confirmation`）。
 具体例を記録してよいかの確認には値（日付・数量など。#163）、言い換えの確認には言い換えた問い
@@ -121,9 +122,8 @@ def is_position_sentence(sentence: str) -> bool:
 
 _JAPANESE = re.compile(r"[ぁ-んァ-ヶ一-龥々]")
 _ENGLISH_WORD = re.compile(r"^[(`]?[A-Za-z][a-z]*(?:'[a-z]+)?[.,!?:;)`]*$")
-_ENGLISH_COMMON = re.compile(
-    r"\b(the|a|an|to|of|and|or|is|be|so|by|on|as|with|without|now|next|let|me|i'll|i|"
-    r"add|fix|use|retry|need|needs|same|please|remove|move)\b",
+_WORK_NOTE = re.compile(
+    r"\b(now|next|let me|i'll|fix|fixing|retry|add|adding|need|needs|remove|move|same|record)\b",
     re.IGNORECASE,
 )
 
@@ -131,10 +131,21 @@ _ENGLISH_COMMON = re.compile(
 def is_english_sentence(sentence: str) -> bool:
     """日本語を含まない英語の地の文（モデルの作業メモ）か（#161）。"""
     s = sentence.strip()
-    if not s or _JAPANESE.search(s):
+    if not s or _JAPANESE.search(s) or s.endswith(("?", "？")):
         return False
     words = [w for w in s.split() if _ENGLISH_WORD.match(w)]
-    return len(words) >= 3 and bool(_ENGLISH_COMMON.search(s))
+    return len(words) >= 3 and bool(_WORK_NOTE.search(s))
+
+
+def english_sentences(text: str) -> list[str]:
+    """地の文（表・リスト・見出し・引用・コードの行を除く）のうち、英語の作業メモの文。"""
+    return [
+        x
+        for line, prose in _lines(text)
+        if prose
+        for x in sentences(line)
+        if is_english_sentence(x)
+    ]
 
 
 def is_closing_sentence(sentence: str) -> bool:

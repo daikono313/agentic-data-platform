@@ -49,6 +49,7 @@ from adp.interview import ChoicesPresented, Interviewer, Phase, TurnDone, new_st
 from adp.interview.prompts import prompt_version
 from adp.interview.wording import (
     CONFIRMED,
+    english_sentences,
     hidden_confirmation,
     is_closing_sentence,
     is_english_sentence,
@@ -486,8 +487,9 @@ def _position_words(m: Any) -> bool:
 
 
 def _english_text(m: Any) -> bool:
-    """英語の作業メモの文があったか（取り除いた文も数える。#161）。"""
-    return any(is_english_sentence(x) for x in _sentences(m))
+    """地の文に英語の作業メモがあったか（取り除いた文も数える。#161）。"""
+    removed = getattr(m, "removed", None) or []
+    return bool(english_sentences(m.text)) or any(is_english_sentence(x) for x in removed)
 
 
 def _closing_phrase(m: Any) -> bool:
