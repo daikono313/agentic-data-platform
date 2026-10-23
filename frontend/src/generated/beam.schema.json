@@ -369,6 +369,19 @@
           "default": null,
           "description": "When の最小粒度"
         },
+        "stage": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "段階を経て進む出来事（evolving）の When の、段階の順番（1 から。例: 注文 1・出荷 2・配達 3）"
+        },
         "business_key": {
           "anyOf": [
             {
@@ -406,6 +419,16 @@
       "additionalProperties": false,
       "description": "インタビューで集めた具体例（event story）。unit test の期待値になる。",
       "properties": {
+        "kind": {
+          "$ref": "#/$defs/ExampleKind",
+          "default": "typical",
+          "description": "具体例の型（typical: 典型 / variant: 別パターン / repeat: 繰り返し / missing: 欠損 / group: グループ）"
+        },
+        "note": {
+          "default": "",
+          "description": "典型とどこが違うか（典型なら空でよい）",
+          "type": "string"
+        },
         "values": {
           "additionalProperties": {
             "anyOf": [
@@ -457,6 +480,18 @@
       ],
       "title": "EventMatrix",
       "type": "object"
+    },
+    "ExampleKind": {
+      "description": "具体例（event story）の型（#142）。典型の例のほかに、数え方を確かめる例を集める。",
+      "enum": [
+        "typical",
+        "variant",
+        "repeat",
+        "missing",
+        "group"
+      ],
+      "title": "ExampleKind",
+      "type": "string"
     },
     "FactType": {
       "enum": [
@@ -538,6 +573,40 @@
         "deferred"
       ],
       "title": "GapKind",
+      "type": "string"
+    },
+    "LagSpec": {
+      "additionalProperties": false,
+      "description": "段階を経て進む出来事（evolving）の、2 つの段階の間の時間（ラグ。#140）。\n\n生成器が段階の日時の列から `date_diff(unit, start, end)` で計算する（日・時の境目を数える）。\n終わりの段階にまだ達していない行は NULL。",
+      "properties": {
+        "start": {
+          "description": "始まりの段階の When の ref",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "end": {
+          "description": "終わりの段階の When の ref（start より後の段階）",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "unit": {
+          "$ref": "#/$defs/LagUnit",
+          "default": "day"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "LagSpec",
+      "type": "object"
+    },
+    "LagUnit": {
+      "enum": [
+        "day",
+        "hour"
+      ],
+      "title": "LagUnit",
       "type": "string"
     },
     "Level": {
@@ -712,7 +781,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "集計する列。1 行を 1 件と数える件数（count）なら書かない"
         },
         "availability": {
           "$ref": "#/$defs/Availability",
@@ -729,6 +799,18 @@
           ],
           "default": null,
           "description": "定期的な状態（recurring）のイベントのとき、記録からの値の求め方"
+        },
+        "lag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LagSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "段階を経て進む出来事（evolving）で、2 つの段階の間の時間を measure にするとき（source は書かない）"
         }
       },
       "required": [

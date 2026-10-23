@@ -626,3 +626,22 @@ def test_existing_facts_lists_ratio_and_derived_metrics_under_their_inputs(tmp_p
         "fct_a": ["qty", "return_rate", "double_rate"],
         "fct_b": ["returned", "return_rate", "double_rate"],
     }
+
+
+def test_count_unmatched(tmp_path: Path) -> None:
+    """外部キーの値のうち、相手のキーに無いものの行数（#137）。子の空は数えず、型が違っても文字列で
+    比べ、親の値の重複で数が膨らまない。親に列が無ければ例外（外側の列を黙って使わない）。"""
+    import duckdb
+
+    db = tmp_path / "u.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema raw")
+    con.execute("create table raw.p (customer_id varchar, other int)")
+    con.execute("insert into raw.p values ('1', 0), ('1', 0), ('2', 0)")
+    con.execute("create table raw.o (order_id int, customer_id int)")
+    con.execute("insert into raw.o values (1, 1), (2, 2), (3, 999), (4, null), (5, 999)")
+    con.close()
+    catalog = Catalog(db)
+    assert catalog.count_unmatched("raw.o", "customer_id", "raw.p", "customer_id") == 2
+    with pytest.raises(duckdb.Error):
+        catalog.count_unmatched("raw.o", "customer_id", "raw.p", "order_id")

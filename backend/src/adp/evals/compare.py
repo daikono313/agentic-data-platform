@@ -2,7 +2,7 @@
 
     uv run python -m adp.evals compare .adp/evals/<前> .adp/evals/<後>
 
-シナリオごとに、合格率と会話の質の数値（ターン数・質問の数・発言の長さ・説明なしの専門用語・
+シナリオごとに、合格率（全体・中身・言い回し。#218）と会話の質の数値（ターン数・質問の数・発言の長さ・説明なしの専門用語・
 重複した質問・選択肢の位置を指す言葉・締めの一言）を平均して比べる。LLM の応答はぶれるので、
 `make eval REPEAT=3` のように繰り返した結果を比べる。
 """
@@ -15,11 +15,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from adp.evals.interview import transcript_metrics
+from adp.evals.interview import is_style_check, transcript_metrics
 
 METRICS: list[tuple[str, str, int]] = [
     # (キー, 表示名, よい向き: -1 は小さいほどよい)
     ("passed", "合格率", 1),
+    ("content_passed", "合格率（中身）", 1),
+    ("style_passed", "合格率（言い回し）", 1),
     ("assistant_turns", "ターン数", -1),
     ("questions", "質問の数", -1),
     ("avg_chars", "発言の平均文字数", -1),
@@ -28,6 +30,7 @@ METRICS: list[tuple[str, str, int]] = [
     ("position_words", "選択肢の位置を指す言葉", -1),
     ("closing_phrases", "締めの一言", -1),
     ("repeated_text", "二重の本文", -1),
+    ("english_text", "英語の文", -1),
     ("effort_questions", "工数を聞いた質問", -1),
 ]
 
@@ -85,9 +88,26 @@ def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float
             if transcript
             else data.get("metrics") or {}
         )
-        runs[data["scenario"]].append({**metrics, "passed": float(bool(data.get("passed")))})
+        runs[data["scenario"]].append({**metrics, **_pass_rates(data)})
         meta.setdefault("prompt_version", data.get("prompt_version"))
     return meta, dict(runs)
+
+
+def _pass_rates(data: dict[str, Any]) -> dict[str, float]:
+    """合格と、それを中身と言い回し（is_style_check）のチェックに分けたもの（#218）。言い回しは
+    回ごとのぶれが大きいので分けて見る。エラーで終わった回は中身を不合格にする。チェックの記録が
+    無い古い結果は、どちらも合格と同じにする。"""
+    passed = float(bool(data.get("passed")))
+    checks = data.get("checks") or []
+    if not checks:
+        return {"passed": passed, "content_passed": passed, "style_passed": passed}
+    style = [c for c in checks if is_style_check(str(c.get("name", "")))]
+    content = [c for c in checks if c not in style]
+    return {
+        "passed": passed,
+        "content_passed": float(not data.get("error") and all(c.get("passed") for c in content)),
+        "style_passed": float(all(c.get("passed") for c in style)),
+    }
 
 
 def _mean(values: list[float]) -> float:
@@ -95,7 +115,7 @@ def _mean(values: list[float]) -> float:
 
 
 def _fmt(key: str, value: float) -> str:
-    return f"{value:.0%}" if key == "passed" else f"{value:.1f}"
+    return f"{value:.0%}" if key.endswith("passed") else f"{value:.1f}"
 
 
 def compare(before: Path, after: Path) -> str:

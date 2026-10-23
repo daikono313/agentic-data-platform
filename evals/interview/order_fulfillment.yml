@@ -14,6 +14,8 @@ checks:
   - story_type: evolving
   - has_w: [when, how]
   - metric_aggregation: average
+  # 出荷からお届けまでの日数を、段階の日時から計算する（#140）
+  - measure_lag: {start: raw.shipments.shipped_at, end: raw.shipments.delivered_at}
   - min_examples: 2
   - asks_purpose
   - metric_purpose

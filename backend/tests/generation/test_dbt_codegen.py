@@ -7,10 +7,11 @@ from pathlib import Path
 
 import duckdb
 import pytest
+import yaml
 
 from adp.beam import load
 from adp.catalog.catalog import Catalog
-from adp.design import DesignBuilder
+from adp.design import ColumnRole, DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
 from adp.generation.conventions import check_warehouse
@@ -443,3 +444,200 @@ def test_periodic_snapshot_builds_and_matches_reference(tmp_path: Path) -> None:
     query = mf_query(warehouse, q)
     assert query.returncode == 0, query.stdout[-3000:] + query.stderr[-2000:]
     assert conventions_violations(warehouse) == []
+
+
+def test_factless_fact_counts_events(tmp_path: Path) -> None:
+    """出来事の件数だけの要求（measure に列が無い）から、中身のない出来事の fact を作る（#139）。
+
+    fct は measure の列を持たず、指標は行を数える（`agg: count`、`expr: 1`）。件数は源泉と一致する。
+    """
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "shipment_counts.yml")
+    assert beam.finalize_issues() == []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    [fact] = design.facts
+    assert not any(c.role == ColumnRole.MEASURE for c in fact.columns)
+    generation = generate_models(design, info, beam)
+    info.write(generation.files)
+    yml = next(f for f in generation.files if f.path == "models/marts/fct_shipments.yml")
+    [metric] = yaml.safe_load(yml.content)["models"][0]["metrics"]
+    assert (metric["agg"], metric["expr"]) == ("count", "1")
+
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+    assert "test_fct_shipments_example_1" in result.stdout
+    assert conventions_violations(warehouse) == []
+
+    query = mf_query(warehouse, MetricQuery("shipment_count", ["shipment__shipping_method"]))
+    assert query.returncode == 0, query.stdout[-2000:] + query.stderr[-1000:]
+    got = {
+        parts[0]: int(parts[1])
+        for line in query.stdout.splitlines()
+        if len(parts := line.split()) == 2 and parts[1].isdigit()
+    }
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    expected = dict(
+        con.sql("select shipping_method, count(*) from raw.shipments group by 1").fetchall()
+    )
+    assert got == expected
+
+
+def test_accumulating_snapshot_stage_lags(tmp_path: Path) -> None:
+    """段階を経て進む出来事（注文 → 出荷 → 配達）の段階の日時と、段階の間の日数（ラグ）を
+    生成する（#140）。ラグは段階の日時の列から計算し、源泉から独立に求めた値と一致する。"""
+    from datetime import datetime
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    assert beam.finalize_issues() == []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    assert design.blockers == []
+    [fact] = design.facts
+    lags = {c.name: c.expr for c in fact.columns if c.name.endswith("_days")}
+    assert lags == {
+        "order_to_ship_days": "date_diff('day', cast(t1.ordered_at as timestamp),"
+        " cast(t0.shipped_at as timestamp))",
+        "ship_to_delivery_days": "date_diff('day', cast(t0.shipped_at as timestamp),"
+        " cast(t0.delivered_at as timestamp))",
+    }
+    # 後の段階の日時は、その段階に達するまで NULL でよい
+    assert {c.name: c.nullable for c in fact.columns if c.name.endswith("_on")} == {
+        "ordered_on": False,
+        "shipped_on": True,
+        "delivered_on": True,
+    }
+    generation = generate_models(design, info, beam)
+    info.write(generation.files)
+    result = _dbt(warehouse, "build")
+    assert result.returncode == 0, result.stdout[-3000:]
+    assert "test_fct_fulfillments_example_1" in result.stdout
+    assert conventions_violations(warehouse) == []
+    for q in generation.queries:
+        query = mf_query(warehouse, q)
+        assert query.returncode == 0, query.stdout[-2000:] + query.stderr[-1000:]
+
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+    raw = con.sql(
+        "select s.shipment_id, o.ordered_at, s.shipped_at, s.delivered_at"
+        " from raw.shipments s left join raw.orders o using (order_id)"
+    ).fetchall()
+
+    def days(a: datetime | None, b: datetime | None) -> int | None:
+        return None if a is None or b is None else (b.date() - a.date()).days
+
+    expected = {r[0]: (days(r[1], r[2]), days(r[2], r[3])) for r in raw}
+    got = {
+        r[0]: (r[1], r[2])
+        for r in con.sql(
+            "select shipment_id, order_to_ship_days, ship_to_delivery_days"
+            " from main.fct_fulfillments"
+        ).fetchall()
+    }
+    assert got == expected
+
+
+def test_stage_lag_in_hours(tmp_path: Path) -> None:
+    """時間の単位のラグは、時の境目の数（DuckDB の date_diff('hour')。#140）。"""
+    from datetime import datetime
+
+    from adp.beam import LagUnit
+
+    warehouse = _warehouse_copy(tmp_path)
+    catalog = Catalog(warehouse / "data" / "dev.duckdb")
+    info = ProjectInfo(warehouse, catalog)
+    beam = load(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    measure = beam.events[0].measure("ship_to_delivery_days")
+    assert measure is not None and measure.lag is not None
+    measure.lag.unit = LagUnit.HOUR
+    beam.events[0].examples = []
+    design = DesignBuilder(CatalogSchema(catalog)).build(beam)
+    info.write(generate_models(design, info, beam).files)
+    assert _dbt(warehouse, "build").returncode == 0
+    con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
+
+    def hours(a: datetime, b: datetime) -> int:
+        floor = [t.replace(minute=0, second=0, microsecond=0) for t in (a, b)]
+        return int((floor[1] - floor[0]).total_seconds() // 3600)
+
+    expected = {
+        r[0]: hours(r[1], r[2])
+        for r in con.sql(
+            "select shipment_id, shipped_at, delivered_at from raw.shipments"
+        ).fetchall()
+    }
+    got = dict(
+        con.sql("select shipment_id, ship_to_delivery_days from main.fct_fulfillments").fetchall()
+    )
+    assert got == expected
+
+
+def test_lag_unit_test_is_skipped_when_times_cannot_be_read() -> None:
+    """段階の日時の型が分からない（入力行の既定値が日時でない）ときは、ラグの期待値を独立に
+    計算できないので unit test を作らない（生成は止めない。#140）。"""
+    from adp.beam import load as load_beam
+    from adp.design import ForeignKey
+    from adp.generation.tests import unit_test
+
+    class Schema:
+        def columns(self, table: str) -> list[str]:
+            return {
+                "raw.shipments": [
+                    "shipment_id",
+                    "order_id",
+                    "shipping_method",
+                    "shipped_at",
+                    "delivered_at",
+                ],
+                "raw.orders": ["order_id", "ordered_at"],
+            }.get(table, [])
+
+        def foreign_keys(self, table: str) -> list[ForeignKey]:
+            fk = ForeignKey("order_id", "raw.orders", "order_id")
+            return [fk] if table == "raw.shipments" else []
+
+    beam = load_beam(FIXTURES / "beam" / "order_fulfillment_stages.yml")
+    design = DesignBuilder(Schema()).build(beam)
+    assert design.blockers == []
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return []  # 型が分からない → 既定値 "x"
+
+        def source_primary_key(self, table: str) -> str | None:
+            return None
+
+    example = beam.events[0].examples[0].model_copy(update={"values": {}})
+    assert unit_test(beam, design.facts[0], Info(), example, 0) is None  # type: ignore[arg-type]
+
+
+def test_missing_example_keeps_join_keys() -> None:
+    """欠損の具体例で結合キーを空にしても、結合キーは空にしない（結合が外れるため。#142）。"""
+    from adp.beam import ExampleKind
+    from adp.design import FactTable
+    from adp.generation.tests import unit_test
+    from tests.design.test_builder import FakeSchema
+
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+    example = event.examples[0].model_copy(deep=True)
+    example.kind, example.note = ExampleKind.MISSING, "注文番号が空"
+    example.values["order_id"] = None  # 結合キー（明細 → 注文）
+    design = DesignBuilder(FakeSchema()).build(beam)
+    fact: FactTable = design.facts[0]
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [(c, "INTEGER") for c in FakeSchema.COLUMNS.get(table, [])]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return None
+
+    ut = unit_test(beam, fact, Info(), example, 0)  # type: ignore[arg-type]
+    assert ut is not None
+    base, orders = ut["given"][0]["rows"][0], ut["given"][1]["rows"][0]
+    assert base["order_id"] is not None and base["order_id"] == orders["order_id"]

@@ -16,7 +16,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from adp.catalog.catalog import Catalog, TableProfile
 from adp.ontology.check import check
-from adp.ontology.models import Attribute, Concept, Constraint, Domain, Ontology, Relation
+from adp.ontology.models import (
+    Attribute,
+    Concept,
+    Constraint,
+    Domain,
+    Ontology,
+    Relation,
+    duplicate_message,
+)
 
 TIME_HINT = re.compile(r"(_at|_on|_date)$")
 IGNORED_COLUMNS = {"updated_at", "loaded_at", "created_at"}
@@ -44,21 +52,22 @@ def apply(ontology: Ontology, patch: OntologyPatch) -> Ontology:
     return Ontology.model_validate(base)
 
 
-def patch_errors(errors: list[str], patch: OntologyPatch) -> list[str]:
-    """照合の誤りのうち、追加案で足した概念・関係に関わるもの（既存の部分は CI の検査に任せる）。"""
+def patch_errors(errors: list[str], patch: OntologyPatch, merged: Ontology) -> list[str]:
+    """照合の誤りのうち、追加案で足した概念・関係に関わるもの（既存の部分は CI の検査に任せる）。
+
+    merged は追加案を適用したオントロジー。業務の言葉の二重定義は、追加案の概念の属性が入って
+    いるものを、そこから直接選ぶ（誤りの文言を読み直さない）。関係の誤りは関係の動詞で選ぶ
+    （既存の関係と動詞が同じだと、その誤りも入る）。"""
     prefixes = [f"概念 {c.name}:" for c in patch.concepts]
     prefixes += [f"概念 {c.name} の" for c in patch.concepts]
-    prefixes += [f"関係「{r.verb}」: 列 {r.via} " for r in patch.relations]
+    prefixes += [f"関係「{r.verb}」:" for r in patch.relations]
     names = {c.name for c in patch.concepts}
-    return sorted(
-        {e for e in errors if e.startswith(tuple(prefixes)) or _duplicates_patch(e, names)}
-    )
-
-
-def _duplicates_patch(error: str, names: set[str]) -> bool:
-    """同じラベルの二重定義（Ontology.duplicate_labels）に、追加案の概念の属性が入っているか。"""
-    m = re.match(r"ラベル「.*?」の属性が別々に定義されている（([^）]*)）", error)
-    return m is not None and any(r.split(".", 1)[0] in names for r in m.group(1).split("、"))
+    duplicates = {
+        duplicate_message(word, refs)
+        for word, refs in merged.duplicate_words().items()
+        if any(r.split(".", 1)[0] in names for r in refs)
+    }
+    return sorted({e for e in errors if e.startswith(tuple(prefixes))} | duplicates)
 
 
 def validate_patch(
@@ -89,7 +98,7 @@ def validate_patch(
         merged = apply(ontology, patch)
     except ValueError as e:
         return [str(e)]
-    return patch_errors(check(merged, catalog, None).errors, patch)
+    return patch_errors(check(merged, catalog, None).errors, patch, merged)
 
 
 def _singular(name: str) -> str:
@@ -135,7 +144,9 @@ def propose_from_profile(profile: TableProfile, ontology: Ontology) -> OntologyP
     fk_columns = {col for col, _ in links}
     concept_label = _label(profile.description, profile.name)
     # 既存の属性と同じラベルは、業務の言葉の二重定義になる（#137）。概念の名前を前に付けて分ける
-    used = {a.label for c in ontology.concepts for a in c.attributes}
+    used = {
+        w for c in ontology.concepts for a in c.attributes for w in [a.label, *(a.synonyms or [])]
+    }
     attributes = []
     for c in profile.columns:
         if c.name == key or c.name in fk_columns or c.name in IGNORED_COLUMNS:

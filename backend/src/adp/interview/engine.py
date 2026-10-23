@@ -186,8 +186,8 @@ class Interviewer:
         text = join_chunks(reply)
         if result.is_error and not text:
             text = "（応答を作れませんでした。もう一度送ってください）"
-        # 画面の位置を指す文（「上の質問にお答えください」など。#77）と、質問を出したときの
-        # 締めの一言（「回答をお待ちしています」など。#158）は取り除く
+        # 画面の位置を指す文（「上の質問にお答えください」など。#77）、英語の作業メモ（#161）と、
+        # 質問を出したときの締めの一言（「回答をお待ちしています」など。#158）は取り除く
         text, removed = clean_reply(text, question=state.question)
         # 質問文は本文に混ぜずに別に持つ（画面ではボタンの上に 1 回だけ出す。#36）
         message = ChatMessage(

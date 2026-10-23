@@ -16,7 +16,15 @@ from typing import Any
 
 import duckdb
 
-from adp.beam import BeamModel, BusinessEvent, EventExample, StateMethod, TimeGrain
+from adp.beam import (
+    BeamModel,
+    BusinessEvent,
+    EventExample,
+    LagSpec,
+    LagUnit,
+    StateMethod,
+    TimeGrain,
+)
 from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
@@ -204,8 +212,12 @@ def unit_test(
                 result[gm.group(1)][gm.group(2)] = key
         if case == "example":
             set_by_example: set[tuple[str, str]] = set()
+            join_cols = {(j.left_alias, j.left_column) for j in fact.joins}
+            join_cols |= {(j.right.alias, j.right_column) for j in fact.joins}
             for k, (alias, col) in _example_targets(event, fact).items():
                 if k in example.values:
+                    if example.values[k] is None and (alias, col) in join_cols:
+                        continue  # 結合キーを NULL にすると結合が外れる（欠損の具体例。#142）
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
                     set_by_example.add((alias, col))
             # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
@@ -231,7 +243,10 @@ def unit_test(
         return result
 
     cases = [rows("example"), rows("unknown")]
-    expected = [_expected(event, fact, r, types) for r in cases]
+    try:
+        expected = [_expected(event, fact, r, types) for r in cases]
+    except _NoUnitTest:
+        return None
     given = []
     for alias in tables:
         model = (
@@ -268,6 +283,9 @@ def _expected(
             out[c.name] = str(v)[:10] if v is not None else None
         elif c.role == ColumnRole.MEASURE:
             measure = event.measure(c.source_ref or "")
+            if measure is not None and measure.lag is not None:
+                out[c.name] = _lag(fact, measure.lag, row)
+                continue
             if measure is None or measure.source is None:
                 continue
             alias = next(
@@ -285,6 +303,35 @@ def _expected(
             source_expr = measure.source.column or measure.source.expr or ""
             out[c.name] = _evaluate(source_expr, row[alias], types[alias])
     return out
+
+
+class _NoUnitTest(Exception):
+    """入力行から期待値を独立に計算できない（unit test を作らない）。"""
+
+
+def _lag(fact: FactTable, lag: LagSpec, row: dict[str, dict[str, object]]) -> int | None:
+    """段階の間の時間の期待値。SQL の date_diff と同じく、日・時の境目の数（#140）。"""
+
+    def at(ref: str) -> datetime | None:
+        col = fact.column_for(ref, ColumnRole.TIMESTAMP)
+        m = _COLUMN_REF.match(col.expr) if col else None
+        v = row[m.group(1)][m.group(2)] if m else None
+        if v is None or isinstance(v, datetime):
+            return v
+        try:
+            return datetime.fromisoformat(str(v))
+        except ValueError as e:  # 日時として読めない値（型の分からない列の既定値など）
+            raise _NoUnitTest(f"段階 {ref} の日時 {v!r} を読めません") from e
+
+    start, end = at(lag.start), at(lag.end)
+    if start is None or end is None:
+        return None
+    if lag.unit == LagUnit.DAY:
+        return (end.date() - start.date()).days
+    hours = end.replace(minute=0, second=0, microsecond=0) - start.replace(
+        minute=0, second=0, microsecond=0
+    )
+    return int(hours.total_seconds() // 3600)
 
 
 def _measure_alias(fact: FactTable, table: str) -> str | None:
