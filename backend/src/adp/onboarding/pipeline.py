@@ -40,7 +40,7 @@ from adp.onboarding.proposal import (
     validate_patch,
 )
 from adp.ontology.check import check as check_ontology
-from adp.ontology.models import Ontology, dump, load
+from adp.ontology.models import KIND_LABELS, Ontology, dump, load
 from adp.ontology.render import markdown, mermaid
 from adp.pipeline import (
     ONTOLOGY,
@@ -260,7 +260,7 @@ class OnboardingPipeline:
                 check_ontology, ontology, catalog, warehouse / "target" / "manifest.json"
             )
             # 取り込みで足した概念・関係に関わる食い違いだけを見る（既存の部分は CI の検査に任せる）
-            problems += patch_errors(onto_errors.errors, patch)
+            problems += patch_errors(onto_errors.errors, patch, ontology)
             if problems:
                 raise PipelineError(
                     " / ".join(problems) + (f"\n{checked.log}" if not checked.ok else "")
@@ -292,9 +292,8 @@ class OnboardingPipeline:
     @staticmethod
     def _body(source: str, patch: OntologyPatch, files: list[str]) -> str:
         # 表示名・動詞は LLM やユーザーの文章。#N・@name・コードブロックを無効にする（guardrails）
-        kinds = {"event": "出来事", "entity": "もの・人"}
         concepts = "\n".join(
-            f"- **{safe(c.label)}**（`{c.name}`、{kinds[c.kind]}）: "
+            f"- **{safe(c.label)}**（`{c.name}`、{KIND_LABELS[c.kind]}）: "
             + "、".join(safe(a.label) for a in c.attributes)
             for c in patch.concepts
         )

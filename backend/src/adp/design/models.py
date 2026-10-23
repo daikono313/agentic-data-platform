@@ -9,7 +9,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from adp.beam import FactType, TimeGrain
+from adp.beam import FactType, StateMethod, TimeGrain
 
 
 class ColumnRole(StrEnum):
@@ -60,6 +60,24 @@ class Column(BaseModel):
     """BEAM 上の参照（measure 名、`<ref>.<attr>` など）。"""
 
 
+class SnapshotDesign(BaseModel):
+    """定期スナップショットの fct の作り方（ADR 0008）。SQL は `adp.generation.dbt` が作る。
+
+    記録を区切り（粒度のキーから When を除いた列）ごとに時刻の順にたどり、期間（grain）の終わり
+    ごとの値にする。記録の無い期間は前の期間の値を引き継ぐ。
+    """
+
+    time_column: str
+    """期間の終わりの日付の列（dim_date を参照）。"""
+    recorded_at: str
+    """記録の時刻の式（ソースの When の列）。"""
+    grain: TimeGrain
+    methods: dict[str, StateMethod]
+    """measure の列 → 値の求め方。"""
+    resets: dict[str, str] = Field(default_factory=dict)
+    """running_total の measure の列 → 値を置き換える行の条件（ソースの列の SQL）。"""
+
+
 class FactTable(BaseModel):
     name: str
     event: str
@@ -74,9 +92,15 @@ class FactTable(BaseModel):
     """MetricFlow の主 entity 名（fct の単数形）。"""
     agg_time_column: str | None = None
     agg_time_grain: TimeGrain | None = None
+    snapshot: SnapshotDesign | None = None
+    """定期スナップショット（periodic_snapshot）のときの作り方。"""
 
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)
+
+    def column_for(self, ref: str, role: ColumnRole) -> Column | None:
+        """BEAM の参照（When の ref など）と役割に対応する列（例: When の日付列・日時列）。"""
+        return next((c for c in self.columns if c.source_ref == ref and c.role == role), None)
 
 
 class DimTable(BaseModel):

@@ -146,6 +146,12 @@ class OntologyView(BaseModel):
     """どの概念にも対応していない dim / fct。"""
     errors: list[str] = Field(default_factory=list)
     """源泉・dbt のモデルとの食い違い。"""
+    multiplicities: list[str] = Field(default_factory=list)
+    """関係ごとの件数の対応の表示（ontology.relations と同じ並び。未確認なら -。#137）。
+    relations を並べ替え・絞り込むときは、これも同じにする。"""
+    attribute_notes: dict[str, list[str]] = Field(default_factory=dict)
+    """属性（`<概念>.<属性>`）の補足（役割・上の階層・同義語・正本）。docs/ontology.md と同じ
+    （adp.ontology.attribute_notes。#137）。補足の無い属性は入れない。"""
 
 
 class CleansingView(BaseModel):
@@ -517,13 +523,20 @@ class DatasetIndex:
 
         yml が無い・壊れている場合は FileNotFoundError / ValueError。
         """
-        from adp.ontology import load, mermaid
+        from adp.ontology import attribute_notes, load, mermaid, multiplicity
         from adp.ontology.check import check
 
         onto = load(self.repo_root / "ontology" / "ontology.yml")
         view = OntologyView(
             mermaid=mermaid(onto),
             ontology=onto.model_dump(mode="json", by_alias=True, exclude_none=True),
+            multiplicities=[multiplicity(r, onto) for r in onto.relations],
+            attribute_notes={
+                f"{c.name}.{a.name}": notes
+                for c in onto.concepts
+                for a in c.attributes
+                if (notes := attribute_notes(a, c, onto))
+            },
         )
         if self.catalog is None:
             return view

@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from adp.markdown import cell, mermaid_label
-from adp.ontology.models import Attribute, Concept, Ontology, mermaid_id
+from adp.ontology.models import (
+    KIND_LABELS,
+    ROLE_LABELS,
+    Attribute,
+    Concept,
+    Ontology,
+    Relation,
+    mermaid_id,
+)
 
 MAX_ATTRS_IN_DIAGRAM = 4
 """図に出す属性の数（多いと読めなくなる。全部は md の表に出す）。"""
@@ -14,13 +22,13 @@ HEADER = (
 
 
 def _node(c: Concept) -> str:
-    # 出来事（event）は角丸の長円、もの・人（entity）は角丸の四角
+    # 出来事（event）は角丸の長円、状態（state）は六角形、もの・人（entity）は角丸の四角
     label = mermaid_label(c.label)
-    return (
-        f'{mermaid_id(c.name)}(["{label}"])'
-        if c.kind == "event"
-        else f'{mermaid_id(c.name)}("{label}")'
-    )
+    if c.kind == "event":
+        return f'{mermaid_id(c.name)}(["{label}"])'
+    if c.kind == "state":
+        return f'{mermaid_id(c.name)}{{{{"{label}"}}}}'
+    return f'{mermaid_id(c.name)}("{label}")'
 
 
 def mermaid(ontology: Ontology) -> str:
@@ -53,20 +61,58 @@ def mermaid(ontology: Ontology) -> str:
         "  classDef constraint fill:#dcfce7,stroke:#22c55e,color:#14532d,font-size:11px",
         "  classDef event fill:#166534,stroke:#14532d,color:#ffffff",
         "  classDef entity fill:#1e3a8a,stroke:#172554,color:#ffffff",
+        "  classDef state fill:#9a3412,stroke:#7c2d12,color:#ffffff",
     ]
     entities = [mermaid_id(c.name) for c in ontology.concepts if c.kind == "entity"]
     if events:
         lines.append(f"  class {','.join(events)} event")
     if entities:
         lines.append(f"  class {','.join(entities)} entity")
+    states = [mermaid_id(c.name) for c in ontology.concepts if c.kind == "state"]
+    if states:
+        lines.append(f"  class {','.join(states)} state")
     return "\n".join(lines) + "\n"
 
 
-def _attribute(a: Attribute, labels: dict[str, str]) -> str:
-    if a.same_as is None:
-        return f"{a.label}（`{a.column}`）"
-    concept = a.same_as.split(".", 1)[0]
-    return f"{a.label}（`{a.column}`。正本は{labels[concept]}の `{a.same_as}`）"
+def attribute_notes(a: Attribute, c: Concept, ontology: Ontology) -> list[str]:
+    """属性の補足（役割・上の階層・同義語・正本）。docs/ontology.md と画面で同じものを出す
+    （#137）。"""
+    notes = []
+    if a.role is not None:
+        notes.append(ROLE_LABELS[a.role])
+    if a.parent is not None:
+        notes.append(f"上の階層は{next(p.label for p in c.attributes if p.name == a.parent)}")
+    if a.synonyms:
+        notes.append("同義語: " + "・".join(a.synonyms))
+    if a.same_as is not None:
+        concept, attr = a.same_as.split(".", 1)
+        target = ontology.concept(concept)
+        label = next(x.label for x in target.attributes if x.name == attr)
+        notes.append(f"正本は{target.label}の{label}")
+    return notes
+
+
+def _attribute(a: Attribute, c: Concept, ontology: Ontology) -> str:
+    return f"{a.label}（{'。'.join([f'`{a.column}`', *attribute_notes(a, c, ontology)])}）"
+
+
+def multiplicity(r: Relation, ontology: Ontology) -> str:
+    """関係の件数の対応の表示（例: 顧客 1 件に注文が複数、注文には必ず顧客がある。未確認なら -）。
+    via を持つ側から見る（Ontology.relation_ends）。"""
+    ends = ontology.relation_ends(r)
+    if ends is None:
+        return "-"
+    one, many = ends
+    parts = []
+    if r.cardinality == "one_to_one":
+        parts.append(f"{one.label} 1 件に{many.label}は 1 件まで")
+    elif r.cardinality == "one_to_many":
+        parts.append(f"{one.label} 1 件に{many.label}が複数")
+    if r.optional is True:
+        parts.append(f"{one.label}が決まっていない{many.label}がある")
+    elif r.optional is False:
+        parts.append(f"{many.label}には必ず{one.label}がある")
+    return "、".join(parts) or "-"
 
 
 def markdown(ontology: Ontology) -> str:
@@ -80,6 +126,7 @@ def markdown(ontology: Ontology) -> str:
         "源泉が増えたら、まず `ontology/ontology.yml` を更新し、それを元に fact / dim を整理する。",
         "",
         "凡例: 四角 = もの・人・場所（entity → dim の候補）、長円 = 出来事（event → fact の候補）、"
+        "六角形 = 状態（state → 定期スナップショットの fact の候補）、"
         "灰色 = 属性（一部）、緑 = 制約、矢印 = 関係",
         "",
         "```mermaid",
@@ -93,18 +140,27 @@ def markdown(ontology: Ontology) -> str:
     ]
     labels = {c.name: c.label for c in ontology.concepts}
     for c in ontology.concepts:
-        kind = "もの・人" if c.kind == "entity" else "出来事"
-        attrs = "、".join(_attribute(a, labels) for a in c.attributes) or "-"
+        kind = KIND_LABELS[c.kind]
+        attrs = "、".join(_attribute(a, c, ontology) for a in c.attributes) or "-"
         model = f"`{c.model}`" if c.model else "未整備"
         out.append(
             f"| {cell(c.label)} `{c.name}` | {kind} | {cell(domain[c.domain])} "
             f"| `{c.source}`（`{c.key}`） | {model} | {cell(attrs)} |"
         )
     if ontology.relations:
-        out += ["", "## 関係", "", "| から | 関係 | へ | 列 |", "|---|---|---|---|"]
+        out += [
+            "",
+            "## 関係",
+            "",
+            "件数の対応は、列（via）を持つ側から見た、相手との件数の関係。",
+            "",
+            "| から | 関係 | へ | 列 | 件数の対応 |",
+            "|---|---|---|---|---|",
+        ]
         for r in ontology.relations:
             ends = (cell(labels[r.from_]), cell(labels[r.to]))
-            out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` |")
+            many = cell(multiplicity(r, ontology))
+            out.append(f"| {ends[0]} | {cell(r.verb)} | {ends[1]} | `{r.via}` | {many} |")
     if ontology.constraints:
         out += ["", "## 制約", "", "| 概念 | 制約 |", "|---|---|"]
         for x in ontology.constraints:

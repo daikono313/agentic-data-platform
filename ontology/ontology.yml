@@ -3,13 +3,20 @@
 # この形で書き直すので、コメントはここ（adp.ontology.models.HEADER）に書く。
 #
 # - domains: 業務のまとまり（図の枠）
-# - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
+# - concepts: 概念。kind は entity（もの・人・場所）、event（出来事。fact の候補）、
+#   state（定期的に測る状態。月末在庫など。定期スナップショットの fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
-#   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
+#     - role: 役割（descriptive 説明 / numeric 数値 / temporal 時刻）。列の型と照合する
+#     - parent: 階層で 1 つ上の属性（同じ概念の属性。子の値ごとに親の値は 1 つ）
+#     - synonyms: 業務でほかに呼ぶ言葉（ほかの属性のラベル・同義語と重ねない）
+#   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
+#   - cardinality: キーを持つ側の 1 件に、via を持つ側が 1 件まで（one_to_one）か
+#     複数（one_to_many）か
+#   - optional: via を持つ側が相手を持たないことがあるか（via が空になりうるか）
 # - constraints: 業務上の制約・注意（図の注記）
 version: 1
 domains:
@@ -37,24 +44,32 @@ concepts:
   - name: customer_name
     label: 顧客名
     column: customer_name
+    role: descriptive
   - name: gender
     label: 性別
     column: gender
+    role: descriptive
   - name: birth_date
     label: 生年月日
     column: birth_date
+    role: temporal
   - name: prefecture
     label: 居住都道府県
     column: prefecture
+    role: descriptive
+    parent: region
   - name: region
     label: 居住地方
     column: region
+    role: descriptive
   - name: membership_rank
     label: 会員ランク
     column: membership_rank
+    role: descriptive
   - name: signup_date
     label: 会員登録日
     column: signup_date
+    role: temporal
 - name: product
   label: 商品
   domain: merchandise
@@ -66,24 +81,33 @@ concepts:
   - name: product_name
     label: 商品名
     column: product_name
+    role: descriptive
+    parent: subcategory
   - name: category
     label: 商品カテゴリ
     column: category
+    role: descriptive
   - name: subcategory
     label: 商品サブカテゴリ
     column: subcategory
+    role: descriptive
+    parent: category
   - name: brand
     label: ブランド
     column: brand
+    role: descriptive
   - name: list_price
     label: 定価
     column: list_price
+    role: numeric
   - name: unit_cost
     label: 標準原価
     column: unit_cost
+    role: numeric
   - name: launched_on
     label: 発売日
     column: launched_on
+    role: temporal
 - name: store
   label: 店舗・チャネル
   domain: channel
@@ -95,18 +119,24 @@ concepts:
   - name: store_name
     label: 店舗名
     column: store_name
+    role: descriptive
   - name: channel
     label: 販売チャネル
     column: channel
+    role: descriptive
   - name: prefecture
     label: 所在都道府県
     column: prefecture
+    role: descriptive
+    parent: region
   - name: region
     label: 所在地方
     column: region
+    role: descriptive
   - name: opened_on
     label: 開店日
     column: opened_on
+    role: temporal
 - name: promotion
   label: プロモーション
   domain: sales
@@ -118,18 +148,23 @@ concepts:
   - name: promotion_name
     label: プロモーション名
     column: promotion_name
+    role: descriptive
   - name: promotion_type
     label: 種類
     column: promotion_type
+    role: descriptive
   - name: discount_rate
     label: 割引率
     column: discount_rate
+    role: numeric
   - name: start_date
     label: 開始日
     column: start_date
+    role: temporal
   - name: end_date
     label: 終了日
     column: end_date
+    role: temporal
 - name: order
   label: 注文
   domain: sales
@@ -140,9 +175,11 @@ concepts:
   - name: ordered_at
     label: 注文日時
     column: ordered_at
+    role: temporal
   - name: order_status
     label: 注文ステータス
     column: order_status
+    role: descriptive
   - name: payment_method
     label: 支払方法
     column: payment_method
@@ -158,12 +195,15 @@ concepts:
   - name: quantity
     label: 販売数量
     column: quantity
+    role: numeric
   - name: unit_price
     label: 販売単価
     column: unit_price
+    role: numeric
   - name: discount_amount
     label: 値引額
     column: discount_amount
+    role: numeric
 - name: payment
   label: 支払
   domain: fulfillment
@@ -174,12 +214,15 @@ concepts:
   - name: payment_method
     label: 支払方法
     column: payment_method
+    role: descriptive
   - name: amount
     label: 支払金額
     column: amount
+    role: numeric
   - name: paid_at
     label: 支払日時
     column: paid_at
+    role: temporal
 - name: shipment
   label: 配送
   domain: fulfillment
@@ -190,12 +233,15 @@ concepts:
   - name: shipping_method
     label: 配送方法
     column: shipping_method
+    role: descriptive
   - name: shipped_at
     label: 出荷日時
     column: shipped_at
+    role: temporal
   - name: delivered_at
     label: 配達日時
     column: delivered_at
+    role: temporal
 - name: return
   label: 返品
   domain: fulfillment
@@ -206,12 +252,15 @@ concepts:
   - name: returned_at
     label: 返品日時
     column: returned_at
+    role: temporal
   - name: quantity
     label: 返品数量
     column: quantity
+    role: numeric
   - name: return_reason
     label: 返品理由
     column: return_reason
+    role: descriptive
 - name: inventory_movement
   label: 在庫の入出庫
   domain: inventory
@@ -223,53 +272,76 @@ concepts:
   - name: moved_at
     label: 入出庫日時
     column: moved_at
+    role: temporal
   - name: movement_type
     label: 入出庫区分
     column: movement_type
+    role: descriptive
   - name: quantity
     label: 入出庫数量
     column: quantity
+    role: numeric
 relations:
 - from: customer
   to: order
   verb: 注文する
   via: raw.orders.customer_id
+  cardinality: one_to_many
+  optional: false
 - from: store
   to: order
   verb: 受け付ける
   via: raw.orders.store_id
+  cardinality: one_to_many
+  optional: false
 - from: promotion
   to: order
   verb: 適用される
   via: raw.orders.promotion_id
+  cardinality: one_to_many
+  optional: true
 - from: order
   to: order_line
   verb: 含む
   via: raw.order_items.order_id
+  cardinality: one_to_many
+  optional: false
 - from: order_line
   to: product
   verb: 購入する
   via: raw.order_items.product_id
+  cardinality: one_to_many
+  optional: false
 - from: order
   to: payment
   verb: 支払われる
   via: raw.payments.order_id
+  cardinality: one_to_one
+  optional: false
 - from: order
   to: shipment
   verb: 配送される
   via: raw.shipments.order_id
+  cardinality: one_to_one
+  optional: false
 - from: order_line
   to: return
   verb: 返品される
   via: raw.returns.order_item_id
+  cardinality: one_to_one
+  optional: false
 - from: store
   to: inventory_movement
   verb: 入出庫する
   via: raw.inventory.store_id
+  cardinality: one_to_many
+  optional: false
 - from: inventory_movement
   to: product
   verb: 動かす
   via: raw.inventory.product_id
+  cardinality: one_to_many
+  optional: false
 constraints:
 - concept: store
   text: channel が online / app の店舗は都道府県・地方を持たない

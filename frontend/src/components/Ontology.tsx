@@ -2,7 +2,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { api, errorText } from '@/api/client'
-import { onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
+import { KIND_LABELS, onboardUrl, sourceUrl, type OntologyView } from '@/api/datasets'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -123,7 +123,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
         <CardHeader className="px-4">
           <CardTitle className="text-sm">概念の関係</CardTitle>
           <p className="text-xs text-muted-foreground">
-            四角 = もの・人・場所（dim の候補）、長円 = 出来事（fact の候補）、灰色 = 属性（一部）、緑 = 制約、矢印 = 関係
+            四角 = もの・人・場所（dim の候補）、長円 = 出来事（fact の候補）、六角形 = 状態（定期的に測る値。fact の候補）、灰色 = 属性（一部）、緑 = 制約、矢印 = 関係
           </p>
         </CardHeader>
         <CardContent className="px-4">
@@ -153,7 +153,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                     <p className="font-medium">{c.label}</p>
                     <p className="font-mono text-xs text-muted-foreground">{c.name}</p>
                   </TableCell>
-                  <TableCell className="text-xs">{c.kind === 'entity' ? 'もの・人' : '出来事'}</TableCell>
+                  <TableCell className="text-xs">{KIND_LABELS[c.kind]}</TableCell>
                   <TableCell className="text-xs">{domain.get(c.domain)}</TableCell>
                   <TableCell className="text-xs">
                     <a href={sourceUrl(c.source)} className="font-mono text-primary underline">
@@ -163,7 +163,12 @@ function OntologyBody({ view }: { view: OntologyView }) {
                   <TableCell className="text-xs">
                     {c.model ? <span className="font-mono">{c.model}</span> : <Badge variant="outline">未整備</Badge>}
                   </TableCell>
-                  <TableCell className="text-xs whitespace-normal">{c.attributes.map((a) => a.label).join('、')}</TableCell>
+                  <TableCell className="text-xs whitespace-normal">{c.attributes
+                      .map((a) => {
+                        const notes = view.attribute_notes?.[`${c.name}.${a.name}`]
+                        return notes?.length ? `${a.label}（${notes.join('。')}）` : a.label
+                      })
+                      .join('、')}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -183,6 +188,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                   <TableHead>関係</TableHead>
                   <TableHead>へ</TableHead>
                   <TableHead>列</TableHead>
+                  <TableHead>件数の対応</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -192,6 +198,7 @@ function OntologyBody({ view }: { view: OntologyView }) {
                     <TableCell className="text-xs font-medium">{r.verb}</TableCell>
                     <TableCell className="text-xs">{label.get(r.to)}</TableCell>
                     <TableCell className="font-mono text-xs">{r.via}</TableCell>
+                    <TableCell className="text-xs whitespace-normal">{view.multiplicities?.[i] ?? '-'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

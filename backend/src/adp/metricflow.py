@@ -29,3 +29,19 @@ def literal(value: Any) -> str:
             raise ValueError(f"filter の値に使えない文字があります: {value!r}")
         return "'" + value.replace("'", "''") + "'"
     raise ValueError(f"filter の値に使えない型があります: {value!r}")
+
+
+def condition(lhs: str, operator: str, values: list[Any]) -> str:
+    """絞り込みの条件（BEAM の FilterOperator の値 = / != / in / not_in）を SQL にする。
+
+    MetricFlow の where（左辺は `{{ Dimension(...) }}`）と、定期スナップショットの置き換える行の
+    条件（左辺はソースの列。ADR 0008）で共有する。使えない値は ValueError。
+    """
+    lits = [literal(v) for v in values]
+    if operator == "=":
+        return f"{lhs} = {lits[0]}"
+    if operator == "!=":
+        return f"{lhs} <> {lits[0]}"
+    if operator in ("in", "not_in"):
+        return f"{lhs} {'in' if operator == 'in' else 'not in'} ({', '.join(lits)})"
+    raise ValueError(f"使えない演算子です: {operator!r}")

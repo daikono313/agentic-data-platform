@@ -89,6 +89,16 @@ def test_bus_candidates(catalog: Catalog) -> None:
     out = bus_with_candidates(bus, ONTOLOGY, patch)
     row = next(r for r in out.rows if r.name == "fct_inventory")
     assert row.candidate and set(row.groups) == {"dim_store", "dim_date"}  # dim_product は表に無い
+    # 状態（定期的に測る値）の概念も fct の候補の行になる（ADR 0008）
+    state = patch.model_copy(
+        update={"concepts": [c.model_copy(update={"kind": "state"}) for c in patch.concepts]}
+    )
+    out = bus_with_candidates(bus, ONTOLOGY, state)
+    row = next(r for r in out.rows if r.name == "fct_inventory")
+    assert row.candidate and set(row.groups) == {"dim_store", "dim_date"}
+    # 状態の概念の案も、検証を通って適用できる
+    assert validate_patch(ONTOLOGY, state, catalog, "raw.inventory") == []
+    assert apply(ONTOLOGY, state).concept("inventory").kind == "state"
 
 
 def _script(patches: list[dict[str, Any]]) -> list[list[Any]]:
@@ -131,12 +141,16 @@ def test_link_models() -> None:
     )
     onto = apply(ONTOLOGY, patch)
     linked, names = link_models(
-        onto, [("raw.inventory", "fct_inventory_movements"), ("raw.stores", "dim_other")]
+        onto,
+        [
+            ("raw.inventory", "fct_inventory_movements", "event"),
+            ("raw.stores", "dim_other", "entity"),
+        ],
     )
     assert names == ["inventory"]  # 既にモデルのある概念（store）は変えない
     assert linked.concept("inventory").model == "fct_inventory_movements"
     assert linked.concept("store").model == "dim_store"
-    assert link_models(onto, [("raw.inventory", "dim_x")])[1] == []  # 種類と接頭辞が合わない
+    assert link_models(onto, [("raw.inventory", "dim_x", "entity")])[1] == []  # 種類が合わない
 
 
 def test_design_blocks_dimension_that_conflicts_with_ontology(catalog: Catalog) -> None:
@@ -229,8 +243,17 @@ def test_link_models_picks_model_by_kind() -> None:
         }
     )
     onto = apply(ONTOLOGY, patch)
-    linked, names = link_models(onto, [("raw.inventory", "fct_inv"), ("raw.inventory", "dim_inv")])
+    linked, names = link_models(
+        onto, [("raw.inventory", "fct_inv", "event"), ("raw.inventory", "dim_inv", "entity")]
+    )
     assert names == ["inventory"] and linked.concept("inventory").model == "fct_inv"
+    # 同じ源泉の出来事と状態の概念は、fct の種類（出来事か定期スナップショットか）で選ぶ
+    state = linked.concept("inventory")
+    assert state is not None
+    level = state.model_copy(update={"name": "stock_level", "kind": "state", "model": None})
+    onto = onto.model_copy(update={"concepts": [*onto.concepts, level]})
+    linked, names = link_models(onto, [("raw.inventory", "fct_stock_levels", "state")])
+    assert names == ["stock_level"] and linked.concept("inventory").model is None
 
 
 def test_link_models_keeps_one_concept_per_model() -> None:
@@ -239,10 +262,10 @@ def test_link_models_keeps_one_concept_per_model() -> None:
     assert line is not None and line.model == "fct_order_lines"
     extra = line.model_copy(update={"name": "order_line_pipeline", "model": None})
     onto = ONTOLOGY.model_copy(update={"concepts": [*ONTOLOGY.concepts, extra]})
-    linked, names = link_models(onto, [("raw.order_items", "fct_order_lines")])
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_lines", "event")])
     assert names == [] and linked.concept("order_line_pipeline").model is None
     # 新しい名前の fct なら、モデルの無い概念に書き込む
-    linked, names = link_models(onto, [("raw.order_items", "fct_order_pipelines")])
+    linked, names = link_models(onto, [("raw.order_items", "fct_order_pipelines", "event")])
     assert names == ["order_line_pipeline"]
 
 
@@ -380,7 +403,8 @@ def test_cleansing_spec_round_trips_through_the_form() -> None:
 
 def test_date_derives_follow_the_naming_convention() -> None:
     """日時から作る日付の列は _on（規約）。ほかの出力の列と重なる名前は出さない（#150）。"""
-    from adp.cleansing.check import column_kind, column_kinds, date_derives
+    from adp.catalog.types import column_kind
+    from adp.cleansing.check import column_kinds, date_derives
     from adp.cleansing.models import CleansingSpec
     from adp.cleansing.render import SourceColumn
 
@@ -507,4 +531,11 @@ def test_patch_must_not_duplicate_existing_labels(catalog: Catalog) -> None:
         if a["column"] == "quantity":
             a["label"] = "販売数量"
     errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
-    assert [e for e in errors if e.startswith("ラベル「販売数量」")], errors
+    assert [e for e in errors if e.startswith("言葉「販売数量」")], errors
+
+    # 足した関係の多重度の誤りも返す（同じ店舗に入出庫は何件もあるので 1 対 1 ではない）
+    data = patch.model_dump(mode="json", by_alias=True)
+    assert data["relations"], data
+    data["relations"][0]["cardinality"] = "one_to_one"
+    errors = validate_patch(ONTOLOGY, OntologyPatch.model_validate(data), catalog, "raw.inventory")
+    assert [e for e in errors if "は 1 件まで（one_to_one）としているのに" in e], errors

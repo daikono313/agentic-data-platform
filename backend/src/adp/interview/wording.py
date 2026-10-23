@@ -15,6 +15,11 @@
 続けて表示されるので不要で、プロンプトで禁止しても別の言い方に置き換わるため（#158）。
 本文が全部消えてもよい（質問とボタンだけが表示される）。
 
+英語だけの地の文（「Now the metrics.」「Fix: use expr only.」など、tool 呼び出しの合間のモデルの
+作業メモ）も取り除く（#161）。日本語を含まず、英単語が 3 つ以上あり、作業メモに特有の語
+（now・next・fix・retry・add など）を含む文だけを対象にする。商品名・値に普通に出る語（of・and・on）
+では判定しない。ユーザーへの英語の質問（? で終わる文）は消さない。
+
 確認の質問は、確かめてもらう中身がユーザーに見えているときだけ出せる（`hidden_confirmation`）。
 具体例を記録してよいかの確認には値（日付・数量など。#163）、言い換えの確認には言い換えた問い
 （「〜はいくつか」。#165）が要る。tool の結果や記録した内容はユーザーに見えないので、中身を書かずに
@@ -115,6 +120,34 @@ def is_position_sentence(sentence: str) -> bool:
     )
 
 
+_JAPANESE = re.compile(r"[ぁ-んァ-ヶ一-龥々]")
+_ENGLISH_WORD = re.compile(r"^[(`]?[A-Za-z][a-z]*(?:'[a-z]+)?[.,!?:;)`]*$")
+_WORK_NOTE = re.compile(
+    r"\b(now|next|let me|i'll|fix|fixing|retry|add|adding|need|needs|remove|move|same|record)\b",
+    re.IGNORECASE,
+)
+
+
+def is_english_sentence(sentence: str) -> bool:
+    """日本語を含まない英語の地の文（モデルの作業メモ）か（#161）。"""
+    s = sentence.strip()
+    if not s or _JAPANESE.search(s) or s.endswith(("?", "？")):
+        return False
+    words = [w for w in s.split() if _ENGLISH_WORD.match(w)]
+    return len(words) >= 3 and bool(_WORK_NOTE.search(s))
+
+
+def english_sentences(text: str) -> list[str]:
+    """地の文（表・リスト・見出し・引用・コードの行を除く）のうち、英語の作業メモの文。"""
+    return [
+        x
+        for line, prose in _lines(text)
+        if prose
+        for x in sentences(line)
+        if is_english_sentence(x)
+    ]
+
+
 def is_closing_sentence(sentence: str) -> bool:
     """回答を促すだけの締めの一言か。"""
     s = sentence.strip()
@@ -175,7 +208,7 @@ def _quotes_hidden_question(sentence: str, question: str) -> bool:
 
 
 def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[str]]:
-    """画面の位置を指す文（質問文 question があれば締めの一言も）を取り除く。
+    """画面の位置を指す文・英語の作業メモ（質問文 question があれば締めの一言も）を取り除く。
     戻り値は（本文, 取り除いた文）。"""
     removed: list[str] = []
     lines: list[str] = []
@@ -188,7 +221,11 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
             if (
                 sentence.strip()
                 and not _quotes_hidden_question(sentence, question or "")
-                and (is_position_sentence(sentence) or (question and is_closing_sentence(sentence)))
+                and (
+                    is_position_sentence(sentence)
+                    or is_english_sentence(sentence)
+                    or (question and is_closing_sentence(sentence))
+                )
             ):
                 removed.append(sentence.strip())
             else:

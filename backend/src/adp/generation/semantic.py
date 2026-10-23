@@ -14,7 +14,6 @@ from adp.beam import (
     Aggregation,
     BeamModel,
     BusinessEvent,
-    FilterOperator,
     Measure,
     MetricFilter,
     MetricRequest,
@@ -22,7 +21,7 @@ from adp.beam import (
     W,
 )
 from adp.design import ColumnRole, DimTable, FactTable, PhysicalDesign
-from adp.metricflow import literal
+from adp.metricflow import condition
 
 _AGG = {
     Aggregation.SUM: "sum",
@@ -53,9 +52,8 @@ def _fact_column_for(fact: FactTable, beam_ref: str) -> str | None:
 
 def _time_column(fact: FactTable, ref: str) -> str | None:
     """BEAM の When の参照に対応する fct の日付列。"""
-    return next(
-        (c.name for c in fact.columns if c.source_ref == ref and c.role == ColumnRole.TIME), None
-    )
+    col = fact.column_for(ref, ColumnRole.TIME)
+    return col.name if col else None
 
 
 def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
@@ -86,22 +84,12 @@ def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:
     return f"{d.ref}__{attr}"
 
 
-def _literal(value: str | int | float | bool) -> str:
-    try:
-        return literal(value)
-    except ValueError as e:
-        raise SemanticError(str(e)) from e
-
-
 def filter_expr(event: BusinessEvent, fact: FactTable, f: MetricFilter) -> str:
     dim = "{{ Dimension('" + mf_name(event, fact, f.ref) + "') }}"
-    values = [_literal(v) for v in f.values]
-    if f.operator == FilterOperator.EQUALS:
-        return f"{dim} = {values[0]}"
-    if f.operator == FilterOperator.NOT_EQUALS:
-        return f"{dim} <> {values[0]}"
-    op = "in" if f.operator == FilterOperator.IN else "not in"
-    return f"{dim} {op} ({', '.join(values)})"
+    try:
+        return condition(dim, f.operator.value, list(f.values))
+    except ValueError as e:
+        raise SemanticError(str(e)) from e
 
 
 def _filters(event: BusinessEvent, fact: FactTable, m: MetricRequest) -> str | None:
@@ -239,6 +227,15 @@ class MetricDefinitions:
     queries: list[MetricQuery]
 
 
+ROW_COUNT_EXPR = "1"
+"""出来事の件数（行の数）の measure の式。列を持たず、行を数える（factless fact。#139）。"""
+
+
+def measure_expr(measure: Measure) -> str:
+    """simple 指標の expr（measure の列。出来事の件数なら行を数える式）。"""
+    return ROW_COUNT_EXPR if measure.counts_rows else measure.name
+
+
 def metric_definitions(
     beam: BeamModel, design: PhysicalDesign, fact: FactTable
 ) -> MetricDefinitions:
@@ -260,14 +257,14 @@ def metric_definitions(
         flt = _filters(event, fact, m)
         if m.type in (MetricType.SIMPLE, MetricType.CUMULATIVE):
             measure = event.measure(m.measure or "")
-            if measure is None or fact.column(measure.name) is None:
+            if measure is None or (not measure.counts_rows and fact.column(measure.name) is None):
                 raise SemanticError(
                     f"metric {m.name} の measure {m.measure} が {fact.name} にありません"
                 )
             simple: dict[str, Any] = {
                 "type": "simple",
                 "agg": _AGG[measure.aggregation],
-                "expr": measure.name,
+                "expr": measure_expr(measure),
             }
             if flt:
                 simple["filter"] = flt

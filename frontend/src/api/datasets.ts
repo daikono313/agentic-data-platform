@@ -77,11 +77,17 @@ export interface OntologyConcept {
   name: string
   label: string
   domain: string
-  kind: 'entity' | 'event'
+  kind: 'entity' | 'event' | 'state'
   source: string
   key: string
   model?: string
   attributes: { name: string; label: string; column: string }[]
+}
+/** 概念の種類の表示名（backend の adp.ontology.KIND_LABELS と同じ） */
+export const KIND_LABELS: Record<OntologyConcept['kind'], string> = {
+  entity: 'もの・人',
+  event: '出来事',
+  state: '状態',
 }
 export interface OntologyView {
   mermaid: string
@@ -94,6 +100,10 @@ export interface OntologyView {
   unmapped_sources: string[]
   unmapped_models: string[]
   errors: string[]
+  /** 関係ごとの件数の対応の表示（relations と同じ並び。未確認なら -。#137） */
+  multiplicities?: string[]
+  /** 属性（`<概念>.<属性>`）の補足（役割・上の階層・同義語・正本。#137） */
+  attribute_notes?: Record<string, string[]>
 }
 
 /** GET /sources/{table}/cleansing の型（#68） */

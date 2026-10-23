@@ -122,9 +122,13 @@ describe('OnboardingScreen', () => {
     fireEvent.change(name, { target: { value: '在庫の入出庫' } })
     fireEvent.change(screen.getByLabelText('属性 quantity の表示名'), { target: { value: '数量' } })
     fireEvent.change(screen.getByLabelText('関係 store → inventory の動詞'), { target: { value: '入出庫する' } })
+    // 状態（定期的に測る値。ADR 0008）も選べる
+    fireEvent.change(screen.getByLabelText('種類'), { target: { value: 'state' } })
+    expect(screen.getByText(/種類を変えました/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '確定して PR を作る' }))
     await waitFor(() => expect(start).toHaveBeenCalled())
     const [, patch, cleansing, redo] = start.mock.calls[0]
+    expect(patch.concepts[0].kind).toBe('state')
     expect(redo).toBe(false)
     expect(patch.concepts[0].label).toBe('在庫の入出庫')
     expect(patch.concepts[0].attributes[0].label).toBe('数量')

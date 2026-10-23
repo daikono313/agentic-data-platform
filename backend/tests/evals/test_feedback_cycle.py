@@ -213,6 +213,34 @@ def test_repeats_after_clarification_or_confirmation_are_allowed() -> None:
     assert _checks(confirm)["no_repeated_questions"]
 
 
+def test_compare_splits_content_and_style(tmp_path: Path) -> None:
+    """合格率を、中身（シナリオのチェック）と言い回し（どのシナリオでも行うチェック）に分けて出す
+    （#218）。"""
+    checks = [
+        {"name": "finalizable", "passed": True},
+        {"name": "metric_aggregation: count", "passed": True},
+        {"name": "no_choice_position_words", "passed": False},
+    ]
+    for d in ("b", "a"):
+        path = tmp_path / d / "s.1.json"
+        path.parent.mkdir(parents=True)
+        talk = [{"role": "assistant", "text": "1 行は何を表しますか？"}]
+        data = {"scenario": "s", "passed": False, "transcript": talk, "checks": checks}
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    table = compare(tmp_path / "b", tmp_path / "a")
+    header = next(line for line in table.splitlines() if line.startswith("| シナリオ |"))
+    row = next(line for line in table.splitlines() if line.startswith("| s |"))
+    cells = dict(zip(header.split("|"), row.split("|"), strict=True))
+    assert cells[" 合格率 "].strip() == "0% → 0%"
+    assert cells[" 合格率（中身） "].strip() == "100% → 100%"
+    assert cells[" 合格率（言い回し） "].strip() == "0% → 0%"
+    # エラーで終わった回は、チェックが通っていても中身を不合格にする
+    from adp.evals.compare import _pass_rates
+
+    failed = {"passed": False, "error": "API", "checks": checks[:2]}
+    assert _pass_rates(failed)["content_passed"] == 0
+
+
 def test_compare_totals_only_shared_scenarios(tmp_path: Path) -> None:
     import pytest
 
@@ -378,6 +406,8 @@ def test_effort_and_irregular_detection_avoids_false_matches() -> None:
     for text in [
         "取消やマイナスの数量の記録はどう数えますか？",
         "数え方が変わる特別なケースはありますか？",
+        "典型と違うケース（返品・会員でない方など）はありますか？",
+        "別のパターンの注文も 1 件教えていただけますか？",
     ]:
         assert _transcript_check_map([_msg(text)])["asks_irregular_cases"].passed, text
     assert not _transcript_check_map([_msg("例外なく全店舗を含めてよいですか？")])[
@@ -466,6 +496,12 @@ def test_modeling_checks() -> None:
     assert passed({"story_type": "recurring"})
     event.examples = [EventExample(values={}), EventExample(values={})]
     assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
+    # 型の違う具体例（#142）
+    from adp.beam import ExampleKind
+
+    assert not passed({"example_kinds": 2})
+    event.examples[1] = EventExample(kind=ExampleKind.MISSING, note="会員でない", values={})
+    assert passed({"example_kinds": 2}) and not passed({"example_kinds": 3})
     assert not passed("metric_purpose")
     beam.metrics[0].purpose = "販促の計画に使う"
     assert passed("metric_purpose")
@@ -575,6 +611,47 @@ def test_column_checks() -> None:
     assert passed({"ratio_of": ratio})
 
 
+def test_counts_rows_checks() -> None:
+    """出来事の件数（source の無い count）は `rows:<1 行の元>` として採点する（#204）。"""
+    from adp.beam import Aggregation, MetricRequest, MetricType, SourceRef
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "shipment_counts.yml")
+    metric = beam.metrics[0]
+    measure = beam.events[0].measure(metric.measure or "")
+    assert measure is not None and measure.counts_rows
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    assert passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"metric_counts_rows": "raw.orders"})
+    with pytest.raises(ValueError, match="源泉"):
+        passed({"metric_counts_rows": None})
+    # 比率の分子・分母にも件数を書ける
+    beam.metrics.append(
+        MetricRequest(
+            name="rate",
+            label="率",
+            question="率",
+            framed_question="率",
+            type=MetricType.RATIO,
+            event=metric.event,
+            numerator=metric.name,
+            denominator=metric.name,
+        )
+    )
+    rows = {"numerator": "rows:raw.shipments", "denominator": "rows:raw.shipments"}
+    assert passed({"ratio_of": rows})
+    # キーの列を数える count は件数ではない（列の集計として採点する）
+    measure.source = SourceRef(table="raw.shipments", column="shipment_id")
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"ratio_of": rows})
+    measure.aggregation, measure.source = Aggregation.COUNT_DISTINCT, None
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+
+
 def test_measure_state_check() -> None:
     """状態の measure の求め方と、置き換える行の列・値で採点する（ADR 0008）。"""
     from adp.beam import FilterOperator, MetricFilter, StateMethod, StateSpec
@@ -625,6 +702,31 @@ def test_measure_state_check() -> None:
         passed({"method": "running_totl"})
     with pytest.raises(ValueError, match="includes と excludes"):
         passed({"method": "running_total", "reset": {"column": "raw.orders.order_status"}})
+
+
+def test_measure_lag_check() -> None:
+    """段階の間の時間（ラグ）の measure を、段階の日時の元の列で採点する（#140）。"""
+    from adp.beam import LagSpec
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(
+        Path(__file__).parents[1] / "fixtures" / "beam" / "order_fulfillment_stages.yml"
+    )
+
+    def passed(opts: Any) -> bool:
+        return _check(beam, {"measure_lag": opts}).passed
+
+    ship = {"start": "raw.shipments.shipped_at", "end": "raw.shipments.delivered_at"}
+    assert passed(ship)
+    assert passed({"start": "raw.orders.ordered_at", "end": "raw.shipments.shipped_at"})
+    assert not passed({"start": "raw.shipments.delivered_at", "end": "raw.shipments.shipped_at"})
+    measure = beam.events[0].measure("ship_to_delivery_days")
+    assert measure is not None
+    measure.lag = LagSpec(start="ordered_at", end="delivered_at")
+    assert not passed(ship)
+    with pytest.raises(ValueError, match="start と end"):
+        passed({"start": "raw.shipments.shipped_at"})
 
 
 def test_purpose_question_check() -> None:

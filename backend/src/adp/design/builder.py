@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -16,7 +17,12 @@ from adp.beam import (
     BusinessEvent,
     Dimension,
     FactType,
+    Measure,
+    MetricFilter,
+    MetricRequest,
     SourceRef,
+    StateMethod,
+    TimeGrain,
     W,
 )
 from adp.design.models import (
@@ -29,9 +35,21 @@ from adp.design.models import (
     IssueSeverity,
     Join,
     PhysicalDesign,
+    SnapshotDesign,
     SourceTable,
 )
-from adp.ontology.models import Concept, Ontology, link_models
+from adp.metricflow import condition
+from adp.ontology.models import KIND_LABELS, Concept, ConceptKind, Ontology, link_models
+
+SNAPSHOT_TIME_COLUMN = "snapshot_on"
+"""定期スナップショットの fct の、期間の終わりの日付の列（ADR 0008）。"""
+_PERIOD_END = {
+    TimeGrain.DAY: "日",
+    TimeGrain.WEEK: "週末",
+    TimeGrain.MONTH: "月末",
+    TimeGrain.QUARTER: "四半期末",
+    TimeGrain.YEAR: "年末",
+}
 
 
 @dataclass(frozen=True)
@@ -322,18 +340,20 @@ class DesignBuilder:
         existing = {c.model for c in self.ontology.concepts if c.model}
         known = {c.source for c in self.ontology.concepts}
         blocked = {i.ref for i in self.issues if i.severity == IssueSeverity.BLOCKER}
-        models = [(f.base.table, f.name, f.event, "出来事") for f in facts]
-        models += [(d.base.table, d.name, d.dimension, "もの・人・場所") for d in dims]
-        new = [m for m in models if m[1] not in existing and m[0] in known and m[2] not in blocked]
-        linked, _ = link_models(self.ontology, [(source, name) for source, name, _, _ in new])
+        models = [(f.base.table, f.name, concept_kind(f), f.event) for f in facts]
+        models += [(d.base.table, d.name, "entity", d.dimension) for d in dims]
+        new = [m for m in models if m[1] not in existing and m[0] in known and m[3] not in blocked]
+        linked, _ = link_models(
+            self.ontology, [(source, name, kind) for source, name, kind, _ in new]
+        )
         mapped = {c.model for c in linked.concepts if c.model}
-        for source, name, ref, kind in new:
+        for source, name, kind, ref in new:
             if name in mapped:
                 continue
             self._blocker(
                 f"{name} を結び付けられるオントロジーの概念がありません（源泉 {source} に、"
-                f"モデルの無い{kind}の概念が無い）。概念とモデルは 1 対 1 なので、既存のモデルを"
-                "使うか、オントロジーにこのモデル用の概念を足してから作ってください",
+                f"モデルの無い{KIND_LABELS[kind]}の概念が無い）。概念とモデルは 1 対 1 なので、"
+                "既存のモデルを使うか、オントロジーにこのモデル用の概念を足してから作ってください",
                 ref,
             )
 
@@ -377,10 +397,11 @@ class DesignBuilder:
           確かめるよう課題に出す
         同じ BEAM の中で、同じ源泉から 2 つの fact を作ることも止める。
         """
-        by_base: dict[str, list[FactTable]] = {}
+        # 同じ源泉の出来事の fact と状態の fact（入出庫と月末在庫）は別の概念なので並べてよい
+        by_base: dict[tuple[str, str], list[FactTable]] = {}
         for fact in facts:
-            by_base.setdefault(fact.base.table, []).append(fact)
-        for table, same_base in by_base.items():
+            by_base.setdefault((fact.base.table, concept_kind(fact)), []).append(fact)
+        for (table, _), same_base in by_base.items():
             if len(same_base) > 1:
                 names = "、".join(f"{f.name}（{f.event}）" for f in same_base)
                 self._blocker(
@@ -390,12 +411,12 @@ class DesignBuilder:
                 )
         if self.ontology is None:
             return
-        events: dict[str, list[Concept]] = {}
+        # 出来事の fact は出来事の概念と、定期スナップショットは状態の概念と照合する（ADR 0008）
+        by_kind: dict[tuple[str, str], list[Concept]] = {}
         for c in self.ontology.concepts:
-            if c.kind == "event":
-                events.setdefault(c.source, []).append(c)
+            by_kind.setdefault((c.kind, c.source), []).append(c)
         for fact in facts:
-            concepts = events.get(fact.base.table, [])
+            concepts = by_kind.get((concept_kind(fact), fact.base.table), [])
             linked = [c for c in concepts if c.model]
             event = beam.event(fact.event)
             if not linked or event is None:
@@ -405,7 +426,7 @@ class DesignBuilder:
             model = concept.model or ""
             table_name = model.removeprefix("fct_")
             head = (
-                f"{fact.name} の源泉 {fact.base.table} の出来事は、既に"
+                f"{fact.name} の源泉 {fact.base.table} の{KIND_LABELS[concept_kind(fact)]}は、既に"
                 f"「{concept.label}」（{model}）としてあります。"
             )
             if self.existing_facts is None:
@@ -481,9 +502,6 @@ class DesignBuilder:
 
     def _fact(self, event: BusinessEvent) -> FactTable | None:
         p = f"[{event.name}]"
-        if event.fact_type == FactType.PERIODIC_SNAPSHOT:
-            self._blocker(f"{p} 定期スナップショット（recurring）は MVP では生成できません")
-            return None
         base = base_table(event, self.schema)
         if base is None or not event.grain:
             self._blocker(f"{p} 粒度（grain_keys）からベースのテーブルを決められません")
@@ -571,6 +589,12 @@ class DesignBuilder:
                 )
 
         for m in event.measures:
+            if m.counts_rows and m.availability == Availability.AVAILABLE:
+                continue  # 行の件数は列を持たない（Semantic Layer で数える。#139）
+            if m.lag is not None and m.availability == Availability.AVAILABLE:
+                if (lag := self._lag_column(event, m, columns)) is not None:
+                    columns.append(lag)
+                continue
             if m.availability != Availability.AVAILABLE or m.source is None:
                 self._issue(
                     IssueSeverity.WARNING,
@@ -604,7 +628,7 @@ class DesignBuilder:
                 else:
                     grain_columns.append(gd.ref if gd.masterless else f"{gd.ref}_key")
         table_name = event.table_name or event.name
-        return FactTable(
+        fact = FactTable(
             name=event.fact_table,
             event=event.name,
             label=event.label,
@@ -618,6 +642,140 @@ class DesignBuilder:
             agg_time_column=agg_time[0] if agg_time else None,
             agg_time_grain=agg_time[1].time_grain if agg_time else None,
         )
+        if event.fact_type == FactType.PERIODIC_SNAPSHOT:
+            return self._snapshot(event, fact, resolve, src)
+        return fact
+
+    def _lag_column(self, event: BusinessEvent, m: Measure, columns: list[Column]) -> Column | None:
+        """段階の間の時間（lag）の measure の列。段階の日時の列（`<base>_at`）から計算する
+        （日・時の境目を数える。終わりの段階に達していない行は NULL。#140）。"""
+        assert m.lag is not None
+        at = {c.source_ref: c.expr for c in columns if c.role == ColumnRole.TIMESTAMP}
+        start, end = at.get(m.lag.start), at.get(m.lag.end)  # FactTable を作る前なので列から引く
+        if start is None or end is None:
+            self._blocker(
+                f"[{event.name}] measure {m.name} の段階 {m.lag.start} / {m.lag.end} の日時が"
+                " fct にありません",
+                m.name,
+            )
+            return None
+        return Column(
+            name=m.name,
+            role=ColumnRole.MEASURE,
+            # 源泉の日時が文字列でも計算できるよう timestamp にそろえる（日付列の cast と同じ）
+            expr=f"date_diff('{m.lag.unit.value}', cast({start} as timestamp),"
+            f" cast({end} as timestamp))",
+            description=m.label + (f"（{m.unit}）" if m.unit else ""),
+            nullable=True,
+            source_ref=m.name,
+        )
+
+    def _snapshot(
+        self,
+        event: BusinessEvent,
+        fact: FactTable,
+        resolve: Callable[[SourceRef, str, str], str | None],
+        src: _Sources,
+    ) -> FactTable | None:
+        """記録の列から、定期スナップショットの fct（区切り × 期間の終わりの値）にする（ADR 0008）。
+
+        列は、区切り（粒度のキーから When を除いたもの）・期間の終わりの日付・measure だけ。記録
+        1 件ごとの列（日時・区分など）は持たない（置き換える行の条件にだけ使う）。
+        """
+        p = f"[{event.name}]"
+        whens = [d for d in event.dimensions if d.w == W.WHEN]
+        if len(whens) != 1:
+            self._blocker(f"{p} 定期的な状態の記録は、時点（When）を 1 つにしてください")
+            return None
+        when = whens[0]
+        if when.ref not in event.grain_keys or any(event.degenerate(k) for k in event.grain_keys):
+            self._blocker(
+                f"{p} 定期的な状態の 1 行は「区切り（店舗 × 商品など）× 時点」です。粒度のキー"
+                "（grain_keys）は、When と区切りのディメンションにしてください（記録 1 件の番号は"
+                "入れない）",
+                when.ref,
+            )
+            return None
+        grain = when.time_grain
+        recorded = fact.column(f"{_time_base(when)}_at")
+        if grain is None or recorded is None:
+            return None  # 最小粒度が未定・日時の列が無いものは、確定前の課題か別の blocker になる
+        time_column = f"{_time_base(when)}_on"
+        partition = [c for c in fact.grain_columns if c != time_column]
+        columns = [c for c in fact.columns if c.name in partition]
+        columns.append(
+            Column(
+                name=SNAPSHOT_TIME_COLUMN,
+                role=ColumnRole.TIME,
+                expr=recorded.expr,
+                description=f"時点（{_PERIOD_END[grain]}）",
+                references="dim_date.date_day",
+                source_ref=when.ref,
+            )
+        )
+        methods: dict[str, StateMethod] = {}
+        resets: dict[str, str] = {}
+        for m in event.measures:
+            if (col := fact.column(m.name)) is None:
+                continue  # データの無い measure（警告を出し済み）
+            if m.state is None:
+                self._blocker(f"{p} measure {m.name} の値の求め方（state）がありません", m.name)
+                continue
+            columns.append(col)
+            methods[m.name] = m.state.method
+            if m.state.method == StateMethod.RUNNING_TOTAL and not m.state.reset:
+                self._issue(
+                    IssueSeverity.WARNING,
+                    f"{p} measure {m.name} は数え直した記録（置き換える行）が無いので、始まりの数を"
+                    "0 として記録の増減を積み上げます。期首の数が記録の外にあるなら、値は実際より"
+                    "ずれます（PR で確かめてください）",
+                    m.name,
+                )
+            conds = [self._filter_sql(event, f, resolve) for f in m.state.reset]
+            if any(c is None for c in conds):
+                continue
+            if conds:
+                resets[m.name] = " and ".join(f"({c})" for c in conds if c)
+        if not methods:
+            return None
+        return fact.model_copy(
+            update={
+                "columns": columns,
+                # 置き換える行の条件が別のテーブルの列なら、その結合も要る（resolve が足す）
+                "joins": list(src.joins),
+                "grain_columns": [*partition, SNAPSHOT_TIME_COLUMN],
+                "agg_time_column": SNAPSHOT_TIME_COLUMN,
+                "agg_time_grain": grain,
+                "snapshot": SnapshotDesign(
+                    time_column=SNAPSHOT_TIME_COLUMN,
+                    recorded_at=recorded.expr,
+                    grain=grain,
+                    methods=methods,
+                    resets=resets,
+                ),
+            }
+        )
+
+    def _filter_sql(
+        self,
+        event: BusinessEvent,
+        f: MetricFilter,
+        resolve: Callable[[SourceRef, str, str], str | None],
+    ) -> str | None:
+        """置き換える行の条件（BEAM の絞り込みと同じ形）を、ソースの列の SQL にする。"""
+        p = f"[{event.name}]"
+        source = filter_source(event, f.ref)
+        if source is None:
+            self._blocker(f"{p} 置き換える行の条件 {f.ref} の元の列がありません", f.ref)
+            return None
+        column = resolve(source, f"置き換える行の条件 {f.ref}", f.ref)
+        if column is None:
+            return None
+        try:
+            return condition(column, f.operator.value, list(f.values))
+        except ValueError as e:
+            self._blocker(f"{p} 置き換える行の条件 {f.ref}: {e}", f.ref)
+            return None
 
     # --- dim -------------------------------------------------------------------------------
 
@@ -725,7 +883,12 @@ class DesignBuilder:
             if fact is None or event is None:
                 continue
             p = f"[metric {metric.name}]"
-            if metric.measure and fact.column(metric.measure) is None:
+            measure = event.measure(metric.measure or "")
+            if (
+                metric.measure
+                and fact.column(metric.measure) is None
+                and not (measure and measure.counts_rows)
+            ):
                 self._blocker(f"{p} measure {metric.measure} が {fact.name} にありません")
             for ref in metric.group_by:
                 dim_ref, _, attr = ref.partition(".")
@@ -739,6 +902,45 @@ class DesignBuilder:
                         self._blocker(f"{p} 切り口 {ref} の列が {fact.name} にありません", ref)
                 elif (dim := dims.get(d.name)) is None or all(c.name != attr for c in dim.columns):
                     self._blocker(f"{p} 切り口 {ref} の列が dim_{d.name} にありません", ref)
+            if fact.snapshot is not None:
+                self._check_snapshot_refs(metric, event, fact, p)
+
+    def _check_snapshot_refs(
+        self, metric: MetricRequest, event: BusinessEvent, fact: FactTable, p: str
+    ) -> None:
+        """定期スナップショットの指標の切り口・絞り込みは、区切りのディメンションか時点に限る。
+        記録 1 件ごとの項目（区分・番号）は、状態の fct に列として残らない（ADR 0008）。"""
+        partition = {c.source_ref for c in fact.columns if c.name in fact.grain_columns}
+        for ref in dict.fromkeys([*metric.group_by, *(f.ref for f in metric.filters)]):
+            dim_ref = ref.partition(".")[0]
+            d = event.dimension(dim_ref)
+            if d is not None and (d.w == W.WHEN or d.ref in partition):
+                continue
+            self._blocker(
+                f"{p} {ref} は記録 1 件ごとの項目なので、状態（{fact.name}）の切り口・絞り込みに"
+                "使えません。区切り（"
+                + "・".join(c.description for c in fact.columns if c.name in fact.grain_columns)
+                + "）の項目で切ってください",
+                ref,
+            )
+
+
+def filter_source(event: BusinessEvent, ref: str) -> SourceRef | None:
+    """絞り込み・置き換える行の条件の参照（縮退ディメンション名・`<dim ref>.<属性>`）の元の列。"""
+    if (deg := event.degenerate(ref)) is not None:
+        return deg.source
+    dim_ref, _, attr = ref.partition(".")
+    d = event.dimension(dim_ref)
+    if d is None:
+        return None
+    if d.masterless:
+        return d.fact_key
+    return next((a.source for a in d.attributes if a.name == attr), None)
+
+
+def concept_kind(fact: FactTable) -> ConceptKind:
+    """fct が結び付くオントロジーの概念の種類（定期スナップショットは状態、それ以外は出来事）。"""
+    return "state" if fact.fact_type == FactType.PERIODIC_SNAPSHOT else "event"
 
 
 def _time_base(d: Dimension) -> str:

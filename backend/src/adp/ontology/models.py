@@ -13,6 +13,28 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+ConceptKind = Literal["entity", "event", "state"]
+"""概念の種類。entity（もの・人・場所。dim の候補）、event（出来事。fact の候補）、state（定期的に
+測る状態。periodic snapshot の fact の候補。ADR 0008）。"""
+KIND_LABELS: dict[str, str] = {"entity": "もの・人", "event": "出来事", "state": "状態"}
+"""画面と docs/ontology.md に出す種類の名前。"""
+
+
+AttributeRole = Literal["descriptive", "numeric", "temporal"]
+"""属性の役割。descriptive（切り口の言葉。名前・区分など）、numeric（数として集計できる値の候補。
+単価・割引率など）、temporal（日時・日付）。源泉の列の型と照合する（#137）。"""
+ROLE_LABELS: dict[str, str] = {"descriptive": "説明", "numeric": "数値", "temporal": "時刻"}
+"""docs/ontology.md に出す役割の名前。"""
+Cardinality = Literal["one_to_one", "one_to_many"]
+"""関係の多重度。キーを持つ側の概念の 1 件に、関係の列（via）を持つ側の概念が 1 件までか、複数か
+（#137）。"""
+
+
+def model_prefix(kind: str) -> str:
+    """概念の種類に対応するモデルの接頭辞（entity → dim_、event・state → fct_）。"""
+    return "dim_" if kind == "entity" else "fct_"
+
+
 _NAME = r"^[a-z][a-z0-9_]*$"
 _TABLE = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 _COLUMN = r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
@@ -48,23 +70,48 @@ class Attribute(_Strict):
 
     同じ値を別の源泉にも持つとき（注文の支払方法と、支払の支払方法など）に、どちらが正本かを示す。
     ラベルは正本と同じにする。同じラベルで same_as の無い属性が別々にあると、照合で落ちる。"""
+    role: AttributeRole | None = None
+    """属性の役割（AttributeRole）。省略は未確認。"""
+    parent: str | None = Field(default=None, pattern=_NAME)
+    """階層で 1 つ上の属性（同じ概念の属性の名前。例: 都道府県 → 地方）。子の値ごとに親の値は 1 つ
+    （源泉のデータと照合する。#137）。"""
+    synonyms: list[str] | None = None
+    """業務でほかに呼ぶ言葉（例: 所在地方を「地方」とも呼ぶ）。ほかの属性のラベル・同義語と同じに
+    しない（同じ言葉が 2 つの属性を指すと、どちらか決められない。#137）。"""
+
+    @field_validator("synonyms", mode="before")
+    @classmethod
+    def _one_line_words(cls, v: object) -> object:
+        return (
+            [" ".join(w.split()) if isinstance(w, str) else w for w in v]
+            if isinstance(v, list)
+            else v
+        )
+
+    @model_validator(mode="after")
+    def _synonyms_differ(self) -> Attribute:
+        words = self.synonyms or []
+        if any(not w for w in words) or len(words) != len(set(words)) or self.label in words:
+            raise ValueError(
+                f"属性 {self.name} の同義語は、空でなく、重複せず、ラベルと違う言葉にする"
+            )
+        return self
 
 
 class Concept(_Strict):
     name: str = Field(pattern=_NAME)
     label: str = Field(min_length=1)
     domain: str
-    kind: Literal["entity", "event"]
-    """entity（もの・人・場所。dim の候補）か event（出来事。fact の候補）。"""
+    kind: ConceptKind
     source: str = Field(pattern=_TABLE)
     key: str = Field(pattern=_NAME)
     model: str | None = Field(default=None, pattern=r"^(dim|fct)_[a-z0-9_]+$")
-    """対応する整備済みモデル。entity → dim_*、event → fct_*。まだ無ければ None。"""
+    """対応する整備済みモデル。entity → dim_*、event・state → fct_*。まだ無ければ None。"""
     attributes: list[Attribute] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _model_matches_kind(self) -> Concept:
-        expected = "dim_" if self.kind == "entity" else "fct_"
+        expected = model_prefix(self.kind)
         if self.model is not None and not self.model.startswith(expected):
             raise ValueError(f"概念 {self.name}（{self.kind}）のモデルは {expected}* にする")
         for what, values in (
@@ -73,6 +120,18 @@ class Concept(_Strict):
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"概念 {self.name} の属性の{what}が重複している")
+        parents = {a.name: a.parent for a in self.attributes}
+        for a in self.attributes:
+            if a.parent is not None and a.parent not in parents:
+                raise ValueError(f"概念 {self.name} の属性 {a.name} の parent {a.parent} が無い")
+            seen, at = {a.name}, a.parent
+            while at is not None:
+                if at in seen:
+                    raise ValueError(
+                        f"概念 {self.name} の属性 {a.name} の階層（parent）が循環している"
+                    )
+                seen.add(at)
+                at = parents.get(at)
         return self
 
 
@@ -83,6 +142,11 @@ class Relation(_Strict):
     """from → to の矢印のラベル（動詞）。"""
     via: str = Field(pattern=_COLUMN)
     """関係を表す列（<schema>.<table>.<column>）。"""
+    cardinality: Cardinality | None = None
+    """多重度（Cardinality）。省略は未確認。1 対 1 なら、via の値は（空を除いて）重複しない。"""
+    optional: bool | None = None
+    """via を持つ側の概念が、相手を持たないことがあるか（via が空になりうるか。例: プロモーションの
+    無い注文）。false なら via に空があってはいけない。省略は未確認。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
@@ -142,6 +206,11 @@ class Ontology(_Strict):
                 raise ValueError(
                     f"属性 {ref} の same_as {a.same_as} は正本ではない（same_as を持つ）"
                 )
+            if a.synonyms or a.role:
+                raise ValueError(
+                    f"属性 {ref} は same_as で {a.same_as} を正本にしているので、同義語・役割は"
+                    "正本のほうに書く"
+                )
             if target.label != a.label:
                 raise ValueError(
                     f"属性 {ref} のラベル「{a.label}」が、same_as の {a.same_as}"
@@ -151,6 +220,18 @@ class Ontology(_Strict):
 
     def concept(self, name: str) -> Concept:
         return next(c for c in self.concepts if c.name == name)
+
+    def relation_ends(self, r: Relation) -> tuple[Concept, Concept] | None:
+        """関係の (キーを持つ側, via を持つ側)。via は、一方の源泉にある、もう一方のキー
+        （外部キー）。どちらでもなければ None（照合で誤りにする）。件数の対応（cardinality）と、
+        相手が決まっていないことがあるか（optional）は、via を持つ側から見る（#137）。"""
+        table, _, column = r.via.rpartition(".")
+        src, dst = self.concept(r.from_), self.concept(r.to)
+        if table == src.source and column == dst.key:
+            return dst, src
+        if table == dst.source and column == src.key:
+            return src, dst
+        return None
 
     def attribute_at(self, table: str, column: str) -> tuple[Concept, Attribute] | None:
         """源泉の列（<schema>.<table> の column）を属性に持つ概念と、その属性。"""
@@ -180,19 +261,22 @@ class Ontology(_Strict):
         return text == attr.label or text.startswith(f"{attr.label}（")
 
     def duplicate_labels(self) -> list[str]:
-        """同じラベルなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。#137）。
+        """ラベルか同義語が同じなのに same_as で結ばれていない、別々の属性（業務の言葉の二重定義。
+        #137）。
 
-        同じものなら same_as で正本を示し、違うものならラベルを分ける（居住地方・所在地方など）。"""
+        同じものなら same_as で正本を示し、違うものなら言葉を分ける（居住地方・所在地方など）。"""
+        return [duplicate_message(w, refs) for w, refs in self.duplicate_words().items()]
+
+    def duplicate_words(self) -> dict[str, list[str]]:
+        """ラベルか同義語が同じなのに same_as で結ばれていない属性（言葉 → `<概念>.<属性>` の
+        並び）。duplicate_labels の元。取り込みの検証は、追加案の概念が入っているかをこれで見る。
+        """
         groups: dict[str, set[str]] = {}
         for c in self.concepts:
             for a in c.attributes:
-                groups.setdefault(a.label, set()).add(a.same_as or f"{c.name}.{a.name}")
-        return [
-            f"ラベル「{label}」の属性が別々に定義されている（{'、'.join(sorted(refs))}）。"
-            "同じものなら片方に same_as で正本を書き、違うものならラベルを分ける"
-            for label, refs in groups.items()
-            if len(refs) > 1
-        ]
+                for word in [a.label, *(a.synonyms or [])]:
+                    groups.setdefault(word, set()).add(a.same_as or f"{c.name}.{a.name}")
+        return {word: sorted(refs) for word, refs in groups.items() if len(refs) > 1}
 
     def word_mismatch(self, table: str, column: str, label: str) -> str | None:
         """同じ源泉の列の属性に付けたラベルが、オントロジー（業務の言葉の正本。#137）と違えば、
@@ -205,16 +289,29 @@ class Ontology(_Strict):
         if found is None or found[1].label == label:
             return None
         concept, attr = found
+        synonym = f"（「{label}」は同義語）" if label in (attr.synonyms or []) else ""
         return (
             f"{table}.{column} は、オントロジーでは「{concept.label}」の属性 {attr.name}"
-            f"「{attr.label}」です。ラベルを「{attr.label}」にしてください"
+            f"「{attr.label}」です{synonym}。ラベルを「{attr.label}」にしてください"
         )
 
 
-def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Ontology, list[str]]:
-    """(源泉, モデル) の組から、まだモデルの無い概念にモデルを書き込む（#69 の fact / dim の整理）。
+def duplicate_message(word: str, refs: list[str]) -> str:
+    """業務の言葉の二重定義（Ontology.duplicate_words の 1 組）の説明。"""
+    return (
+        f"言葉「{word}」（ラベルか同義語）の属性が別々に定義されている（{'、'.join(refs)}）。"
+        "同じものなら片方に same_as で正本を書き、違うものなら言葉を分ける"
+    )
 
-    概念の種類と接頭辞が合うもの（entity ↔ dim_、event ↔ fct_）だけ。書き込んだ概念の名前も返す。
+
+def link_models(
+    ontology: Ontology, models: list[tuple[str, str, ConceptKind]]
+) -> tuple[Ontology, list[str]]:
+    """(源泉, モデル, 概念の種類) の組から、まだモデルの無い概念にモデルを書き込む（#69 の fact /
+    dim の整理）。
+
+    概念の種類が合うものだけ（dim は entity、fct は出来事なら event、定期スナップショットなら
+    state）。書き込んだ概念の名前も返す。
     """
     linked: list[str] = []
     concepts = []
@@ -222,10 +319,9 @@ def link_models(ontology: Ontology, models: list[tuple[str, str]]) -> tuple[Onto
     # 同じ源泉のほかの概念に書き込まない
     taken = {c.model for c in ontology.concepts if c.model}
     for c in ontology.concepts:
-        prefix = "dim_" if c.kind == "entity" else "fct_"
-        # 同じ源泉に fct と dim があっても、概念の種類に合うものを選ぶ
+        # 同じ源泉に fct と dim（出来事と状態の fct）があっても、概念の種類に合うものを選ぶ
         model = next(
-            (m for s, m in models if s == c.source and m.startswith(prefix) and m not in taken),
+            (m for s, m, k in models if s == c.source and k == c.kind and m not in taken),
             None,
         )
         if c.model is None and model is not None:
@@ -259,13 +355,20 @@ HEADER = """\
 # この形で書き直すので、コメントはここ（adp.ontology.models.HEADER）に書く。
 #
 # - domains: 業務のまとまり（図の枠）
-# - concepts: 概念。kind は entity（もの・人・場所）か event（出来事。fact の候補）
+# - concepts: 概念。kind は entity（もの・人・場所）、event（出来事。fact の候補）、
+#   state（定期的に測る状態。月末在庫など。定期スナップショットの fact の候補）
 #   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
-#   - model: 対応する整備済みモデル（entity → dim_*、event → fct_*）。まだ無ければ省略
+#     - role: 役割（descriptive 説明 / numeric 数値 / temporal 時刻）。列の型と照合する
+#     - parent: 階層で 1 つ上の属性（同じ概念の属性。子の値ごとに親の値は 1 つ）
+#     - synonyms: 業務でほかに呼ぶ言葉（ほかの属性のラベル・同義語と重ねない）
+#   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
+#   - cardinality: キーを持つ側の 1 件に、via を持つ側が 1 件まで（one_to_one）か
+#     複数（one_to_many）か
+#   - optional: via を持つ側が相手を持たないことがあるか（via が空になりうるか）
 # - constraints: 業務上の制約・注意（図の注記）
 """
 
