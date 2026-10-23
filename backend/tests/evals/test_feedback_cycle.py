@@ -583,6 +583,47 @@ def test_column_checks() -> None:
     assert passed({"ratio_of": ratio})
 
 
+def test_counts_rows_checks() -> None:
+    """出来事の件数（source の無い count）は `rows:<1 行の元>` として採点する（#204）。"""
+    from adp.beam import Aggregation, MetricRequest, MetricType, SourceRef
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "shipment_counts.yml")
+    metric = beam.metrics[0]
+    measure = beam.events[0].measure(metric.measure or "")
+    assert measure is not None and measure.counts_rows
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    assert passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"metric_counts_rows": "raw.orders"})
+    with pytest.raises(ValueError, match="源泉"):
+        passed({"metric_counts_rows": None})
+    # 比率の分子・分母にも件数を書ける
+    beam.metrics.append(
+        MetricRequest(
+            name="rate",
+            label="率",
+            question="率",
+            framed_question="率",
+            type=MetricType.RATIO,
+            event=metric.event,
+            numerator=metric.name,
+            denominator=metric.name,
+        )
+    )
+    rows = {"numerator": "rows:raw.shipments", "denominator": "rows:raw.shipments"}
+    assert passed({"ratio_of": rows})
+    # キーの列を数える count は件数ではない（列の集計として採点する）
+    measure.source = SourceRef(table="raw.shipments", column="shipment_id")
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"ratio_of": rows})
+    measure.aggregation, measure.source = Aggregation.COUNT_DISTINCT, None
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+
+
 def test_measure_state_check() -> None:
     """状態の measure の求め方と、置き換える行の列・値で採点する（ADR 0008）。"""
     from adp.beam import FilterOperator, MetricFilter, StateMethod, StateSpec

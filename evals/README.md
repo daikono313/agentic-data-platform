@@ -36,7 +36,8 @@
 | `fact_source: <源泉>` | その源泉を 1 行の元（設計と同じく、粒度のキーから決まるベースのテーブル。`adp.design.builder.base_table`）にした出来事があり、その fact がほかの源泉の既存の fact（オントロジーの概念のモデル）ではない。fact の名前は問わない（データ全体にしかない要求で新しい fact を作るか。#113） |
 | `metric_group_by_columns: [raw.orders.ordered_at, [raw.stores.store_name, raw.stores.store_id], …]` | 指標の切り口に、その元の列がすべてある（属性は元の列、When はイベント側の日時の列に解決する。ディメンションや属性の名前の揺れによらない。要素をリストにすると、そのどれか 1 つ。#155） |
 | `metric_filter: {column: <元の列>, excludes: [...], includes: [...]}` | どれか 1 つの指標の絞り込みが、その列の excludes（必須）の値をすべて除き、includes の値をすべて残す（例: キャンセルを除く、入荷だけに絞る。#155） |
-| `ratio_of: {numerator: <元の列>, denominator: <元の列>}` | 比率の指標の分子・分母の measure が、その元の列の集計になっている（例: 返品数量 ÷ 販売数量。#155） |
+| `ratio_of: {numerator: <元の列>, denominator: <元の列>}` | 比率の指標の分子・分母の measure が、その元の列の集計になっている（例: 返品数量 ÷ 販売数量。#155）。出来事の件数（source の無い count）は `rows:<源泉>` と書く（例: `rows:raw.returns`。#204） |
+| `metric_counts_rows: <源泉>` | 指標の measure が、その源泉を 1 行の元にした出来事の件数（source の無い count。列を持たない fact になる）を数える（#204） |
 
 元の列で採点するチェックは、源泉が式（`expr`）の measure・When を列として数えない（式の中の列とは一致しない）。
 

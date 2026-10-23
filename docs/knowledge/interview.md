@@ -51,6 +51,7 @@
 - 段階を経て進む出来事で、段階の間にかかった時間（例: 注文から出荷までの日数）を見たいなら、measure の lag に始まりと終わりの段階を記録する（source は書かない。日数か時間か、平均・最短・最長のどれで見るかも聞く）。
 - 1 行が何を表すかを決める（grain と grain_keys）。
 - measure ごとに集計方法と、足し上げてよいか（additivity）を決める。
+- 件数を見たいときは、数えたいもの（出荷・注文など）が 1 行と同じかを確かめる。同じなら aggregation: count・availability: available にして source は書かない（1 行を 1 件と数える）。1 行より粗いもの（注文明細の行で注文を数えるなど）は count_distinct にして、そのキーの列（order_id など）を source に書く。重複を除いて数えるもの（異なる顧客の数など）も count_distinct にして、その列を source に書く。
 - 注文番号のようなキーは degenerate_dimensions に入れる。
 
 ## 5. conformance（共通ディメンション）
