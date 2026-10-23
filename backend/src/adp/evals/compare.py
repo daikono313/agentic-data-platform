@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from adp.evals.interview import TRANSCRIPT_CHECKS, transcript_metrics
+from adp.evals.interview import is_style_check, transcript_metrics
 
 METRICS: list[tuple[str, str, int]] = [
     # (キー, 表示名, よい向き: -1 は小さいほどよい)
@@ -93,18 +93,18 @@ def load_run(path: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, float
 
 
 def _pass_rates(data: dict[str, Any]) -> dict[str, float]:
-    """合格と、それを中身（シナリオごとのチェック）と言い回し（どのシナリオでも行う会話の質の
-    チェック。TRANSCRIPT_CHECKS）に分けたもの（#218）。言い回しは回ごとのぶれが大きいので分けて見る。
-    チェックの記録が無い古い結果は、どちらも合格と同じにする。"""
+    """合格と、それを中身と言い回し（is_style_check）のチェックに分けたもの（#218）。言い回しは
+    回ごとのぶれが大きいので分けて見る。エラーで終わった回は中身を不合格にする。チェックの記録が
+    無い古い結果は、どちらも合格と同じにする。"""
     passed = float(bool(data.get("passed")))
     checks = data.get("checks") or []
     if not checks:
         return {"passed": passed, "content_passed": passed, "style_passed": passed}
-    style = [c for c in checks if str(c.get("name", "")).split(":")[0] in TRANSCRIPT_CHECKS]
+    style = [c for c in checks if is_style_check(str(c.get("name", "")))]
     content = [c for c in checks if c not in style]
     return {
         "passed": passed,
-        "content_passed": float(all(c.get("passed") for c in content)),
+        "content_passed": float(not data.get("error") and all(c.get("passed") for c in content)),
         "style_passed": float(all(c.get("passed") for c in style)),
     }
 

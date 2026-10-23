@@ -718,6 +718,12 @@ def _transcript_checks(messages: list[Any]) -> list[CheckResult]:
     return [checks[name] for name in TRANSCRIPT_CHECKS]
 
 
+def is_style_check(name: str) -> bool:
+    """結果のチェック名（`<チェック>` か `<チェック>: <引数>`）が、どのシナリオでも行う言い回しの
+    チェック（TRANSCRIPT_CHECKS）か。シナリオに書いても言い回しとして数える（#218）。"""
+    return name.split(":")[0].strip() in TRANSCRIPT_CHECKS
+
+
 def is_transcript_check(spec: Any) -> bool:
     """会話を見るチェックか（BEAM 成果物だけを見る再生テストや E2E では行わない）。"""
     name = spec if isinstance(spec, str) else next(iter(spec))

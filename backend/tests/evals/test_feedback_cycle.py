@@ -234,6 +234,11 @@ def test_compare_splits_content_and_style(tmp_path: Path) -> None:
     assert cells[" 合格率 "].strip() == "0% → 0%"
     assert cells[" 合格率（中身） "].strip() == "100% → 100%"
     assert cells[" 合格率（言い回し） "].strip() == "0% → 0%"
+    # エラーで終わった回は、チェックが通っていても中身を不合格にする
+    from adp.evals.compare import _pass_rates
+
+    failed = {"passed": False, "error": "API", "checks": checks[:2]}
+    assert _pass_rates(failed)["content_passed"] == 0
 
 
 def test_compare_totals_only_shared_scenarios(tmp_path: Path) -> None:
