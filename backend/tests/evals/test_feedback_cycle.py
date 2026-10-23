@@ -585,28 +585,22 @@ def test_column_checks() -> None:
 
 def test_counts_rows_checks() -> None:
     """出来事の件数（source の無い count）は `rows:<1 行の元>` として採点する（#204）。"""
-    from adp.beam import Aggregation, MetricRequest, MetricType
+    from adp.beam import Aggregation, MetricRequest, MetricType, SourceRef
     from adp.beam import load as load_beam
-    from adp.design.builder import base_table
-    from adp.evals.interview import _check, _schema
+    from adp.evals.interview import _check
 
-    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
-    metric, event = beam.metrics[0], beam.events[0]
-    rows = f"rows:{base_table(event, _schema())}"
-    table = rows.removeprefix("rows:")
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "shipment_counts.yml")
+    metric = beam.metrics[0]
+    measure = beam.events[0].measure(metric.measure or "")
+    assert measure is not None and measure.counts_rows
 
     def passed(spec: Any) -> bool:
         return _check(beam, spec).passed
 
-    # 列を集計する measure は件数ではない（キーの列を count しても同じ）
-    assert not passed({"metric_counts_rows": table})
-    measure = event.measure(metric.measure or "")
-    assert measure is not None
-    measure.aggregation = Aggregation.COUNT
-    assert not passed({"metric_counts_rows": table})
-    measure.source = None
-    assert passed({"metric_counts_rows": table})
-    assert not passed({"metric_counts_rows": "raw.shipments"})
+    assert passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"metric_counts_rows": "raw.orders"})
+    with pytest.raises(ValueError, match="源泉"):
+        passed({"metric_counts_rows": None})
     # 比率の分子・分母にも件数を書ける
     beam.metrics.append(
         MetricRequest(
@@ -620,7 +614,14 @@ def test_counts_rows_checks() -> None:
             denominator=metric.name,
         )
     )
-    assert passed({"ratio_of": {"numerator": rows, "denominator": rows}})
+    rows = {"numerator": "rows:raw.shipments", "denominator": "rows:raw.shipments"}
+    assert passed({"ratio_of": rows})
+    # キーの列を数える count は件数ではない（列の集計として採点する）
+    measure.source = SourceRef(table="raw.shipments", column="shipment_id")
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+    assert not passed({"ratio_of": rows})
+    measure.aggregation, measure.source = Aggregation.COUNT_DISTINCT, None
+    assert not passed({"metric_counts_rows": "raw.shipments"})
 
 
 def test_measure_state_check() -> None:

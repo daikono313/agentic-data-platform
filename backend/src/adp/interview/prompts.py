@@ -50,7 +50,7 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
   （fact_key）を、ソースのテーブルと列で記録する。When には business_key は不要で、fact_key に
   日時の列を指定し、time_grain を決める。
 - measure と属性には source（table と column、計算が必要なら expr）と availability を記録する。
-  ただし出来事の件数だけを数える measure（aggregation: count）は source を書かない（キーの列を数えない）。
+  ただし件数を数える measure は、grain の段階の決まりに従う（1 行を 1 件と数えるときは source を書かない）。
 - 指標は upsert_metric で記録する。question はユーザーの言葉のまま、framed_question は言い換え。
   group_by は「<dimension ref>.<attribute>」、時間は「<When ref>.<day|week|month|quarter|year>」。
   キャンセル除外などの条件は、filter に日本語の説明を、filters に構造化した条件

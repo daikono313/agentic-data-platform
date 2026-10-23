@@ -250,7 +250,7 @@ export interface Measure {
    */
   non_additive_dimension?: string | null;
   /**
-   * 集計する列。出来事の件数だけを数える（count）なら書かない（1 行を 1 件と数える）
+   * 集計する列。1 行を 1 件と数える件数（count）なら書かない
    */
   source?: SourceRef | null;
   availability?: Availability2;

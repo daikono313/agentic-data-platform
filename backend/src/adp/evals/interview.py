@@ -245,7 +245,7 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         # 段階の間の時間（ラグ）を、段階の日時の元の列から計算する measure がある（#140）
         "measure_lag": lambda: _measure_lag(beam, opts),
         # 指標が、その源泉の出来事の件数（source の無い count。factless fact）を数える（#204）
-        "metric_counts_rows": lambda: _metric_counts_rows(beam, str(arg)),
+        "metric_counts_rows": lambda: _metric_counts_rows(beam, raw),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -392,19 +392,24 @@ def _measure_lag(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
     return False, "; ".join(seen) or "ラグなし"
 
 
-def _measure_target(event: BusinessEvent, measure: Measure | None) -> str | None:
+def _measure_target(
+    event: BusinessEvent, measure: Measure | None, schema: SchemaInfo
+) -> str | None:
     """measure が集計する元の列。出来事の件数（counts_rows）なら `rows:<1 行の元>`（#204）。"""
     if measure is None:
         return None
     if measure.counts_rows:
-        return f"rows:{base_table(event, _schema())}"
+        return f"rows:{base_table(event, schema)}"
     return _column(measure.source)
 
 
-def _metric_counts_rows(beam: BeamModel, table: str) -> tuple[bool, str]:
+def _metric_counts_rows(beam: BeamModel, table: Any) -> tuple[bool, str]:
     """指標の measure が、table を 1 行の元にした出来事の件数（source の無い count）か。"""
+    if not isinstance(table, str) or not table:
+        raise ValueError(f"metric_counts_rows には源泉（<schema>.<table>）が必要です: {table}")
+    schema = _schema()
     seen = [
-        _measure_target(e, e.measure(m.measure))
+        _measure_target(e, e.measure(m.measure), schema)
         for m, e in _metrics_events(beam)
         if e is not None and m.measure is not None
     ]
@@ -415,12 +420,14 @@ def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
     """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か（件数は
     `rows:<源泉>`）。"""
 
+    schema = _schema()
+
     def measure_column(name: str | None) -> str | None:
         metric = next((m for m in beam.metrics if m.name == name), None)
         event = beam.event(metric.event) if metric else None
         if metric is None or event is None or metric.measure is None:
             return None
-        return _measure_target(event, event.measure(metric.measure))
+        return _measure_target(event, event.measure(metric.measure), schema)
 
     pairs = [
         (measure_column(m.numerator), measure_column(m.denominator))
