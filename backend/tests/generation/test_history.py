@@ -94,11 +94,13 @@ def test_snapshot_strategy_follows_the_staging_columns(tmp_path: Path) -> None:
     あっても、クレンジングの定義で落としていれば使わず、名前を変えていれば新しい名前を使う
     （snapshot は stg を読む）。"""
 
-    def config(spec: str | None, updated: bool = True) -> dict[str, object]:
+    def config(
+        spec: str | None, updated: bool = True, updated_type: str = "TIMESTAMP"
+    ) -> dict[str, object]:
         if spec is not None:
             (tmp_path / "cleansing").mkdir(exist_ok=True)
             (tmp_path / "cleansing" / "raw.customers.yml").write_text(spec, encoding="utf-8")
-        columns = [*TYPES, ("updated_at", "TIMESTAMP")] if updated else TYPES
+        columns = [*TYPES, ("updated_at", updated_type)] if updated else TYPES
         files = history_files(_dim("region"), _Info(tmp_path, columns, {}))  # type: ignore[arg-type]
         return dict(yaml.safe_load(files[0].content)["snapshots"][0]["config"])
 
@@ -108,6 +110,13 @@ def test_snapshot_strategy_follows_the_staging_columns(tmp_path: Path) -> None:
     assert config(base + "  drop: true\n")["strategy"] == "check"
     assert config(base + "  cast: varchar\n")["strategy"] == "check"
     assert config(base + "  rename: changed_at\n")["updated_at"] == "changed_at"
+    # 文字列の更新日時を、クレンジングで日時に変えていれば使う
+    assert (
+        config(base + "  cast: timestamp\n", updated_type="VARCHAR")["updated_at"] == "updated_at"
+    )
+    # 別の列を updated_at という名前にしていれば、それを使う
+    renamed = "source: raw.customers\ncolumns:\n- name: rank\n  rename: updated_at\n  cast: date\n"
+    assert config(renamed, updated=False)["updated_at"] == "updated_at"
 
 
 def test_existing_history_model_gets_missing_columns_by_agent(tmp_path: Path) -> None:
@@ -198,3 +207,44 @@ def test_versions_cover_the_calendar_and_follow_the_event_time(tmp_path: Path) -
     assert len(rows) == 2 and rows[1][0] == "platinum"
     assert rows[0][1] == start and rows[0][2] == rows[1][1] == changed_at and rows[1][2] == end
     assert [str(v) for v in check_warehouse(warehouse)] == []
+
+
+def test_history_sql_clamps_versions_to_the_calendar(tmp_path: Path) -> None:
+    """生成した SQL を DuckDB で流す。暦の始まりより前に終わる版は除き、次の版を暦の始まりまで
+    広げる。暦の後に始まる版も除き、前の版を暦の終わりまで伸ばす。源泉に starts_at のような
+    名前の列があっても曖昧にならない。"""
+    import re
+
+    import duckdb
+
+    sql = history_files(
+        _dim("region", "starts_at"),
+        _Info(tmp_path, [*TYPES, ("starts_at", "TIMESTAMP")], {}),  # type: ignore[arg-type]
+    )[1].content
+    sql = re.sub(r"\{\{ ref\('(\w+)'\) \}\}", r"\1", sql)
+    sql = sql.replace("{{ unknown_key() }}", "'unknown'")
+    sql = re.sub(r"\{\{ dim_key\('([\w.]+)'\) \}\}", r"cast(\1 as varchar)", sql)
+    con = duckdb.connect()
+    con.execute(
+        "create table dim_date as select cast(d as date) as date_day"
+        " from range(date '2010-01-01', date '2031-01-01', interval 1 day) t(d)"
+    )
+    con.execute(
+        "create table snp_customers (customer_id int, region varchar, starts_at timestamp,"
+        " dbt_scd_id varchar, dbt_valid_from timestamp, dbt_valid_to timestamp)"
+    )
+    con.execute(
+        "insert into snp_customers values"
+        " (1, 'a', null, 's1', '2005-01-01', '2008-01-01'),"  # 暦の前に終わる版
+        " (1, 'b', null, 's2', '2008-01-01', '2015-01-01'),"
+        " (1, 'c', null, 's3', '2015-01-01', '2035-01-01'),"
+        " (1, 'd', null, 's4', '2035-01-01', null)"  # 暦の後に始まる版
+    )
+    rows = con.execute(
+        f"select region, valid_from, valid_to from ({sql}) where customer_key = '1'"
+        " order by valid_from"
+    ).fetchall()
+    assert [(r[0], str(r[1].date()), str(r[2].date())) for r in rows] == [
+        ("b", "2010-01-01", "2015-01-01"),
+        ("c", "2015-01-01", "2031-01-01"),
+    ]

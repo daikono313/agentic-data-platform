@@ -14,7 +14,8 @@ from typing import Any, Protocol
 import yaml
 
 from adp.beam import BeamModel, StateMethod, TimeGrain
-from adp.catalog.types import column_kind, is_text_type
+from adp.catalog.types import TIME_KINDS, is_text_type
+from adp.cleansing.check import column_kinds
 from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_spec, spec_path
 from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
@@ -271,24 +272,26 @@ SNAPSHOT_DIR = "snapshots"
 """snapshot の YAML を置く warehouse/ の下のディレクトリ（dbt の既定の snapshot-paths）。"""
 
 
-TIME_KINDS = ("timestamp", "date")
-"""日時の列の種類（column_kind）。"""
-
-
 def _stg_updated_at(info: WarehouseInfo, table: str) -> str | None:
-    """stg に残る更新日時の列名（snapshot の timestamp 戦略に使う）。源泉の updated_at が日時で、
-    クレンジングの定義（warehouse/cleansing/）で落としたり日時以外に変えたりしていなければ、その
-    名前（rename していれば新しい名前）。stg の YAML はテストのある列しか書かないので使わない。"""
-    if column_kind(dict(info.source_columns(table)).get("updated_at", "")) not in TIME_KINDS:
-        return None
+    """stg に残る更新日時の列名（snapshot の timestamp 戦略に使う）。クレンジングの定義
+    （warehouse/cleansing/）の drop・cast・rename の後で、源泉の updated_at か、updated_at という
+    名前で出る列が日時なら、その出力の名前。stg の YAML はテストのある列しか書かないので
+    使わない。"""
+    columns = [SourceColumn(name, data_type) for name, data_type in info.source_columns(table)]
     path = spec_path(info.warehouse_dir / "cleansing", table)
-    rules = load_spec(path).columns if path.exists() else []
-    rule = next((r for r in rules if r.name == "updated_at"), None)
-    if rule is None:
-        return "updated_at"
-    if rule.drop or (rule.cast is not None and column_kind(rule.cast) not in TIME_KINDS):
-        return None
-    return rule.rename or "updated_at"
+    try:
+        spec = load_spec(path) if path.exists() else None
+    except ValueError as e:  # pydantic の ValidationError も ValueError
+        raise ValueError(f"クレンジングの定義 {path.name} を読めません: {e}") from e
+    kinds = column_kinds(spec, columns)  # 型変換の後の種類
+    for c in columns:
+        rule = spec.rule(c.name) if spec is not None else None
+        if rule is not None and rule.drop:
+            continue
+        output = rule.output if rule is not None else c.name
+        if "updated_at" in (c.name, output) and kinds[c.name] in TIME_KINDS:
+            return output
+    return None
 
 
 def history_files(
@@ -329,15 +332,26 @@ def history_files(
     key = h.natural_key
     version_key = f"{dim.dimension}_version_key"
     by_name = {c.name: c for c in dim.columns}
-    select = [(version_key, "dbt_scd_id"), (dim.key_column, dim_key_expr(key))]
-    select += [(c.name, c.expr) for c in h.columns]
+    # 暦（calendar）と結合する箇所では、源泉の列に表の名前を付ける（同じ名前の列があっても曖昧に
+    # しない）
+    select = [
+        (version_key, "versions.dbt_scd_id"),
+        (dim.key_column, dim_key_expr(f"versions.{key}")),
+    ]
+    select += [(c.name, f"versions.{c.expr}") for c in h.columns]
     select += [
-        ("valid_from", "case when version_no = 1 then starts_at else from_at end"),
-        ("valid_to", "to_at"),
+        (
+            "valid_from",
+            "case when adp_version_no = 1 then calendar.starts_at else adp_from_at end",
+        ),
+        ("valid_to", "adp_to_at"),
     ]
     unknown = ["{{ unknown_key() }}", "{{ unknown_key() }}"]
     unknown += [_unknown_value(info, dim, by_name[c.name]) for c in h.columns]
-    unknown += ["starts_at", "ends_at"]
+    unknown += ["calendar.starts_at", "calendar.ends_at"]
+    # snapshot からは使う列だけを取り、作る列は adp_ を付けて源泉の列名と衝突させない
+    kept_columns = [key, *[c.expr for c in h.columns], "dbt_scd_id"]
+    kept = ", ".join(kept_columns)
     sql = (
         f"-- adp により生成。{dim.label}の属性の履歴（SCD Type 2。ADR 0009）\n"
         "with calendar as (\n"
@@ -345,7 +359,8 @@ def history_files(
         "    from {{ ref('dim_date') }}\n"
         "),\n\n"
         "snapshot_rows as (\n"
-        f"    select * from {{{{ ref('{h.snapshot}') }}}}\n"
+        f"    select {kept}, dbt_valid_from, dbt_valid_to\n"
+        f"    from {{{{ ref('{h.snapshot}') }}}}\n"
         f"    where {key} is not null\n"
         "    -- 同じ自然キー・同じ時刻の版は 1 つにする（stg に同じキーの行が複数ある場合）\n"
         f"    qualify row_number() over (partition by {key}, dbt_valid_from"
@@ -353,11 +368,11 @@ def history_files(
         "),\n\n"
         "-- 版の期間を暦の範囲に収め、長さの無くなった版（暦の外の版）を除く\n"
         "clamped as (\n"
-        "    select\n"
-        "        snapshot_rows.*,\n"
-        "        calendar.*,\n"
-        "        least(greatest(dbt_valid_from, starts_at), ends_at) as from_at,\n"
-        "        least(greatest(coalesce(dbt_valid_to, ends_at), starts_at), ends_at) as to_at\n"
+        "    select\n        " + ", ".join(f"snapshot_rows.{c}" for c in kept_columns) + ",\n"
+        "        least(greatest(snapshot_rows.dbt_valid_from, calendar.starts_at),"
+        " calendar.ends_at) as adp_from_at,\n"
+        "        least(greatest(coalesce(snapshot_rows.dbt_valid_to, calendar.ends_at),"
+        " calendar.starts_at), calendar.ends_at) as adp_to_at\n"
         "    from snapshot_rows\n"
         "    cross join calendar\n"
         "),\n\n"
@@ -365,10 +380,10 @@ def history_files(
         "versions as (\n"
         "    select\n"
         "        *,\n"
-        f"        row_number() over (partition by {key} order by from_at) as version_no\n"
+        f"        row_number() over (partition by {key} order by adp_from_at) as adp_version_no\n"
         "    from clamped\n"
-        "    where from_at < to_at\n"
-        ")\n\n" + _select(select) + "\nfrom versions\n\nunion all\n\n"
+        "    where adp_from_at < adp_to_at\n"
+        ")\n\n" + _select(select) + "\nfrom versions\ncross join calendar\n\nunion all\n\n"
         "-- 不明メンバー（期間は暦の全体）\nselect " + ", ".join(unknown) + "\nfrom calendar\n"
     )
     columns: list[dict[str, Any]] = [

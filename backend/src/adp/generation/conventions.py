@@ -317,12 +317,14 @@ def _history_coverage(
     key = quote_ident(column)
     dim = current.get(entity)
     dim_key = _entity_column(dim, "primary") if dim else None
-    missing = (
-        f" union all select {quote_ident(dim_key[0])}, null, null from {dim.relation}"
-        f" where {quote_ident(dim_key[0])} not in (select {key} from {m.relation})"
-        if dim is not None and dim_key is not None
-        else ""
-    )
+    # 今の値の dim にあって版の無いキー（dim の表がまだ無ければ数えない）
+    missing = ""
+    if dim is not None and dim_key is not None and _types(dim, query):
+        dkey = quote_ident(dim_key[0])
+        missing = (
+            f" union all select d.{dkey}, null, null from {dim.relation} as d"
+            f" where not exists (select 1 from {m.relation} as h where h.{key} = d.{dkey})"
+        )
     (count,) = query(
         f"with calendar as (select {CALENDAR_RANGE} from {calendar})"
         f" select count(*) from (select {key}, min(valid_from) as first_from,"

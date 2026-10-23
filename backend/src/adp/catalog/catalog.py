@@ -19,7 +19,7 @@ from typing import Any
 import duckdb
 from pydantic import BaseModel
 
-from adp.catalog.types import column_kind
+from adp.catalog.types import TIME_KINDS, column_kind
 from adp.yaml_docs import load_yaml_docs, named
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -693,7 +693,7 @@ def _profile(
     if detail and total > nulls:
         kind = column_kind(column.data_type)
         try:
-            if kind in ("timestamp", "date"):
+            if kind in TIME_KINDS:
                 profile.monthly = _monthly(con, q, col)
             elif kind == "number":
                 profile.histogram = _histogram(con, q, col)

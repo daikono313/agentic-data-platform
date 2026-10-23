@@ -11,7 +11,7 @@ import duckdb
 import yaml
 
 from adp.catalog.catalog import Catalog, TableProfile
-from adp.catalog.types import column_kind, is_text_type
+from adp.catalog.types import TIME_KINDS, column_kind, is_text_type
 from adp.cleansing.models import (
     DEFAULTS_FILE,
     IDENT,
@@ -101,7 +101,7 @@ def validate(spec: CleansingSpec, columns: list[SourceColumn]) -> list[str]:
             errors.append(f"{where}: values（値の対応表）は文字列の列にだけ使える")
         if kind != "timestamp" and rule.timezone:
             errors.append(f"{where}: timezone は timestamp の列にだけ使える（cast も使える）")
-        if kind not in ("timestamp", "date") and rule.derive:
+        if kind not in TIME_KINDS and rule.derive:
             errors.append(f"{where}: derive は日時・日付の列にだけ使える（cast も使える）")
     for x in spec.exclude:
         if x.column not in names:

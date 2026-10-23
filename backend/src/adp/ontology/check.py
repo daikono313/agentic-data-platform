@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from adp.catalog.catalog import Catalog
-from adp.catalog.types import column_kind
+from adp.catalog.types import TIME_KINDS, column_kind
 from adp.ontology.models import ROLE_LABELS, Concept, Ontology, Relation
 from adp.yaml_docs import load_yaml_docs, named
 
@@ -198,7 +198,7 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
     )
 
 
-_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timestamp", "date"}}
+_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": set(TIME_KINDS)}
 """役割 → それに合う列の型の種類（column_kind）。説明（descriptive）はどの型でもよい。"""
 
 
