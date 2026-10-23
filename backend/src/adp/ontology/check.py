@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from adp.catalog.catalog import Catalog
-from adp.catalog.types import column_kind
+from adp.catalog.types import TIME_KINDS, column_kind
 from adp.ontology.models import ROLE_LABELS, Concept, Ontology, Relation
 from adp.yaml_docs import load_yaml_docs, named
 
@@ -61,7 +61,7 @@ def _dbt_models(manifest_path: Path) -> dict[str, _DbtModel] | None:
                 seen.add(p)
                 if p in sources:
                     found.add(sources[p])
-                elif p.startswith("model."):
+                elif p.startswith(("model.", "snapshot.")):  # 履歴モデルは snapshot を読む
                     stack.append(p)
         return found
 
@@ -166,7 +166,16 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
                         for a in c.attributes
                         if a.column not in models[c.model].columns
                     ]
-            mapped_models = {c.model for c in ontology.concepts if c.model}
+            for c in ontology.concepts:
+                # 履歴モデル（ADR 0009）は、概念の源泉を snapshot 経由で読む
+                h = c.history_model
+                if h is None:
+                    continue
+                if h not in models:
+                    errors.append(f"概念 {c.name}: 履歴モデル {h} が dbt に無い")
+                elif c.source not in models[h].sources:
+                    errors.append(f"概念 {c.name}: 履歴モデル {h} は源泉 {c.source} を読んでいない")
+            mapped_models = {m for c in ontology.concepts for m in (c.model, c.history_model) if m}
             unmapped = sorted(
                 m for m in models if m.startswith(("dim_", "fct_")) and m not in mapped_models
             )
@@ -189,7 +198,7 @@ def check(ontology: Ontology, catalog: Catalog, manifest_path: Path | None) -> C
     )
 
 
-_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": {"timestamp", "date"}}
+_ROLE_KINDS: dict[str, set[str]] = {"numeric": {"number"}, "temporal": set(TIME_KINDS)}
 """役割 → それに合う列の型の種類（column_kind）。説明（descriptive）はどの型でもよい。"""
 
 

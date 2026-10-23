@@ -126,3 +126,20 @@ def test_return_rate_differs_by_category(con: duckdb.DuckDBPyConnection) -> None
         ).fetchall()
     )
     assert rows["衣料"] > 3 * rows["食品"]
+
+
+def test_load_drops_history_snapshots(gen: ModuleType, tmp_path: Path) -> None:
+    """源泉を作り直すとき、属性の履歴の snapshot（dbt の schema「*_snapshots」）を消す（ADR 0009）。
+    古い版が残ると、作り直した源泉と食い違う。"""
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema main_snapshots")
+    con.execute("create table main_snapshots.snp_customers (customer_id int)")
+    con.close()
+    gen.load(db, gen.generate(50, 1))
+    con = duckdb.connect(str(db))
+    schemas = {
+        s for (s,) in con.execute("select schema_name from information_schema.schemata").fetchall()
+    }
+    con.close()
+    assert "main_snapshots" not in schemas and "raw" in schemas

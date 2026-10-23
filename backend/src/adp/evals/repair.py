@@ -37,6 +37,7 @@ from adp.catalog.catalog import Catalog
 from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
 from adp.generation import generate_models
+from adp.generation.dbt import SNAPSHOT_DIR
 from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, ensure_deps, test_inventory
 from adp.llm import AgentRunner, LLMSettings
@@ -115,7 +116,8 @@ def strip_generated(warehouse: Path) -> None:
     源泉の宣言（`models/staging/_<source>__sources.yml`）は残す。クレンジング層（stg）と同じく
     生成した fct / dim より手前の基盤で、stg がそれを参照している（#104）。
     """
-    for path in [*(warehouse / "models").rglob("*"), *(warehouse / "tests").rglob("*")]:
+    generated = [warehouse / "models", warehouse / "tests", warehouse / SNAPSHOT_DIR]
+    for path in [p for d in generated for p in d.rglob("*")]:
         if (
             path.is_file()
             and path.suffix in {".sql", ".yml"}

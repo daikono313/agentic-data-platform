@@ -32,6 +32,7 @@ from adp.design.models import (
     DimTable,
     ExistingFact,
     FactTable,
+    HistoryDesign,
     IssueSeverity,
     Join,
     PhysicalDesign,
@@ -813,6 +814,7 @@ class DesignBuilder:
             )
         ]
         sources: dict[str, SourceRef] = {}
+        history: list[Column] = []
         for d in uses:
             for a in d.attributes:
                 ref = f"{d.ref}.{a.name}"
@@ -837,12 +839,37 @@ class DesignBuilder:
                 except JoinError as e:
                     self._blocker(f"dim_{name}.{a.name}: {e}", ref)
                     continue
-                if a.history_required:
+                reserved = {"valid_from", "valid_to", f"{name}_key", f"{name}_version_key"}
+                if a.history_required and (
+                    a.name in reserved or (a.source.column or "").startswith(("adp_", "dbt_"))
+                ):
+                    # 履歴モデルが作る列・dbt snapshot の列と名前がぶつかる（ADR 0009）
                     self._issue(
                         IssueSeverity.WARNING,
-                        f"dim_{name}.{a.name} は履歴が必要だが、MVP では上書き（Type1）で作る",
+                        f"dim_{name}.{a.name} は履歴モデルの列と名前がぶつかるため、履歴は作らず、"
+                        "今の値（Type1）だけで作る",
                         ref,
                     )
+                elif a.history_required:
+                    if a.source.table == src.base.table and a.source.column is not None:
+                        history.append(
+                            Column(
+                                name=a.name,
+                                role=ColumnRole.ATTRIBUTE,
+                                expr=a.source.column,
+                                description=a.label,
+                                nullable=True,
+                                source_ref=ref,
+                            )
+                        )
+                    else:
+                        # 結合した表・式から来る属性の履歴は作らない（ADR 0009）
+                        self._issue(
+                            IssueSeverity.WARNING,
+                            f"dim_{name}.{a.name} は {src.base.table} の列ではないため、履歴は"
+                            "作らず、今の値（Type1）だけで作る",
+                            ref,
+                        )
                 sources[a.name] = a.source
                 columns.append(
                     Column(
@@ -855,6 +882,30 @@ class DesignBuilder:
                     )
                 )
         existing = self.existing_dims.get(f"dim_{name}")
+        roles = sorted({d.role for d in uses if d.role})
+        if history and roles:
+            self._issue(
+                IssueSeverity.WARNING,
+                f"dim_{name} の役割（{', '.join(roles)}）の使われ方では、当時の値で切れない"
+                "（履歴モデルは役割の無い結合だけに付く。ADR 0009）",
+                name,
+            )
+        natural_column = first.business_key.column
+        if history and not re.fullmatch(r"[a-z0-9_]+", src.base.table.rpartition(".")[2]):
+            self._issue(
+                IssueSeverity.WARNING,
+                f"dim_{name} の源泉 {src.base.table} は snapshot の名前にできないため、属性の履歴は"
+                "作らず、今の値（Type1）だけで作る（ADR 0009）",
+                name,
+            )
+            history = []
+        if history and natural_column is None:
+            self._issue(
+                IssueSeverity.WARNING,
+                f"dim_{name} の自然キーが列ではない（式）ため、属性の履歴は作らず、今の値（Type1）"
+                "だけで作る（ADR 0009）",
+                name,
+            )
         return DimTable(
             name=f"dim_{name}",
             dimension=name,
@@ -864,11 +915,19 @@ class DesignBuilder:
             joins=src.joins,
             columns=columns,
             hierarchy=list(first.hierarchy),
-            roles=sorted({d.role for d in uses if d.role}),
+            roles=roles,
             exists=existing is not None,
             new_columns=[
                 c.name for c in columns if existing is not None and c.name not in existing
             ],
+            history=HistoryDesign(
+                model=f"dim_{name}_history",
+                snapshot=f"snp_{src.base.table.rpartition('.')[2]}",
+                natural_key=natural_column,
+                columns=history,
+            )
+            if history and natural_column
+            else None,
         )
 
     # --- metric ----------------------------------------------------------------------------

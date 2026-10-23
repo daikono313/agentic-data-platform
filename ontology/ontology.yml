@@ -13,6 +13,7 @@
 #     - parent: 階層で 1 つ上の属性（同じ概念の属性。子の値ごとに親の値は 1 つ）
 #     - synonyms: 業務でほかに呼ぶ言葉（ほかの属性のラベル・同義語と重ねない）
 #   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
+#   - history_model: 当時の値で見る属性の履歴モデル（dim_*_history。model の dim の従属。ADR 0009）
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
 #   - cardinality: キーを持つ側の 1 件に、via を持つ側が 1 件まで（one_to_one）か
@@ -41,6 +42,7 @@ concepts:
   source: raw.customers
   key: customer_id
   model: dim_customer
+  history_model: dim_customer_history
   attributes:
   - name: customer_name
     label: 顧客名
@@ -78,6 +80,7 @@ concepts:
   source: raw.products
   key: product_id
   model: dim_product
+  history_model: dim_product_history
   attributes:
   - name: product_name
     label: 商品名
@@ -116,6 +119,7 @@ concepts:
   source: raw.stores
   key: store_id
   model: dim_store
+  history_model: dim_store_history
   attributes:
   - name: store_name
     label: 店舗名

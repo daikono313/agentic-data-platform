@@ -170,8 +170,8 @@ flowchart TB
 | クレンジングの定義 | プロファイルから雛形 → **人間**が確定 | `warehouse/cleansing/*.yml` | 手で直してよい（`make cleansing` で stg を作り直す） |
 | eval のシナリオ | **人間**（フィードバックからプログラムが下書きを作る） | `evals/interview/*.yml`・`evals/repair/*.yml` | 下書きは合成した内容に書き換えてから置く（[feedback-loop](feedback-loop.md)）。既存のシナリオは開発時に Claude Code が書いたもので、これからは人間が確かめて足す |
 | アプリのコード・プロンプト | **AI**（Claude Code） | `backend/`・`frontend/`・`Makefile`・`.github/workflows/`・`warehouse/macros/`・`warehouse/dbt_project.yml` など | 人間は issue で要求し、PR をレビューする |
-| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`・`_marts.yml`・`warehouse/models/staging/_sources.yml` | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
-| データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・`models/staging/_<source>__sources.yml`（取り込み・生成が、宣言の無い源泉を宣言する）・生成した `fct_*` と Semantic Layer・テスト（`warehouse/tests/assert_<fct>_reconciles_with_source.sql` を含む）・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
+| データ基盤の共通部分 | **AI**（開発時に Claude Code が書いた） | `warehouse/models/marts/dim_*`（生成した `dim_*_history` を除く）・`_marts.yml`・`warehouse/models/staging/_sources.yml` | 生成器の元ではないので、直すときは Claude Code に issue で頼む |
+| データ基盤の生成物 | **決定的なプログラム / 生成エージェント**（アプリ） | `models/staging/stg_*`（`cleansing/` から）・`models/staging/_<source>__sources.yml`（取り込み・生成が、宣言の無い源泉を宣言する）・生成した `fct_*` と Semantic Layer・属性の履歴（`warehouse/snapshots/snp_*.yml`・`dim_*_history`）・テスト（`warehouse/tests/assert_<fct>_reconciles_with_source.sql` を含む）・`warehouse/chart_specs/`（`store_sales.yml` は開発時の見本）・`warehouse/charts/`（`chart_specs/` から `make charts`）・`docs/ontology.md`・`frontend/src/generated/`・`frontend/src/demo/*.json` | 手で直さない。定義（beam・cleansing・ontology）か、規約・生成器を直して作り直す |
 | 実行時のデータ | アプリ | `.adp/`（セッション・フィードバック・worktree・ログ。git では追跡しない） | — |
 
 ### 構成
@@ -403,7 +403,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | R3 | UI は日本語。識別子は英語の snake_case。dbt の description は日本語 | 利用者とコード規約の両方に合わせる |
 | R4 | モデルは Sonnet 5.5 を既定とし、失敗時に Opus 5.5 へ上げる | コスト効率。再試行率は記録する |
 | R5 | 集計は Semantic Layer に一元化し、マートは dim / fct まで | 指標定義の二重管理を避ける |
-| R6 | SCD は Type1 を基本にする。当時の値でも見たい属性（BEAM の `history_required`）は、dbt snapshot と別の履歴モデル（SCD Type 2）で持ち、既存の dim は変えない（実装は #141 の後続。それまでは Type1 で作り、警告を出す） | 当時の値で集計する要求に、既存の dim・fct・チャートを変えずに応えるため（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)、#141） |
+| R6 | SCD は Type1 を基本にする。当時の値でも見たい属性（BEAM の `history_required`）は、dbt snapshot と別の履歴モデル（SCD Type 2）で持ち、既存の dim は変えない（生成器が `warehouse/snapshots/snp_<表>.yml` と `dim_<name>_history` を作る。役割付きの使われ方・結合した表や式から来る属性の履歴は作らず、警告を出す） | 当時の値で集計する要求に、既存の dim・fct・チャートを変えずに応えるため（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)、#141） |
 | R7 | ソースに無い要求は記録して先へ進み、PR に書き、issue も起票する | インタビューを止めない |
 | R8 | Canvas / Matrix は表示のみ。修正はチャット経由 | 同期処理の複雑さを避ける |
 | R9 | /goal の開発は issue ごとに PR を作り、CI green とレビュー合格で自己マージする | [certificate.md](certificate.md) を参照 |

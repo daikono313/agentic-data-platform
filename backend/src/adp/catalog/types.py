@@ -22,6 +22,10 @@ _NUMBER = re.compile(
 )
 
 
+TIME_KINDS = frozenset({"timestamp", "date"})
+"""日時の列の種類（column_kind の値）。"""
+
+
 def column_kind(data_type: str) -> str:
     """列の型の種類（text / timestamp / date / number / boolean / other）。画面の型の表示・
     クレンジング・プロファイル・オントロジーの役割の照合で同じ判定を使う。

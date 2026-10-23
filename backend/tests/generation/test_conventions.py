@@ -177,3 +177,77 @@ def test_unbuilt_project_is_a_violation(tmp_path: Path) -> None:
     assert [v.message for v in check_warehouse(tmp_path)] == [
         "dbt の manifest がありません（make dbt-build を実行する）"
     ]
+
+
+HISTORY = _model(
+    "dim_store_history",
+    {
+        "store_version_key": {},
+        "store_key": {"entity": {"type": "natural", "name": "store"}},
+        "channel": {"dimension": {"type": "categorical", "name": "channel_at_event"}},
+        "valid_from": {"dimension": {"type": "time", "validity_params": {"is_start": True}}},
+        "valid_to": {"dimension": {"type": "time", "validity_params": {"is_end": True}}},
+    },
+)
+HISTORY_TESTS = [
+    _test("dim_store_history", "unique", "store_version_key"),
+    _test("dim_store_history", "not_null", "store_version_key"),
+    _test(
+        "dim_store_history",
+        "dbt_utils.mutually_exclusive_ranges",
+        lower_bound_column="valid_from",
+        upper_bound_column="valid_to",
+    ),
+]
+
+
+def test_history_model_conforms() -> None:
+    """履歴モデル（ADR 0009）: 今の値の dim と同じ entity、重ならない名前、期間のテスト。"""
+    dim = _model(
+        "dim_store",
+        {
+            "store_key": {"entity": {"type": "primary", "name": "store"}},
+            "channel": {"dimension": {"type": "categorical"}},
+        },
+    )
+    assert structural_violations(_manifest(dim, *DIM_TESTS, HISTORY, *HISTORY_TESTS)) == []
+
+
+def test_history_model_violations() -> None:
+    dim = _model(
+        "dim_store",
+        {
+            "store_key": {"entity": {"type": "primary", "name": "store"}},
+            "channel": {"dimension": {"type": "categorical"}},
+            "channel_at_event": {"dimension": {"type": "categorical"}},
+        },
+    )
+    messages = [
+        v.message
+        for v in structural_violations(_manifest(dim, *DIM_TESTS, HISTORY, *HISTORY_TESTS[:2]))
+    ]
+    assert any("channel_at_event が dim_store と重なっています" in m for m in messages)
+    assert any("mutually_exclusive_ranges" in m for m in messages)
+    # 今の値の dim が無い履歴モデル
+    messages = [v.message for v in structural_violations(_manifest(HISTORY, *HISTORY_TESTS))]
+    assert messages == ["entity store を primary に持つ今の値の dim がありません"]
+
+
+def test_history_coverage_is_checked_against_the_calendar() -> None:
+    """履歴モデルの版が暦（dim_date）の全体を覆わないキーがあれば違反（ADR 0009）。"""
+    dim_date = _model("dim_date", {"date_day": {}})
+    manifest = _manifest(dim_date, HISTORY, *HISTORY_TESTS)
+    sqls: list[str] = []
+
+    def query(sql: str) -> list[tuple[object, ...]]:
+        sqls.append(sql)
+        if "information_schema" in sql:
+            return [("store_key", "VARCHAR"), ("channel", "VARCHAR")]
+        if "count(*)" in sql:
+            return [(3,)]
+        return [("x", "不明")]  # 不明メンバーの行
+
+    messages = [v.message for v in data_violations(manifest, query)]
+    assert any("覆っていないキーが 3 件" in m for m in messages)
+    # 不明メンバーは、fct と結合する natural の entity の列で探す
+    assert any('where "store_key" = ' in s for s in sqls)

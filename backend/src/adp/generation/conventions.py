@@ -168,21 +168,84 @@ def _foreign_keys(m: _Model, dim_entities: set[str]) -> list[Violation]:
     return out
 
 
-def _dim_entities(models: list[_Model]) -> set[str]:
+def _current_dims(models: list[_Model]) -> dict[str, _Model]:
+    """primary の entity の名前 → それを持つ今の値の dim。"""
+    return {e: m for m in models if m.is_dim and (e := _entity(m, "primary"))}
+
+
+def _entity_column(m: _Model, kind: str) -> tuple[str, str] | None:
+    """その種類（primary・natural）の entity を置いた (列, entity の名前)。"""
+    for c, spec in m.columns.items():
+        entity = spec.get("entity") or {}
+        if entity.get("type") == kind:
+            return c, str(entity.get("name"))
+    return None
+
+
+def _entity(m: _Model, kind: str) -> str | None:
+    found = _entity_column(m, kind)
+    return found[1] if found else None
+
+
+def _dimension_names(m: _Model) -> set[str]:
+    """semantic model の時間以外のディメンションの名前（名前を書かなければ列名）。"""
     names: set[str] = set()
-    for m in models:
-        if m.is_dim:
-            for spec in m.columns.values():
-                entity = spec.get("entity") or {}
-                if entity.get("type") == "primary":
-                    names.add(str(entity.get("name")))
+    for c, spec in m.columns.items():
+        dim = spec.get("dimension") or {}
+        if dim and dim.get("type") != "time":
+            names.add(str(dim.get("name") or c))
     return names
+
+
+def _history_violations(models: list[_Model]) -> list[Violation]:
+    """履歴モデル（natural の entity を持つ dim。ADR 0009）の検査。
+
+    - natural の entity は、今の値の dim の primary の entity と同じ名前にする（fct を変えずに
+      結合する）
+    - ディメンション名を今の値の dim と重ねない（MetricFlow の検証では見つからないまま、両方とも
+      問い合わせられなくなる）
+    - 版の期間が重ならないことを dbt_utils.mutually_exclusive_ranges で確かめる
+    """
+    current = _current_dims(models)
+    out: list[Violation] = []
+    for m in models:
+        entity = _entity(m, "natural") if m.is_dim else None
+        if entity is None:
+            continue
+        rule = "履歴（SCD Type 2）"
+        dim = current.get(entity)
+        if dim is None:
+            out.append(
+                Violation(
+                    m.name, rule, f"entity {entity} を primary に持つ今の値の dim がありません"
+                )
+            )
+        else:
+            overlap = sorted(_dimension_names(m) & _dimension_names(dim))
+            if overlap:
+                out.append(
+                    Violation(
+                        m.name,
+                        rule,
+                        f"ディメンション名 {', '.join(overlap)} が {dim.name} と重なっています"
+                        "（当時の値は <列>_at_event にする）",
+                    )
+                )
+        if "dbt_utils.mutually_exclusive_ranges" not in m.model_tests:
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    "版の期間の重なりのテスト（dbt_utils.mutually_exclusive_ranges）がありません",
+                )
+            )
+    return out
 
 
 def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
     """manifest だけで分かる違反（テスト・entity・列名）。"""
     models = _marts(manifest)
-    dims = _dim_entities(models)
+    dims = set(_current_dims(models))
     out: list[Violation] = []
     for m in models:
         out += _primary_key(m)
@@ -198,7 +261,7 @@ def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
                         f"列名 {', '.join(reserved)} は時間の粒度の名前と衝突します",
                     )
                 )
-    return out
+    return out + _history_violations(models)
 
 
 def _literal(value: object) -> str:
@@ -220,15 +283,65 @@ def _types(m: _Model, query: Query) -> dict[str, str]:
     return {str(c): str(t).upper() for c, t in rows}
 
 
+CALENDAR_RANGE = (
+    "cast(min(date_day) as timestamp) as starts_at,"
+    " cast(max(date_day) + interval 1 day as timestamp) as ends_at"
+)
+"""暦（dim_date）の範囲（始まりの時刻・終わりの時刻。終わりは含まない）。履歴モデルの版の期間は
+この範囲を覆う（ADR 0009）。生成器（adp.generation.dbt.history_files）と検査で同じ式を使う。"""
+
 UNKNOWN_KEY = "md5('__unknown__')"
 """不明メンバーのキー（マクロ unknown_key() の値。規約「具体例 → unit test」）。"""
 
 
 def _primary_key_column(m: _Model) -> str | None:
-    for c, spec in m.columns.items():
-        if (spec.get("entity") or {}).get("type") == "primary":
-            return c
+    """dim のキーの列。履歴モデル（ADR 0009）は、fct と結合する natural の entity の列。"""
+    for kind in ("primary", "natural"):
+        found = _entity_column(m, kind)
+        if found:
+            return found[0]
     return next((c for c in m.columns if {"unique", "not_null"} <= set(m.tests(c))), None)
+
+
+def _history_coverage(
+    m: _Model, calendar: str, current: dict[str, _Model], query: Query
+) -> list[Violation]:
+    """履歴モデルの各キーの版が、暦（dim_date）の始まりから終わりまでを覆うか。今の値の dim の
+    キーに版が無ければ、それも数える（ADR 0009）。最初の版を暦の始まりまで広げないと、源泉の
+    更新日時より前の出来事が当時の値に結合されない。版どうしの隙間・重なりは
+    dbt_utils.mutually_exclusive_ranges が見る。"""
+    found = _entity_column(m, "natural")
+    if found is None or not {"valid_from", "valid_to"} <= set(m.columns):
+        return []
+    column, entity = found
+    key = quote_ident(column)
+    dim = current.get(entity)
+    dim_key = _entity_column(dim, "primary") if dim else None
+    # 今の値の dim にあって版の無いキー（dim の表がまだ無ければ数えない）
+    missing = ""
+    if dim is not None and dim_key is not None and dim_key[0] in _types(dim, query):
+        dkey = quote_ident(dim_key[0])
+        missing = (
+            f" union all select d.{dkey}, null, null from {dim.relation} as d"
+            f" where not exists (select 1 from {m.relation} as h where h.{key} = d.{dkey})"
+        )
+    (count,) = query(
+        f"with calendar as (select {CALENDAR_RANGE} from {calendar})"
+        f" select count(*) from (select {key}, min(valid_from) as first_from,"
+        f" max(valid_to) as last_to from {m.relation} group by {key}{missing}) as v, calendar"
+        " where v.first_from is distinct from calendar.starts_at"
+        " or v.last_to is distinct from calendar.ends_at"
+    )[0]
+    if not count:
+        return []
+    return [
+        Violation(
+            m.name,
+            "履歴（SCD Type 2）",
+            f"版の期間が暦（{TIME_SPINE}）の始まりから終わりまでを覆っていないキーが"
+            f" {count} 件あります",
+        )
+    ]
 
 
 def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Violation]:
@@ -284,7 +397,11 @@ def _unknown_member(m: _Model, types: dict[str, str], query: Query) -> list[Viol
 def data_violations(manifest: dict[str, Any], query: Query) -> list[Violation]:
     """ビルド済みのテーブルを見て分かる違反（不明メンバーの行）。"""
     out: list[Violation] = []
-    for m in _marts(manifest):
+    marts = _marts(manifest)
+    spine = next((m for m in marts if m.name == TIME_SPINE), None)
+    calendar = spine.relation if spine is not None and _types(spine, query) else None
+    current = _current_dims(marts)
+    for m in marts:
         types = _types(m, query)
         if not types:
             out.append(
@@ -293,6 +410,8 @@ def data_violations(manifest: dict[str, Any], query: Query) -> list[Violation]:
             continue
         if m.is_dim and m.name != TIME_SPINE:
             out += _unknown_member(m, types, query)
+            if calendar is not None:
+                out += _history_coverage(m, calendar, current, query)
     return out
 
 

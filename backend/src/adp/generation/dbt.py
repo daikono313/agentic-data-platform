@@ -14,19 +14,23 @@ from typing import Any, Protocol
 import yaml
 
 from adp.beam import BeamModel, StateMethod, TimeGrain
-from adp.catalog.types import is_text_type
+from adp.catalog.types import TIME_KINDS, is_text_type
+from adp.cleansing.check import column_kinds
 from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_spec, spec_path
 from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
-from adp.design.builder import dim_key_expr
+from adp.design.builder import dim_key_expr, staging_model
+from adp.generation.conventions import CALENDAR_RANGE
 from adp.generation.semantic import (
+    AT_EVENT_SUFFIX,
     ROW_COUNT_EXPR,
     MetricQuery,
     SemanticError,
     dim_semantics,
     fact_model_semantics,
     fact_semantics,
+    history_semantics,
     metric_definitions,
 )
 from adp.yaml_docs import named
@@ -95,12 +99,17 @@ def _yaml(
     metrics: list[dict[str, Any]] | None = None,
     unit_tests: list[dict[str, Any]] | None = None,
 ) -> str:
-    data: dict[str, Any] = {"version": 2, "models": models}
+    data: dict[str, Any] = {"models": models}
     if metrics:
         data["metrics"] = metrics
     if unit_tests:
         data["unit_tests"] = unit_tests
-    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=100)
+    return _yaml_doc(data)
+
+
+def _yaml_doc(data: dict[str, Any]) -> str:
+    """生成する dbt の YAML（models・snapshots など）。"""
+    body = yaml.safe_dump({"version": 2} | data, allow_unicode=True, sort_keys=False, width=100)
     return "# adp により生成\n" + body
 
 
@@ -190,19 +199,22 @@ def _is_text(info: WarehouseInfo, table: str, column: Column, alias_tables: dict
     return is_text_type(types.get(col, ""))
 
 
-def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> list[GeneratedFile]:
+def _unknown_value(info: WarehouseInfo, dim: DimTable, column: Column) -> str:
+    """不明メンバーの行の値（文字列の属性は「不明」、それ以外は null）。dim と履歴モデルで同じ。"""
     alias_tables = {dim.base.alias: dim.base.table} | {
         j.right.alias: j.right.table for j in dim.joins
     }
+    text = column.role == ColumnRole.ATTRIBUTE and _is_text(
+        info, dim.base.table, column, alias_tables
+    )
+    return f"'{UNKNOWN_LABEL}'" if text else "null"
+
+
+def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> list[GeneratedFile]:
     natural = dim.columns[0]
     select = [(dim.key_column, dim_key_expr(natural.expr))]
     select += [(c.name, c.expr) for c in dim.columns]
-    unknown = ["{{ unknown_key() }}"] + [
-        f"'{UNKNOWN_LABEL}'"
-        if c.role == ColumnRole.ATTRIBUTE and _is_text(info, dim.base.table, c, alias_tables)
-        else "null"
-        for c in dim.columns
-    ]
+    unknown = ["{{ unknown_key() }}"] + [_unknown_value(info, dim, c) for c in dim.columns]
     sql = (
         f"-- adp により生成。{dim.label}ディメンション（SCD Type1）\n"
         + _select(select)
@@ -249,6 +261,187 @@ def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> lis
     return [
         GeneratedFile(f"models/marts/{dim.name}.sql", sql),
         GeneratedFile(f"models/marts/{dim.name}.yml", yml),
+    ]
+
+
+# --- 履歴（SCD Type 2。ADR 0009） ---------------------------------------------------------
+
+HISTORY_SNAPSHOT_SCHEMA = "snapshots"
+"""snapshot を書く dbt の schema（サンプルデータを作り直すときに消す）。"""
+SNAPSHOT_DIR = "snapshots"
+"""snapshot の YAML を置く warehouse/ の下のディレクトリ（dbt の既定の snapshot-paths）。"""
+
+
+def _stg_updated_at(info: WarehouseInfo, table: str) -> str | None:
+    """stg に残る更新日時の列名（snapshot の timestamp 戦略に使う）。クレンジングの定義
+    （warehouse/cleansing/）の drop・cast・rename の後で、源泉の updated_at か、updated_at という
+    名前で出る列が日時なら、その出力の名前。stg の YAML はテストのある列しか書かないので
+    使わない。"""
+    columns = [SourceColumn(name, data_type) for name, data_type in info.source_columns(table)]
+    path = spec_path(info.warehouse_dir / "cleansing", table)
+    try:
+        spec = load_spec(path) if path.exists() else None
+    except (ValueError, yaml.YAMLError) as e:  # pydantic の ValidationError も ValueError
+        raise ValueError(f"クレンジングの定義 {path.name} を読めません: {e}") from e
+    kinds = column_kinds(spec, columns)  # 型変換の後の種類
+    candidates: list[tuple[str, str]] = []  # (源泉の列, stg の列)
+    for c in columns:
+        rule = spec.rule(c.name) if spec is not None else None
+        if rule is not None and rule.drop:
+            continue
+        output = rule.output if rule is not None else c.name
+        if "updated_at" in (c.name, output) and kinds[c.name] in TIME_KINDS:
+            candidates.append((c.name, output))
+    # stg で updated_at という名前の列を優先し、無ければ源泉の updated_at を rename した列
+    return next((o for _, o in candidates if o == "updated_at"), None) or next(
+        (o for _, o in candidates), None
+    )
+
+
+def history_files(
+    dim: DimTable, info: WarehouseInfo, semantic: bool = False
+) -> list[GeneratedFile]:
+    """当時の値で見たい属性の snapshot と履歴モデル（ADR 0009）。
+
+    snapshot はクレンジング層（stg）の行の版を記録する。stg に更新日時（updated_at）があればその
+    時刻で、無ければ snapshot を実行した時刻で版を分ける。履歴モデルは版ごとに 1 行で、期間は
+    valid_from 以上 valid_to 未満。最初の版は暦の始まりから（源泉の更新日時より前の出来事も結合
+    できるように）、今の版は暦の終わりまでにし、どの版も暦の範囲に収める。暦の範囲は dim_date から
+    取る（生成物の Jinja は決まった形だけ。adp.generation.project）。snapshot を始める前の変更は
+    復元できない。
+    """
+    h = dim.history
+    assert h is not None
+    table = dim.base.table
+    stg = staging_model(table)
+    if not re.fullmatch(r"stg_[a-z0-9_]+", stg):  # snapshot の relation は dbt が描画する
+        raise ValueError(f"snapshot の元にできないモデル名です: {stg}")
+    updated_at = _stg_updated_at(info, table)
+    strategy: dict[str, Any] = (
+        {"strategy": "timestamp", "updated_at": updated_at}
+        if updated_at
+        else {"strategy": "check", "check_cols": "all"}
+    )
+    snapshot = {
+        "snapshots": [
+            {
+                "name": h.snapshot,
+                "description": f"{table} の行の版（属性の履歴の元。ADR 0009）",
+                "relation": f"ref('{stg}')",
+                "config": {"schema": HISTORY_SNAPSHOT_SCHEMA, "unique_key": h.natural_key}
+                | strategy,
+            }
+        ]
+    }
+    key = h.natural_key
+    version_key = f"{dim.dimension}_version_key"
+    by_name = {c.name: c for c in dim.columns}
+    # 暦（calendar）と結合する箇所では、源泉の列に表の名前を付ける（同じ名前の列があっても曖昧に
+    # しない）
+    select = [
+        (version_key, "versions.dbt_scd_id"),
+        (dim.key_column, dim_key_expr(f"versions.{key}")),
+    ]
+    select += [(c.name, f"versions.{c.expr}") for c in h.columns]
+    select += [
+        (
+            "valid_from",
+            "case when adp_version_no = 1 then calendar.starts_at else adp_from_at end",
+        ),
+        ("valid_to", "adp_to_at"),
+    ]
+    unknown = ["{{ unknown_key() }}", "{{ unknown_key() }}"]
+    unknown += [_unknown_value(info, dim, by_name[c.name]) for c in h.columns]
+    unknown += ["calendar.starts_at", "calendar.ends_at"]
+    # snapshot からは使う列だけを取り、作る列は adp_ を付けて源泉の列名と衝突させない
+    kept_columns = [key, *[c.expr for c in h.columns], "dbt_scd_id"]
+    kept = ", ".join(kept_columns)
+    sql = (
+        f"-- adp により生成。{dim.label}の属性の履歴（SCD Type 2。ADR 0009）\n"
+        "with calendar as (\n"
+        f"    select {CALENDAR_RANGE}\n"
+        "    from {{ ref('dim_date') }}\n"
+        "),\n\n"
+        "snapshot_rows as (\n"
+        f"    select {kept}, dbt_valid_from, dbt_valid_to\n"
+        f"    from {{{{ ref('{h.snapshot}') }}}}\n"
+        f"    where {key} is not null\n"
+        "    -- 同じ自然キー・同じ時刻の版は 1 つにする（stg に同じキーの行が複数ある場合）\n"
+        f"    qualify row_number() over (partition by {key}, dbt_valid_from"
+        " order by dbt_scd_id) = 1\n"
+        "),\n\n"
+        "-- 版の期間を暦の範囲に収め、長さの無くなった版（暦の外の版）を除く\n"
+        "clamped as (\n"
+        "    select\n        " + ", ".join(f"snapshot_rows.{c}" for c in kept_columns) + ",\n"
+        "        least(greatest(snapshot_rows.dbt_valid_from, calendar.starts_at),"
+        " calendar.ends_at) as adp_from_at,\n"
+        "        least(greatest(coalesce(snapshot_rows.dbt_valid_to, calendar.ends_at),"
+        " calendar.starts_at), calendar.ends_at) as adp_to_at\n"
+        "    from snapshot_rows\n"
+        "    cross join calendar\n"
+        "),\n\n"
+        "-- 最初の版は暦の始まりから（源泉の更新日時より前の出来事も結合できるように）\n"
+        "versions as (\n"
+        "    select\n"
+        "        *,\n"
+        f"        row_number() over (partition by {key} order by adp_from_at) as adp_version_no\n"
+        "    from clamped\n"
+        "    where adp_from_at < adp_to_at\n"
+        ")\n\n" + _select(select) + "\nfrom versions\ncross join calendar\n\nunion all\n\n"
+        "-- 不明メンバー（期間は暦の全体）\nselect " + ", ".join(unknown) + "\nfrom calendar\n"
+    )
+    columns: list[dict[str, Any]] = [
+        {
+            "name": version_key,
+            "description": "版のキー（dbt snapshot の dbt_scd_id）",
+            "data_tests": ["unique", "not_null"],
+        },
+        {
+            "name": dim.key_column,
+            "description": f"サロゲートキー（{dim.name} と同じ）",
+            "data_tests": ["not_null"],
+        },
+    ]
+    columns += [{"name": c.name, "description": f"{c.description}（当時）"} for c in h.columns]
+    columns += [
+        {
+            "name": "valid_from",
+            "description": "版の始まり（この時刻を含む）",
+            "data_tests": ["not_null"],
+        },
+        {
+            "name": "valid_to",
+            "description": "版の終わり（この時刻を含まない）",
+            "data_tests": ["not_null"],
+        },
+    ]
+    model: dict[str, Any] = {
+        "name": h.model,
+        "description": (
+            f"{dim.label}の属性の履歴（SCD Type 2。ADR 0009）。"
+            "期間は valid_from 以上 valid_to 未満。不明メンバーの行を含む"
+        ),
+        "data_tests": [
+            {
+                "dbt_utils.mutually_exclusive_ranges": {
+                    "lower_bound_column": "valid_from",
+                    "upper_bound_column": "valid_to",
+                    "partition_by": dim.key_column,
+                    "gaps": "not_allowed",
+                }
+            }
+        ],
+    }
+    if semantic:
+        model_sem, col_sem = history_semantics(dim)
+        model |= model_sem
+        for entry in columns:
+            entry.update(col_sem.get(entry["name"], {}))
+    model["columns"] = columns
+    return [
+        GeneratedFile(f"{SNAPSHOT_DIR}/{h.snapshot}.yml", _yaml_doc(snapshot)),
+        GeneratedFile(f"models/marts/{h.model}.sql", sql),
+        GeneratedFile(f"models/marts/{h.model}.yml", _yaml([model])),
     ]
 
 
@@ -619,6 +812,44 @@ def _existing_select_exprs(sql: str) -> dict[str, str]:
 # --- 全体 ----------------------------------------------------------------------------------
 
 
+def _history(
+    dim: DimTable, info: WarehouseInfo, existing: set[str], semantic: bool, result: Generation
+) -> list[GeneratedFile]:
+    """履歴モデルを作る。既にあれば足りない属性をエージェントへの作業にする（ADR 0009）。"""
+    h = dim.history
+    assert h is not None
+    files = history_files(dim, info, semantic)
+    # 同じ源泉の snapshot が既にあれば使う（行の版を丸ごと記録するので属性によらない）。履歴
+    # モデルだけがあって snapshot が無ければ、snapshot を作り直す
+    snapshot_path = f"{SNAPSHOT_DIR}/{h.snapshot}.yml"
+    snapshot = (
+        []
+        if (info.warehouse_dir / snapshot_path).exists()
+        else [f for f in files if f.path == snapshot_path]
+    )
+    if h.model not in existing:
+        return snapshot + [f for f in files if f.path != snapshot_path]
+    result.reused.append(h.model)
+    have = info.existing_columns(h.model)
+    missing = [c for c in h.columns if c.name not in have]
+    if missing:
+        result.tasks.append(
+            AgentTask(
+                kind="add_history_columns",
+                target=h.model,
+                instruction=(
+                    f"既存の {h.model} に、当時の値で見たい属性"
+                    f" {', '.join(c.name for c in missing)} を追加する（{h.snapshot} の列。"
+                    "既存の列は変更・削除しない）。yml の説明は"
+                    "「<ラベル>（当時）」、semantic model のディメンション名は「<列>"
+                    f"{AT_EVENT_SUFFIX}」にする。"
+                    + ", ".join(f"{c.name}（ラベル「{c.description}」）" for c in missing)
+                ),
+            )
+        )
+    return snapshot
+
+
 def generate_models(
     design: PhysicalDesign, info: WarehouseInfo, beam: BeamModel | None = None
 ) -> Generation:
@@ -645,6 +876,8 @@ def generate_models(
             result.files += staging_files(table, info)
 
     for dim in design.dims:
+        if dim.history is not None:
+            result.files += _history(dim, info, existing, semantic, result)
         if dim.name in existing:
             result.reused.append(dim.name)
             have = info.existing_columns(dim.name)

@@ -2,6 +2,7 @@
 
 main では在庫は取り込み済み（#109）。取り込みのテストは「後から増えた源泉」として在庫を使うので、
 オントロジーから在庫の概念と、それに関わる関係・制約・ドメイン（inventory）を外したものを使う。
+生成物の履歴モデル（history_model）の結び付けも外す。
 外した部分は、取り込みのエージェントが出す追加案（inventory_patch）に使う（定義を 1 か所に）。
 """
 
@@ -30,6 +31,10 @@ def _split() -> tuple[dict[str, Any], dict[str, Any]]:
         if c["name"] in removed
     ]
     data["concepts"] = [c for c in data["concepts"] if c["name"] not in removed]
+    # 履歴モデル（ADR 0009）は生成物なので、生成前の warehouse（adp.evals.repair.prepare_warehouse）
+    # を使うテストでは結び付けない
+    for c in data["concepts"]:
+        c.pop("history_model", None)
     used = {c["domain"] for c in data["concepts"]}
     domains = [d for d in data["domains"] if d["name"] == DOMAIN and DOMAIN not in used]
     data["domains"] = [d for d in data["domains"] if d not in domains]

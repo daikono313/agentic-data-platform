@@ -1,0 +1,50 @@
+# adp により生成
+version: 2
+models:
+- name: dim_store_history
+  description: 店舗の属性の履歴（SCD Type 2。ADR 0009）。期間は valid_from 以上 valid_to 未満。不明メンバーの行を含む
+  data_tests:
+  - dbt_utils.mutually_exclusive_ranges:
+      lower_bound_column: valid_from
+      upper_bound_column: valid_to
+      partition_by: store_key
+      gaps: not_allowed
+  semantic_model:
+    enabled: true
+  primary_entity: store_version
+  columns:
+  - name: store_version_key
+    description: 版のキー（dbt snapshot の dbt_scd_id）
+    data_tests:
+    - unique
+    - not_null
+  - name: store_key
+    description: サロゲートキー（dim_store と同じ）
+    data_tests:
+    - not_null
+    entity:
+      type: natural
+      name: store
+  - name: store_name
+    description: 店舗名（当時）
+    dimension:
+      type: categorical
+      name: store_name_at_event
+  - name: valid_from
+    description: 版の始まり（この時刻を含む）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_start: true
+  - name: valid_to
+    description: 版の終わり（この時刻を含まない）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_end: true
