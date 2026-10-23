@@ -91,7 +91,14 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
 
 ## SCD
 
-- MVP では Type1（上書き）のみ（design-doc R6）。BEAM で `history_required: true` の属性も Type1 で実装し、PR の未解決事項に書く。
+- Type1（上書き）を基本にする（design-doc R6）。dim は今の値だけを持つ。
+- BEAM で `history_required: true` の属性（当時の値で見たいもの）は、dim を変えずに、dbt snapshot と履歴モデル（SCD Type 2）を足して持つ（ADR 0009）。
+  - snapshot（`snapshots/snp_<表>.yml`）はクレンジング層（stg）の行の版を記録する。stg に日時の `updated_at` があればその時刻で、無ければ snapshot を実行した時刻で版を分ける。
+  - 履歴モデル（`dim_<name>_history`）の列: 版のキー `<name>_version_key`（`unique`・`not_null`）、dim と同じキー `<name>_key`（natural の entity。名前は dim の primary の entity と同じ）、履歴の属性（説明は「<ラベル>（当時）」）、期間 `valid_from` 以上 `valid_to` 未満。不明メンバーの行も持つ。
+  - 期間は、キーごとに暦（`dim_date`）の始まりから終わりまでを、隙間も重なりもなく覆う（最初の版は暦の始まりから、今の版は暦の終わりまで）。テストは `dbt_utils.mutually_exclusive_ranges`（`partition_by: <name>_key`、`gaps: not_allowed`）。
+  - Semantic Layer のディメンション名は `<属性>_at_event` にする（今の値の dim と同じ名前にすると、どちらも問い合わせられなくなる）。
+- 次の属性の履歴は作らず、今の値（Type1）だけで作る（生成器が警告を出す）: 結合した表や式から来る属性、自然キーが式の dim の属性、役割付きの使われ方、履歴モデルの列と名前がぶつかる属性。
+- snapshot を始める前の変更は復元できない。始める前の出来事は、始めた時点の値で集計する。
 
 ## テスト（必須）
 
