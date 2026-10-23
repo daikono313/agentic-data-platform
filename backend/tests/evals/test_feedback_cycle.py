@@ -583,6 +583,46 @@ def test_column_checks() -> None:
     assert passed({"ratio_of": ratio})
 
 
+def test_counts_rows_checks() -> None:
+    """出来事の件数（source の無い count）は `rows:<1 行の元>` として採点する（#204）。"""
+    from adp.beam import Aggregation, MetricRequest, MetricType
+    from adp.beam import load as load_beam
+    from adp.design.builder import base_table
+    from adp.evals.interview import _check, _schema
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "sales_by_store.yml")
+    metric, event = beam.metrics[0], beam.events[0]
+    rows = f"rows:{base_table(event, _schema())}"
+    table = rows.removeprefix("rows:")
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    # 列を集計する measure は件数ではない（キーの列を count しても同じ）
+    assert not passed({"metric_counts_rows": table})
+    measure = event.measure(metric.measure or "")
+    assert measure is not None
+    measure.aggregation = Aggregation.COUNT
+    assert not passed({"metric_counts_rows": table})
+    measure.source = None
+    assert passed({"metric_counts_rows": table})
+    assert not passed({"metric_counts_rows": "raw.shipments"})
+    # 比率の分子・分母にも件数を書ける
+    beam.metrics.append(
+        MetricRequest(
+            name="rate",
+            label="率",
+            question="率",
+            framed_question="率",
+            type=MetricType.RATIO,
+            event=metric.event,
+            numerator=metric.name,
+            denominator=metric.name,
+        )
+    )
+    assert passed({"ratio_of": {"numerator": rows, "denominator": rows}})
+
+
 def test_measure_state_check() -> None:
     """状態の measure の求め方と、置き換える行の列・値で採点する（ADR 0008）。"""
     from adp.beam import FilterOperator, MetricFilter, StateMethod, StateSpec

@@ -29,6 +29,7 @@ from adp.beam import (
     BusinessEvent,
     FilterOperator,
     GapKind,
+    Measure,
     MetricFilter,
     MetricType,
     SourceRef,
@@ -243,6 +244,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "measure_state": lambda: _measure_state(beam, opts),
         # 段階の間の時間（ラグ）を、段階の日時の元の列から計算する measure がある（#140）
         "measure_lag": lambda: _measure_lag(beam, opts),
+        # 指標が、その源泉の出来事の件数（source の無い count。factless fact）を数える（#204）
+        "metric_counts_rows": lambda: _metric_counts_rows(beam, str(arg)),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -389,16 +392,35 @@ def _measure_lag(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
     return False, "; ".join(seen) or "ラグなし"
 
 
+def _measure_target(event: BusinessEvent, measure: Measure | None) -> str | None:
+    """measure が集計する元の列。出来事の件数（counts_rows）なら `rows:<1 行の元>`（#204）。"""
+    if measure is None:
+        return None
+    if measure.counts_rows:
+        return f"rows:{base_table(event, _schema())}"
+    return _column(measure.source)
+
+
+def _metric_counts_rows(beam: BeamModel, table: str) -> tuple[bool, str]:
+    """指標の measure が、table を 1 行の元にした出来事の件数（source の無い count）か。"""
+    seen = [
+        _measure_target(e, e.measure(m.measure))
+        for m, e in _metrics_events(beam)
+        if e is not None and m.measure is not None
+    ]
+    return f"rows:{table}" in seen, str(seen)
+
+
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:
-    """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か。"""
+    """比率の指標の分子・分母の measure が、numerator・denominator の列の集計か（件数は
+    `rows:<源泉>`）。"""
 
     def measure_column(name: str | None) -> str | None:
         metric = next((m for m in beam.metrics if m.name == name), None)
         event = beam.event(metric.event) if metric else None
         if metric is None or event is None or metric.measure is None:
             return None
-        measure = event.measure(metric.measure)
-        return _column(measure.source) if measure else None
+        return _measure_target(event, event.measure(metric.measure))
 
     pairs = [
         (measure_column(m.numerator), measure_column(m.denominator))

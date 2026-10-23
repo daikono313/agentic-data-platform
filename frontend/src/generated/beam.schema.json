@@ -781,7 +781,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "集計する列。出来事の件数だけを数える（count）なら書かない（1 行を 1 件と数える）"
         },
         "availability": {
           "$ref": "#/$defs/Availability",

@@ -249,6 +249,9 @@ export interface Measure {
    * semi_additive のとき、足し上げできない When の ref（例: 残高の date）
    */
   non_additive_dimension?: string | null;
+  /**
+   * 集計する列。出来事の件数だけを数える（count）なら書かない（1 行を 1 件と数える）
+   */
   source?: SourceRef | null;
   availability?: Availability2;
   /**

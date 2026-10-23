@@ -11,7 +11,7 @@ import re
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v26"
+PROMPT_VERSION = "interview-v27"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -50,6 +50,7 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
   （fact_key）を、ソースのテーブルと列で記録する。When には business_key は不要で、fact_key に
   日時の列を指定し、time_grain を決める。
 - measure と属性には source（table と column、計算が必要なら expr）と availability を記録する。
+  ただし出来事の件数だけを数える measure（aggregation: count）は source を書かない（キーの列を数えない）。
 - 指標は upsert_metric で記録する。question はユーザーの言葉のまま、framed_question は言い換え。
   group_by は「<dimension ref>.<attribute>」、時間は「<When ref>.<day|week|month|quarter|year>」。
   キャンセル除外などの条件は、filter に日本語の説明を、filters に構造化した条件

@@ -318,7 +318,10 @@ class Measure(_Base):
         default=None,
         description="semi_additive のとき、足し上げできない When の ref（例: 残高の date）",
     )
-    source: SourceRef | None = None
+    source: SourceRef | None = Field(
+        default=None,
+        description="集計する列。出来事の件数だけを数える（count）なら書かない（1 行を 1 件と数える）",
+    )
     availability: Availability = Availability.UNKNOWN
     state: StateSpec | None = Field(
         default=None,
