@@ -30,6 +30,7 @@ METRICS: list[tuple[str, str, int]] = [
     ("position_words", "選択肢の位置を指す言葉", -1),
     ("closing_phrases", "締めの一言", -1),
     ("repeated_text", "二重の本文", -1),
+    ("english_text", "英語の文", -1),
     ("effort_questions", "工数を聞いた質問", -1),
 ]
 

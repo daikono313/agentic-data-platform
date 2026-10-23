@@ -51,6 +51,7 @@ from adp.interview.wording import (
     CONFIRMED,
     hidden_confirmation,
     is_closing_sentence,
+    is_english_sentence,
     is_position_sentence,
     normalize,
     prose_sentences,
@@ -484,6 +485,11 @@ def _position_words(m: Any) -> bool:
     return any(is_position_sentence(x) for x in _sentences(m))
 
 
+def _english_text(m: Any) -> bool:
+    """英語の作業メモの文があったか（取り除いた文も数える。#161）。"""
+    return any(is_english_sentence(x) for x in _sentences(m))
+
+
 def _closing_phrase(m: Any) -> bool:
     """質問を出した発言に、回答を促すだけの締めの一言があったか（#158）。"""
     return bool(getattr(m, "question", None)) and any(is_closing_sentence(x) for x in _sentences(m))
@@ -652,6 +658,7 @@ def transcript_metrics(messages: list[Any]) -> dict[str, float]:
         "position_words": sum(1 for m in assistant if _position_words(m)),
         "closing_phrases": sum(1 for m in assistant if _closing_phrase(m)),
         "repeated_text": sum(1 for m in assistant if _repeated_text(m)),
+        "english_text": sum(1 for m in assistant if _english_text(m)),
         "effort_questions": len(_questions_matching(messages, _EFFORT)),
     }
 
