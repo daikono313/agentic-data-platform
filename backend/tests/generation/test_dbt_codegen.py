@@ -613,3 +613,31 @@ def test_lag_unit_test_is_skipped_when_times_cannot_be_read() -> None:
 
     example = beam.events[0].examples[0].model_copy(update={"values": {}})
     assert unit_test(beam, design.facts[0], Info(), example, 0) is None  # type: ignore[arg-type]
+
+
+def test_missing_example_keeps_join_keys() -> None:
+    """欠損の具体例で結合キーを空にしても、結合キーは空にしない（結合が外れるため。#142）。"""
+    from adp.beam import ExampleKind
+    from adp.design import FactTable
+    from adp.generation.tests import unit_test
+    from tests.design.test_builder import FakeSchema
+
+    beam = load(FIXTURES / "beam" / "sales_by_store.yml")
+    event = beam.events[0]
+    example = event.examples[0].model_copy(deep=True)
+    example.kind, example.note = ExampleKind.MISSING, "注文番号が空"
+    example.values["order_id"] = None  # 結合キー（明細 → 注文）
+    design = DesignBuilder(FakeSchema()).build(beam)
+    fact: FactTable = design.facts[0]
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [(c, "INTEGER") for c in FakeSchema.COLUMNS.get(table, [])]
+
+        def source_primary_key(self, table: str) -> str | None:
+            return None
+
+    ut = unit_test(beam, fact, Info(), example, 0)  # type: ignore[arg-type]
+    assert ut is not None
+    base, orders = ut["given"][0]["rows"][0], ut["given"][1]["rows"][0]
+    assert base["order_id"] is not None and base["order_id"] == orders["order_id"]

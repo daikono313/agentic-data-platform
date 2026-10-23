@@ -419,6 +419,16 @@
       "additionalProperties": false,
       "description": "インタビューで集めた具体例（event story）。unit test の期待値になる。",
       "properties": {
+        "kind": {
+          "$ref": "#/$defs/ExampleKind",
+          "default": "typical",
+          "description": "具体例の型（typical: 典型 / variant: 別パターン / repeat: 繰り返し / missing: 欠損 / group: グループ）"
+        },
+        "note": {
+          "default": "",
+          "description": "典型とどこが違うか（典型なら空でよい）",
+          "type": "string"
+        },
         "values": {
           "additionalProperties": {
             "anyOf": [
@@ -470,6 +480,18 @@
       ],
       "title": "EventMatrix",
       "type": "object"
+    },
+    "ExampleKind": {
+      "description": "具体例（event story）の型（#142）。典型の例のほかに、数え方を確かめる例を集める。",
+      "enum": [
+        "typical",
+        "variant",
+        "repeat",
+        "missing",
+        "group"
+      ],
+      "title": "ExampleKind",
+      "type": "string"
     },
     "FactType": {
       "enum": [

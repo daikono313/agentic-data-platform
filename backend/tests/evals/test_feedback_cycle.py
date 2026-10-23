@@ -378,6 +378,8 @@ def test_effort_and_irregular_detection_avoids_false_matches() -> None:
     for text in [
         "取消やマイナスの数量の記録はどう数えますか？",
         "数え方が変わる特別なケースはありますか？",
+        "典型と違うケース（返品・会員でない方など）はありますか？",
+        "別のパターンの注文も 1 件教えていただけますか？",
     ]:
         assert _transcript_check_map([_msg(text)])["asks_irregular_cases"].passed, text
     assert not _transcript_check_map([_msg("例外なく全店舗を含めてよいですか？")])[
@@ -466,6 +468,12 @@ def test_modeling_checks() -> None:
     assert passed({"story_type": "recurring"})
     event.examples = [EventExample(values={}), EventExample(values={})]
     assert passed({"min_examples": 2}) and not passed({"min_examples": 3})
+    # 型の違う具体例（#142）
+    from adp.beam import ExampleKind
+
+    assert not passed({"example_kinds": 2})
+    event.examples[1] = EventExample(kind=ExampleKind.MISSING, note="会員でない", values={})
+    assert passed({"example_kinds": 2}) and not passed({"example_kinds": 3})
     assert not passed("metric_purpose")
     beam.metrics[0].purpose = "販促の計画に使う"
     assert passed("metric_purpose")

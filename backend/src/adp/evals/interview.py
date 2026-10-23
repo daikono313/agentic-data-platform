@@ -220,6 +220,14 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
             and all(len(e.examples) >= int(arg) for e in _metric_event_list(beam)),
             str([len(e.examples) for e in _metric_event_list(beam)]),
         ),
+        # 指標の出来事それぞれに、型の違う具体例（典型と、別パターン・欠損など）がある（#142）
+        "example_kinds": lambda: (
+            bool(_metric_event_list(beam))
+            and all(
+                len({x.kind for x in e.examples}) >= int(arg) for e in _metric_event_list(beam)
+            ),
+            str([[x.kind.value for x in e.examples] for e in _metric_event_list(beam)]),
+        ),
         # 2 つ以上の出来事が、その W の同じディメンションを共有する（共通ディメンション）
         "shared_dimensions": lambda: _shared_dimensions(beam, args),
         # 以下は名前の揺れによらず、元の列（raw.orders.ordered_at）で採点する（#155）
@@ -521,6 +529,7 @@ _EFFORT = re.compile(
 _IRREGULAR = re.compile(
     r"イレギュラー|例外(?!なく)|(特殊|特別|まれ)(な|に扱)|普段と違う"
     r"|取消|取り消し|マイナス|二重に|除きたい(ケース|もの)"
+    r"|典型と違う|いつもと違う|別の?パターン|欠損|返品"
 )
 """例外的なケースを聞く質問（#76 のフィードバック: 具体例だけでなくイレギュラーも知りたい）。"""
 _PURPOSE = re.compile(

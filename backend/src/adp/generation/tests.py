@@ -212,8 +212,12 @@ def unit_test(
                 result[gm.group(1)][gm.group(2)] = key
         if case == "example":
             set_by_example: set[tuple[str, str]] = set()
+            join_cols = {(j.left_alias, j.left_column) for j in fact.joins}
+            join_cols |= {(j.right.alias, j.right_column) for j in fact.joins}
             for k, (alias, col) in _example_targets(event, fact).items():
                 if k in example.values:
+                    if example.values[k] is None and (alias, col) in join_cols:
+                        continue  # 結合キーを NULL にすると結合が外れる（欠損の具体例。#142）
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
                     set_by_example.add((alias, col))
             # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
