@@ -880,6 +880,14 @@ class DesignBuilder:
                 name,
             )
         natural_column = first.business_key.column
+        if history and not re.fullmatch(r"[a-z0-9_]+", src.base.table.rpartition(".")[2]):
+            self._issue(
+                IssueSeverity.WARNING,
+                f"dim_{name} の源泉 {src.base.table} は snapshot の名前にできないため、属性の履歴は"
+                "作らず、今の値（Type1）だけで作る（ADR 0009）",
+                name,
+            )
+            history = []
         if history and natural_column is None:
             self._issue(
                 IssueSeverity.WARNING,

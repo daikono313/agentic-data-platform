@@ -89,19 +89,25 @@ def test_history_files(tmp_path: Path) -> None:
     assert "dbt_utils.mutually_exclusive_ranges" in model["data_tests"][0]
 
 
-def test_snapshot_without_updated_at_checks_all_columns(tmp_path: Path) -> None:
+def test_snapshot_strategy_follows_the_staging_columns(tmp_path: Path) -> None:
     """stg に更新日時が無ければ、snapshot を実行した時刻で版を分ける（strategy: check）。源泉に
-    あっても、クレンジングで落としていれば使わない（snapshot は stg を読む）。"""
-    files = history_files(_dim("region"), _Info(tmp_path, TYPES, {}))  # type: ignore[arg-type]
-    config = yaml.safe_load(files[0].content)["snapshots"][0]["config"]
-    assert config["strategy"] == "check" and config["check_cols"] == "all"
-    info = _Info(
-        tmp_path,
-        [*TYPES, ("updated_at", "TIMESTAMP")],
-        {"stg_customers": {"customer_id", "region"}},
-    )
-    files = history_files(_dim("region"), info)  # type: ignore[arg-type]
-    assert yaml.safe_load(files[0].content)["snapshots"][0]["config"]["strategy"] == "check"
+    あっても、クレンジングの定義で落としていれば使わず、名前を変えていれば新しい名前を使う
+    （snapshot は stg を読む）。"""
+
+    def config(spec: str | None, updated: bool = True) -> dict[str, object]:
+        if spec is not None:
+            (tmp_path / "cleansing").mkdir(exist_ok=True)
+            (tmp_path / "cleansing" / "raw.customers.yml").write_text(spec, encoding="utf-8")
+        columns = [*TYPES, ("updated_at", "TIMESTAMP")] if updated else TYPES
+        files = history_files(_dim("region"), _Info(tmp_path, columns, {}))  # type: ignore[arg-type]
+        return dict(yaml.safe_load(files[0].content)["snapshots"][0]["config"])
+
+    assert config(None, updated=False)["strategy"] == "check"
+    assert config(None)["updated_at"] == "updated_at"
+    base = "source: raw.customers\ncolumns:\n- name: updated_at\n"
+    assert config(base + "  drop: true\n")["strategy"] == "check"
+    assert config(base + "  cast: varchar\n")["strategy"] == "check"
+    assert config(base + "  rename: changed_at\n")["updated_at"] == "changed_at"
 
 
 def test_existing_history_model_gets_missing_columns_by_agent(tmp_path: Path) -> None:
@@ -167,9 +173,14 @@ def test_versions_cover_the_calendar_and_follow_the_event_time(tmp_path: Path) -
 
     build()
     con = duckdb.connect(str(db))
+    # 元のどの更新日時よりも後に変える（timestamp 戦略は、更新日時が進んだ行だけを新しい版にする）
+    (changed_at,) = con.execute(
+        "select max(updated_at) + interval 1 day from raw.customers"
+    ).fetchone()  # type: ignore[misc]
     con.execute(
-        "update raw.customers set membership_rank = 'platinum', updated_at = timestamp '2025-01-01'"
-        " where customer_id = 1"
+        "update raw.customers set membership_rank = 'platinum', updated_at = ?"
+        " where customer_id = 1",
+        [changed_at],
     )
     con.close()
     build()
@@ -185,5 +196,5 @@ def test_versions_cover_the_calendar_and_follow_the_event_time(tmp_path: Path) -
     ).fetchone()  # type: ignore[misc]
     con.close()
     assert len(rows) == 2 and rows[1][0] == "platinum"
-    assert rows[0][1] == start and rows[0][2] == rows[1][1] and rows[1][2] == end
+    assert rows[0][1] == start and rows[0][2] == rows[1][1] == changed_at and rows[1][2] == end
     assert [str(v) for v in check_warehouse(warehouse)] == []

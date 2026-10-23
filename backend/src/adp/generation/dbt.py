@@ -20,6 +20,7 @@ from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
 from adp.design.builder import dim_key_expr, staging_model
+from adp.generation.conventions import CALENDAR_RANGE
 from adp.generation.semantic import (
     AT_EVENT_SUFFIX,
     ROW_COUNT_EXPR,
@@ -270,6 +271,26 @@ SNAPSHOT_DIR = "snapshots"
 """snapshot の YAML を置く warehouse/ の下のディレクトリ（dbt の既定の snapshot-paths）。"""
 
 
+TIME_KINDS = ("timestamp", "date")
+"""日時の列の種類（column_kind）。"""
+
+
+def _stg_updated_at(info: WarehouseInfo, table: str) -> str | None:
+    """stg に残る更新日時の列名（snapshot の timestamp 戦略に使う）。源泉の updated_at が日時で、
+    クレンジングの定義（warehouse/cleansing/）で落としたり日時以外に変えたりしていなければ、その
+    名前（rename していれば新しい名前）。stg の YAML はテストのある列しか書かないので使わない。"""
+    if column_kind(dict(info.source_columns(table)).get("updated_at", "")) not in TIME_KINDS:
+        return None
+    path = spec_path(info.warehouse_dir / "cleansing", table)
+    rules = load_spec(path).columns if path.exists() else []
+    rule = next((r for r in rules if r.name == "updated_at"), None)
+    if rule is None:
+        return "updated_at"
+    if rule.drop or (rule.cast is not None and column_kind(rule.cast) not in TIME_KINDS):
+        return None
+    return rule.rename or "updated_at"
+
+
 def history_files(
     dim: DimTable, info: WarehouseInfo, semantic: bool = False
 ) -> list[GeneratedFile]:
@@ -288,16 +309,10 @@ def history_files(
     stg = staging_model(table)
     if not re.fullmatch(r"stg_[a-z0-9_]+", stg):  # snapshot の relation は dbt が描画する
         raise ValueError(f"snapshot の元にできないモデル名です: {stg}")
-    types = dict(info.source_columns(table))
-    # snapshot が読むのは stg なので、クレンジングで落とした列は使わない
-    stg_columns = info.existing_columns(stg) or set(types)
-    timestamp = "updated_at" in stg_columns and column_kind(types.get("updated_at", "")) in (
-        "timestamp",
-        "date",
-    )
+    updated_at = _stg_updated_at(info, table)
     strategy: dict[str, Any] = (
-        {"strategy": "timestamp", "updated_at": "updated_at"}
-        if timestamp
+        {"strategy": "timestamp", "updated_at": updated_at}
+        if updated_at
         else {"strategy": "check", "check_cols": "all"}
     )
     snapshot = {
@@ -317,44 +332,43 @@ def history_files(
     select = [(version_key, "dbt_scd_id"), (dim.key_column, dim_key_expr(key))]
     select += [(c.name, c.expr) for c in h.columns]
     select += [
-        (
-            "valid_from",
-            "case when version_no = 1 then calendar.starts_at"
-            " else least(greatest(dbt_valid_from, calendar.starts_at), calendar.ends_at) end",
-        ),
-        ("valid_to", "least(coalesce(dbt_valid_to, calendar.ends_at), calendar.ends_at)"),
+        ("valid_from", "case when version_no = 1 then starts_at else from_at end"),
+        ("valid_to", "to_at"),
     ]
     unknown = ["{{ unknown_key() }}", "{{ unknown_key() }}"]
-    unknown += [
-        _unknown_value(
-            info,
-            dim,
-            by_name.get(c.name) or c.model_copy(update={"expr": f"{dim.base.alias}.{c.expr}"}),
-        )
-        for c in h.columns
-    ]
-    unknown += ["calendar.starts_at", "calendar.ends_at"]
+    unknown += [_unknown_value(info, dim, by_name[c.name]) for c in h.columns]
+    unknown += ["starts_at", "ends_at"]
     sql = (
         f"-- adp により生成。{dim.label}の属性の履歴（SCD Type 2。ADR 0009）\n"
-        "with snapshot_rows as (\n"
+        "with calendar as (\n"
+        f"    select {CALENDAR_RANGE}\n"
+        "    from {{ ref('dim_date') }}\n"
+        "),\n\n"
+        "snapshot_rows as (\n"
         f"    select * from {{{{ ref('{h.snapshot}') }}}}\n"
         f"    where {key} is not null\n"
         "    -- 同じ自然キー・同じ時刻の版は 1 つにする（stg に同じキーの行が複数ある場合）\n"
         f"    qualify row_number() over (partition by {key}, dbt_valid_from"
         " order by dbt_scd_id) = 1\n"
         "),\n\n"
+        "-- 版の期間を暦の範囲に収め、長さの無くなった版（暦の外の版）を除く\n"
+        "clamped as (\n"
+        "    select\n"
+        "        snapshot_rows.*,\n"
+        "        calendar.*,\n"
+        "        least(greatest(dbt_valid_from, starts_at), ends_at) as from_at,\n"
+        "        least(greatest(coalesce(dbt_valid_to, ends_at), starts_at), ends_at) as to_at\n"
+        "    from snapshot_rows\n"
+        "    cross join calendar\n"
+        "),\n\n"
+        "-- 最初の版は暦の始まりから（源泉の更新日時より前の出来事も結合できるように）\n"
         "versions as (\n"
         "    select\n"
         "        *,\n"
-        f"        row_number() over (partition by {key} order by dbt_valid_from) as version_no\n"
-        "    from snapshot_rows\n"
-        "),\n\n"
-        "calendar as (\n"
-        "    select\n"
-        "        cast(min(date_day) as timestamp) as starts_at,\n"
-        "        cast(max(date_day) + interval 1 day as timestamp) as ends_at\n"
-        "    from {{ ref('dim_date') }}\n"
-        ")\n\n" + _select(select) + "\nfrom versions\ncross join calendar\n\nunion all\n\n"
+        f"        row_number() over (partition by {key} order by from_at) as version_no\n"
+        "    from clamped\n"
+        "    where from_at < to_at\n"
+        ")\n\n" + _select(select) + "\nfrom versions\n\nunion all\n\n"
         "-- 不明メンバー（期間は暦の全体）\nselect " + ", ".join(unknown) + "\nfrom calendar\n"
     )
     columns: list[dict[str, Any]] = [
