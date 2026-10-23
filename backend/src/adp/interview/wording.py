@@ -15,6 +15,9 @@
 続けて表示されるので不要で、プロンプトで禁止しても別の言い方に置き換わるため（#158）。
 本文が全部消えてもよい（質問とボタンだけが表示される）。
 
+前の段落と一字一句同じ地の文の段落（tool 呼び出しの前後でモデルが前置きを書き直したもの）も
+取り除く（#161）。少しでも違うもの・表・リスト・コードは残す（見せた内容を失わないため。#175）。
+
 英語だけの地の文（「Now the metrics.」「Fix: use expr only.」など、tool 呼び出しの合間のモデルの
 作業メモ）も取り除く（#161）。日本語を含まず、英単語が 3 つ以上あり、作業メモに特有の語
 （now・next・fix・retry・add など）を含む文だけを対象にする。商品名・値に普通に出る語（of・and・on）
@@ -207,10 +210,30 @@ def _quotes_hidden_question(sentence: str, question: str) -> bool:
     )
 
 
-def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[str]]:
-    """画面の位置を指す文・英語の作業メモ（質問文 question があれば締めの一言も）を取り除く。
-    戻り値は（本文, 取り除いた文）。"""
+def _drop_repeated_paragraphs(text: str) -> tuple[str, list[str]]:
+    """前の段落と一字一句同じ地の文の段落（8 文字以上）を取り除く（#161）。tool 呼び出しの前後で
+    モデルが同じ前置きを書き直したもの。少しでも違う段落・表・リスト・コードは残す（消すと見せた
+    内容を失うことがあるため。#175）。戻り値は（本文, 取り除いた段落）。"""
+    if "```" in text:
+        return text, []
+    seen: set[str] = set()
+    kept: list[str] = []
     removed: list[str] = []
+    for paragraph in re.split(r"\n{2,}", text):
+        key = paragraph.strip()
+        prose = key and not any(is_structure_line(line) for line in key.split("\n"))
+        if prose and len(key) >= 8 and key in seen:
+            removed.append(key)
+            continue
+        seen.add(key)
+        kept.append(paragraph)
+    return ("\n\n".join(kept), removed) if removed else (text, [])
+
+
+def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[str]]:
+    """画面の位置を指す文・英語の作業メモ（質問文 question があれば締めの一言も）と、前の段落と
+    一字一句同じ段落を取り除く。戻り値は（本文, 取り除いた文・段落）。"""
+    text, removed = _drop_repeated_paragraphs(text)
     lines: list[str] = []
     for line, prose in _lines(text):
         if not prose:

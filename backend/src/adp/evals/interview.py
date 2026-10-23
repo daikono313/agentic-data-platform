@@ -476,8 +476,10 @@ def _sentences(m: Any) -> list[str]:
 
 
 def _repeated_text(m: Any) -> bool:
-    """画面の本文に同じ地の文（8 文字以上）が 2 回あるか（書き直し。#161）。"""
-    keys = [x for x in prose_sentences(m.text) if len(x) >= 8]
+    """本文に同じ地の文（8 文字以上）が 2 回あるか（書き直し。#161）。画面に出す前に取り除いた
+    段落も含めて数える（モデルの振る舞いとして見るため）。"""
+    removed = getattr(m, "removed", None) or []
+    keys = [x for x in prose_sentences("\n\n".join([m.text, *removed])) if len(x) >= 8]
     return len(keys) != len(set(keys))
 
 

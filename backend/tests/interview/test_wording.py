@@ -322,3 +322,28 @@ def test_keeps_english_values(text: str) -> None:
     for full in (text, f"値は次のとおりです。\n{text}"):
         assert clean_reply(full) == (full, [])
         assert clean_reply(full, question="質問？") == (full, [])
+
+
+def test_drops_paragraph_repeated_word_for_word() -> None:
+    """前の段落と一字一句同じ段落は取り除く（tool 呼び出しの前後の書き直し。#161）。"""
+    lead = "顧客のデータには、性別、居住都道府県、会員ランク（bronze / silver / gold）があります。"
+    text = f"{lead}\n\n{lead}\n\n次に店舗を見ます。"
+    assert clean_reply(text) == (f"{lead}\n\n次に店舗を見ます。", [lead])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 少しでも違う書き直しは残す（前のほうにしか無い情報を失わないため。#175）
+        "在庫は月末で数えます。\n\n在庫は月末の時点で数えます。",
+        "「月ごとの入荷数量はいくつか」に言い換えました。\n\n"
+        "「月ごとの入荷数量はいくつか」に言い換えました。この理解で合っていますか？",
+        # 表・リスト・コード・短い段落は残す
+        "| 店舗 | 数量 |\n|---|---|\n| A | 1 |\n\n| 店舗 | 数量 |\n|---|---|\n| A | 1 |",
+        "- 東京都01号店\n- 大阪府02号店\n\n- 東京都01号店\n- 大阪府02号店",
+        "```\nselect 1\n```\n\n```\nselect 1\n```",
+        "はい。\n\nはい。",
+    ],
+)
+def test_keeps_paragraphs_that_are_not_word_for_word_repeats(text: str) -> None:
+    assert clean_reply(text) == (text, [])
