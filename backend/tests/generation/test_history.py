@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from adp.design import Column, ColumnRole, DimTable, HistoryDesign, SourceTable
@@ -117,6 +118,11 @@ def test_snapshot_strategy_follows_the_staging_columns(tmp_path: Path) -> None:
     # 別の列を updated_at という名前にしていれば、それを使う
     renamed = "source: raw.customers\ncolumns:\n- name: rank\n  rename: updated_at\n  cast: date\n"
     assert config(renamed, updated=False)["updated_at"] == "updated_at"
+    # 候補が 2 つなら、stg で updated_at という名前の列を選ぶ（源泉の列の並び順によらない）
+    both = renamed + "- name: updated_at\n  rename: src_updated_at\n"
+    assert config(both)["updated_at"] == "updated_at"
+    with pytest.raises(ValueError, match="クレンジングの定義 raw.customers.yml を読めません"):
+        config("source: [\n")
 
 
 def test_existing_history_model_gets_missing_columns_by_agent(tmp_path: Path) -> None:
@@ -248,3 +254,65 @@ def test_history_sql_clamps_versions_to_the_calendar(tmp_path: Path) -> None:
         ("b", "2010-01-01", "2015-01-01"),
         ("c", "2015-01-01", "2031-01-01"),
     ]
+
+
+def test_history_coverage_counts_keys_without_versions(tmp_path: Path) -> None:
+    """実際の DuckDB で、今の値の dim にあって版の無いキーも数える。dim の表が無ければ数えない。"""
+    import duckdb
+
+    from adp.generation.conventions import data_violations
+
+    db = tmp_path / "dev.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute(
+        "create table dim_date as select cast(d as date) as date_day"
+        " from range(date '2010-01-01', date '2010-01-03', interval 1 day) t(d)"
+    )
+    con.execute("create table dim_store (store_key varchar, store_name varchar)")
+    con.execute("insert into dim_store values ('a', 'A'), ('b', 'B'), ('u', '不明')")
+    con.execute(
+        "create table dim_store_history (store_version_key varchar, store_key varchar,"
+        " store_name varchar, valid_from timestamp, valid_to timestamp)"
+    )
+    con.execute(
+        "insert into dim_store_history values"
+        " ('v1', 'a', 'A', '2010-01-01', '2010-01-03'),"
+        " ('u', 'u', '不明', '2010-01-01', '2010-01-03')"
+    )
+
+    def model(name: str, columns: dict[str, dict[str, object]]) -> dict[str, object]:
+        return {
+            "resource_type": "model",
+            "name": name,
+            "database": "dev",
+            "schema": "main",
+            "columns": {c: {"name": c} | spec for c, spec in columns.items()},
+        }
+
+    history = model(
+        "dim_store_history",
+        {
+            "store_version_key": {},
+            "store_key": {"entity": {"type": "natural", "name": "store"}},
+            "store_name": {},
+            "valid_from": {},
+            "valid_to": {},
+        },
+    )
+    dim = model(
+        "dim_store",
+        {"store_key": {"entity": {"type": "primary", "name": "store"}}, "store_name": {}},
+    )
+    nodes = {
+        f"model.adp.{n['name']}": n for n in (model("dim_date", {"date_day": {}}), dim, history)
+    }
+
+    def query(sql: str) -> list[tuple[object, ...]]:
+        return con.execute(sql).fetchall()
+
+    messages = [v.message for v in data_violations({"nodes": nodes}, query)]
+    # 'b' は dim にあるが版が無い（不明メンバーの値 'u' は不明メンバーのキーではないので別の違反）
+    assert any("覆っていないキーが 1 件" in m for m in messages), messages
+    con.execute("drop table dim_store")
+    messages = [v.message for v in data_violations({"nodes": nodes}, query)]
+    assert not any("覆っていない" in m for m in messages), messages

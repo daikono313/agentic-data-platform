@@ -281,17 +281,21 @@ def _stg_updated_at(info: WarehouseInfo, table: str) -> str | None:
     path = spec_path(info.warehouse_dir / "cleansing", table)
     try:
         spec = load_spec(path) if path.exists() else None
-    except ValueError as e:  # pydantic の ValidationError も ValueError
+    except (ValueError, yaml.YAMLError) as e:  # pydantic の ValidationError も ValueError
         raise ValueError(f"クレンジングの定義 {path.name} を読めません: {e}") from e
     kinds = column_kinds(spec, columns)  # 型変換の後の種類
+    candidates: list[tuple[str, str]] = []  # (源泉の列, stg の列)
     for c in columns:
         rule = spec.rule(c.name) if spec is not None else None
         if rule is not None and rule.drop:
             continue
         output = rule.output if rule is not None else c.name
         if "updated_at" in (c.name, output) and kinds[c.name] in TIME_KINDS:
-            return output
-    return None
+            candidates.append((c.name, output))
+    # stg で updated_at という名前の列を優先し、無ければ源泉の updated_at を rename した列
+    return next((o for _, o in candidates if o == "updated_at"), None) or next(
+        (o for _, o in candidates), None
+    )
 
 
 def history_files(

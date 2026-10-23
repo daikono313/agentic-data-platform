@@ -319,7 +319,7 @@ def _history_coverage(
     dim_key = _entity_column(dim, "primary") if dim else None
     # 今の値の dim にあって版の無いキー（dim の表がまだ無ければ数えない）
     missing = ""
-    if dim is not None and dim_key is not None and _types(dim, query):
+    if dim is not None and dim_key is not None and dim_key[0] in _types(dim, query):
         dkey = quote_ident(dim_key[0])
         missing = (
             f" union all select d.{dkey}, null, null from {dim.relation} as d"

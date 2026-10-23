@@ -353,3 +353,15 @@ def test_metric_group_by_must_exist_in_design(beam: BeamModel) -> None:
     beam.metrics[0].group_by = ["customer.annual_income"]
     design = DesignBuilder(FakeSchema()).build(beam)
     assert any("customer.annual_income" in (i.ref or "") for i in design.blockers)
+
+
+def test_history_attribute_with_reserved_name_is_a_warning(beam: BeamModel) -> None:
+    """履歴モデルが作る列（valid_from など）と名前がぶつかる属性は、履歴を作らず警告にする。"""
+    attr = next(
+        a for e in beam.events for d in e.dimensions for a in d.attributes if a.history_required
+    )
+    attr.name = "valid_from"
+    design = DesignBuilder(FakeSchema()).build(beam)
+    customer = next(d for d in design.dims if d.name == "dim_customer")
+    assert customer.history is None
+    assert any("履歴モデルの列と名前がぶつかる" in i.message for i in design.issues)

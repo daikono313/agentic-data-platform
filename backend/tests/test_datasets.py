@@ -348,10 +348,13 @@ def test_ontology_api(repo: Path, tmp_path: Path) -> None:
         shutil.rmtree(repo / "ontology")
     assert client.get("/ontology").status_code == 404
     (repo / "ontology").mkdir()
-    from tests.ontology_before_inventory import ontology_yaml
+    from adp.ontology.models import dump, link_history_models
+    from tests.ontology_before_inventory import ontology
 
-    # この repo には fct_stock_movements が無いので、在庫（raw.inventory）を取り込む前の状態にする
-    (repo / "ontology" / "ontology.yml").write_text(ontology_yaml())
+    # この repo には fct_stock_movements が無いので、在庫（raw.inventory）を取り込む前の状態にする。
+    # 生成した履歴モデル（会員ランク。ADR 0009）は、パイプラインと同じく概念に結び付ける
+    linked, _ = link_history_models(ontology(), [("dim_customer", "dim_customer_history")])
+    (repo / "ontology" / "ontology.yml").write_text(dump(linked))
     body = client.get("/ontology").json()
     assert body["mermaid"].startswith("flowchart")
     # 後から追加された源泉の例（オントロジーに未整理）: 在庫（#69）と商品レビュー（S5）

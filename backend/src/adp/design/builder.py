@@ -839,7 +839,18 @@ class DesignBuilder:
                 except JoinError as e:
                     self._blocker(f"dim_{name}.{a.name}: {e}", ref)
                     continue
-                if a.history_required:
+                reserved = {"valid_from", "valid_to", f"{name}_key", f"{name}_version_key"}
+                if a.history_required and (
+                    a.name in reserved or (a.source.column or "").startswith(("adp_", "dbt_"))
+                ):
+                    # 履歴モデルが作る列・dbt snapshot の列と名前がぶつかる（ADR 0009）
+                    self._issue(
+                        IssueSeverity.WARNING,
+                        f"dim_{name}.{a.name} は履歴モデルの列と名前がぶつかるため、履歴は作らず、"
+                        "今の値（Type1）だけで作る",
+                        ref,
+                    )
+                elif a.history_required:
                     if a.source.table == src.base.table and a.source.column is not None:
                         history.append(
                             Column(
