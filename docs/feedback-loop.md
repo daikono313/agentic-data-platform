@@ -35,11 +35,17 @@ make feedback-drafts            # .adp/eval-drafts/feedback_<session>.yml
 
 ## 4. 直して比べる
 
-1. 直す前に `make eval REPEAT=3`（結果は `.adp/evals/` に残る）
-2. プロンプトを直し、`PROMPT_VERSION`（`backend/src/adp/interview/prompts.py`）を上げる。上げ忘れても
+1. プロンプトを直し、`PROMPT_VERSION`（`backend/src/adp/interview/prompts.py`）を上げる。上げ忘れても
    バージョンには内容のハッシュが付くので比較はできるが、意図した変更は上げて区別する
-3. 直した後に `make eval REPEAT=3`
-4. `make eval-compare BEFORE=… AFTER=…` の結果を PR に貼る（certificate C10）
+2. 前を回す場所を用意する。`git fetch` のあと、`git worktree add --detach .adp/worktrees/eval-base origin/main`
+   で main の worktree を作り（既にあれば `git checkout --detach origin/main`）、そこに
+   `git checkout <ブランチ> -- evals backend/src/adp/evals` でブランチの eval のコードとシナリオを持ち込む
+   （前後を同じ物差しで測り、新しいシナリオも前で回すため）。eval はサンプルデータ（`warehouse/data/`）と
+   dbt の manifest（`warehouse/target/`）を読むので、新しい worktree では `make setup` と `make dbt-build` を先に行う
+3. 前（eval-base）と後（ブランチの worktree）で、`make eval REPEAT=3` を同じ時間帯に並べて回す。結果は
+   それぞれの worktree の `.adp/evals/<日時>/` に出る
+4. ブランチの worktree で `make eval-compare BEFORE=<eval-base の結果の絶対パス> AFTER=.adp/evals/<日時>` を
+   回し、表を PR に貼る。判定のしかたは certificate の C10
 
 ## 5. 確かめる
 
