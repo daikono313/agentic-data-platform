@@ -281,3 +281,44 @@ def test_prose_sentences_skip_structure_and_code() -> None:
         "最初の文です。「引用。」の文です。\n- リストの行です。\n```\nコードです。\n```\n最後です。"
     )
     assert prose_sentences(text) == ["最初の文です", "引用の文です", "最後です"]
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Now the metrics.",
+        "Add subcategory attribute, retry.",
+        "Fix: use expr only.",
+        "The group_by ref needs to be `<ref>.<attribute>`, so I'll fix that.",
+        "Same four values. Now move the metric, remove the old event, and fix gaps.",
+    ],
+)
+def test_strips_english_work_notes(sentence: str) -> None:
+    """tool 呼び出しの合間に出る英語の作業メモは取り除く（#161）。"""
+    text = f"在庫を確かめました。\n\n{sentence}\n\n次に具体例を見ます。"
+    assert clean_reply(text) == ("在庫を確かめました。\n\n次に具体例を見ます。", [sentence])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "completed, cancelled, returned",  # 英語の値だけの行
+        "ONLINE Store 17",
+        "Coffee and Tea Set",
+        "Paid in full, Partial refund, Out of stock",
+        "On hold / In transit / Delivered to customer",
+        "`On hold` / `In transit` / `Delivered to customer`",
+        "Shop A on Main Street",
+        "select sum(amount) from the orders where status = 'paid'",
+        "Out of Stock",
+        "Tokyo Main Shop",
+        # ユーザーへの英語の質問
+        "I recorded the priority as high. Next is the impact. Is it high, medium or low?",
+        "- Add the item to the cart",  # リストの行
+    ],
+)
+def test_keeps_english_values(text: str) -> None:
+    # 前に日本語の行があっても、質問を出した発言でも残す（全部消えたときに元に戻す処理に頼らない）
+    for full in (text, f"値は次のとおりです。\n{text}"):
+        assert clean_reply(full) == (full, [])
+        assert clean_reply(full, question="質問？") == (full, [])

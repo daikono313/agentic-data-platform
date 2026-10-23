@@ -260,7 +260,7 @@ class OnboardingPipeline:
                 check_ontology, ontology, catalog, warehouse / "target" / "manifest.json"
             )
             # 取り込みで足した概念・関係に関わる食い違いだけを見る（既存の部分は CI の検査に任せる）
-            problems += patch_errors(onto_errors.errors, patch)
+            problems += patch_errors(onto_errors.errors, patch, ontology)
             if problems:
                 raise PipelineError(
                     " / ".join(problems) + (f"\n{checked.log}" if not checked.ok else "")

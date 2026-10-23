@@ -52,9 +52,8 @@ def _fact_column_for(fact: FactTable, beam_ref: str) -> str | None:
 
 def _time_column(fact: FactTable, ref: str) -> str | None:
     """BEAM の When の参照に対応する fct の日付列。"""
-    return next(
-        (c.name for c in fact.columns if c.source_ref == ref and c.role == ColumnRole.TIME), None
-    )
+    col = fact.column_for(ref, ColumnRole.TIME)
+    return col.name if col else None
 
 
 def mf_name(event: BusinessEvent, fact: FactTable, ref: str) -> str:

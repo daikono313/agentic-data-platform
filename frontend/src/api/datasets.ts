@@ -100,6 +100,10 @@ export interface OntologyView {
   unmapped_sources: string[]
   unmapped_models: string[]
   errors: string[]
+  /** 関係ごとの件数の対応の表示（relations と同じ並び。未確認なら -。#137） */
+  multiplicities?: string[]
+  /** 属性（`<概念>.<属性>`）の補足（役割・上の階層・同義語・正本。#137） */
+  attribute_notes?: Record<string, string[]>
 }
 
 /** GET /sources/{table}/cleansing の型（#68） */
