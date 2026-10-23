@@ -202,6 +202,13 @@ async def test_upsert_event_keeps_example_kinds(expected: dict[str, Any]) -> Non
             [("upsert_event", {"data": event | {"examples": typed}})],
             # 2 回目は型と違いを省いて渡す
             [("upsert_event", {"data": event | {"label": "注文", "examples": plain}})],
+            # 3 回目は型だけを渡す（典型に戻す）。古い違いは残さない
+            [
+                (
+                    "upsert_event",
+                    {"data": event | {"examples": [x | {"kind": "typical"} for x in plain]}},
+                )
+            ],
         ]
     )
     interviewer, state = Interviewer(runner, LLMSettings()), new_state("売上")
@@ -210,6 +217,10 @@ async def test_upsert_event_keeps_example_kinds(expected: dict[str, Any]) -> Non
     [e] = state.beam.events
     assert e.label == "注文"
     assert [(x.kind.value, x.note) for x in e.examples] == [("missing", "会員でない")] * len(typed)
+    await collect(interviewer, state, "3")
+    assert [(x.kind.value, x.note) for x in state.beam.events[0].examples] == [
+        ("typical", "")
+    ] * len(typed)
 
 
 def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:

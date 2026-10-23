@@ -52,15 +52,16 @@ _EXAMPLES = {
 
 
 def _keep_example_kinds(old: list[Any], new: list[Any]) -> list[Any]:
-    """new の具体例に kind・note が無ければ、values が同じ old の具体例から引き継ぐ（#142）。"""
+    """new の具体例に kind・note がどちらも無ければ、values が同じ old の例から引き継ぐ（#142）。"""
     before = {json.dumps(x.get("values"), sort_keys=True): x for x in old if isinstance(x, dict)}
     kept: list[Any] = []
     for x in new:
         prev = (
             before.get(json.dumps(x.get("values"), sort_keys=True)) if isinstance(x, dict) else None
         )
-        if prev is not None:
-            x = {k: prev[k] for k in ("kind", "note") if k in prev and k not in x} | x
+        # kind か note のどちらかを渡したら、渡した側を正とする（古い note を残さない）
+        if prev is not None and "kind" not in x and "note" not in x:
+            x = {k: prev[k] for k in ("kind", "note") if k in prev} | x
         kept.append(x)
     return kept
 
