@@ -1,7 +1,7 @@
 # 0010: 多対多の切り口は、按分した fct（出来事 × 値の粒度）で持つ
 
 - 日付: 2026-10-22
-- ステータス: Proposed
+- ステータス: Accepted（2026-10-23、オーナー（Claude Code のセッションで回答））
 - 関連: [#143](https://github.com/daikono313/agentic-data-platform/issues/143)、design-doc の R5・R27、ADR [0007](0007-map-each-concept-to-one-model.md)・[0008](0008-generate-state-snapshots-from-beam.md)
 - 見直し: MetricFlow が、ブリッジを通る結合（fan-out join）と重み付けに対応したとき。または、按分しない見方（「影響のあった売上」の全額）の要求が続いたとき
 

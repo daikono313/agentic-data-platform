@@ -1,7 +1,7 @@
 # 0009: 属性の履歴は、dbt snapshot と別の履歴モデル（SCD Type 2）で持つ
 
 - 日付: 2026-10-22
-- ステータス: Proposed
+- ステータス: Accepted（2026-10-23、オーナー（Claude Code のセッションで回答））
 - 関連: [#141](https://github.com/daikono313/agentic-data-platform/issues/141)、design-doc の R6・R15、ADR [0006](0006-make-ontology-labels-the-business-terms.md)・[0007](0007-map-each-concept-to-one-model.md)・[0008](0008-generate-state-snapshots-from-beam.md)
 - 見直し: MetricFlow が、期間付きのモデルに primary の entity を置けるようになったとき。または、役割付きのディメンション（配送先顧客など）の履歴が要る要求が来たとき
 
