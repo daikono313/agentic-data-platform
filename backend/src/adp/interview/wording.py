@@ -15,6 +15,10 @@
 続けて表示されるので不要で、プロンプトで禁止しても別の言い方に置き換わるため（#158）。
 本文が全部消えてもよい（質問とボタンだけが表示される）。
 
+直前の段落（か段落のまとまり）と一字一句同じ地の文の段落（tool 呼び出しの前後でモデルが前置きを
+書き直したもの）も取り除く（#161）。離れた場所の同じ段落・少しでも違うもの・表・リスト・コードは
+残す（文の流れや見せた内容を失わないため。#175）。
+
 英語だけの地の文（「Now the metrics.」「Fix: use expr only.」など、tool 呼び出しの合間のモデルの
 作業メモ）も取り除く（#161）。日本語を含まず、英単語が 3 つ以上あり、作業メモに特有の語
 （now・next・fix・retry・add など）を含む文だけを対象にする。商品名・値に普通に出る語（of・and・on）
@@ -207,9 +211,42 @@ def _quotes_hidden_question(sentence: str, question: str) -> bool:
     )
 
 
+def _drop_repeated_paragraphs(text: str) -> tuple[str, list[str]]:
+    """直前の段落（か、直前に続く段落のまとまり。A B A B の後ろの A B）と一字一句同じ地の文の段落を
+    取り除く（#161）。tool 呼び出しの前後でモデルが同じ前置きを書き直したもの。離れた場所の同じ
+    段落・少しでも違う段落・8 文字未満の段落・表・リスト・コードは残す（文の流れや見せた内容を
+    失わないため。#175）。戻り値は（本文, 取り除いた段落）。"""
+    if "```" in text or "~~~" in text:
+        return text, []
+    paragraphs = re.split(r"\n{2,}", text)
+    keys = [p.strip() for p in paragraphs]
+
+    def droppable(i: int) -> bool:
+        lines = paragraphs[i].strip("\n").split("\n")  # 頭の空白（インデントのコード）は残す
+        return len(keys[i]) >= 8 and not any(
+            is_structure_line(line) or line.startswith(("    ", "\t")) for line in lines
+        )
+
+    kept: list[int] = []
+    removed: list[str] = []
+    for i in range(len(keys)):
+        kept.append(i)
+        # 直前に続く k 個の段落と、その前の k 個が同じなら、後ろの k 個を取り除く
+        for k in range(len(kept) // 2, 0, -1):
+            tail, before = kept[-k:], kept[-2 * k : -k]
+            same = [keys[t] == keys[b] for t, b in zip(tail, before, strict=True)]
+            if all(same) and all(droppable(t) for t in tail):
+                removed += [keys[t] for t in tail]
+                del kept[-k:]
+                break
+    if not removed:
+        return text, []
+    return "\n\n".join(paragraphs[i] for i in kept), removed
+
+
 def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[str]]:
-    """画面の位置を指す文・英語の作業メモ（質問文 question があれば締めの一言も）を取り除く。
-    戻り値は（本文, 取り除いた文）。"""
+    """画面の位置を指す文・英語の作業メモ（質問文 question があれば締めの一言も）を取り除き、
+    そのあとで直前と一字一句同じ段落を取り除く。戻り値は（本文, 取り除いた文・段落）。"""
     removed: list[str] = []
     lines: list[str] = []
     for line, prose in _lines(text):
@@ -231,12 +268,11 @@ def clean_reply(text: str, *, question: str | None = None) -> tuple[str, list[st
             else:
                 kept.append(sentence)
         lines.append("".join(kept).rstrip())
-    if not removed:
-        return text, []
-    out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() if removed else text
     if not out and not question:  # 質問が無いのに全部消えるなら、発言が空にならないよう残す
-        return text, []
-    return out, removed
+        out, removed = text, []
+    out, repeated = _drop_repeated_paragraphs(out)
+    return out, removed + repeated
 
 
 _PUNCT = re.compile(r"[\s、。!！?？「」『』（）()*`]|[.,](?!\d)")

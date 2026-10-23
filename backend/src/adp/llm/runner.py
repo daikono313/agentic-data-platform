@@ -60,8 +60,8 @@ class TextDelta:
 
 def join_chunks(chunks: list[str]) -> str:
     """tool 呼び出しで分かれた本文（TextDelta）のかたまりを空行でつなぐ（区切り無しでつながらない
-    ように。#161）。かたまりの頭のインデントは残す。書き直した二重のかたまりは消さない（前の
-    かたまりにしか無い情報を消さずに見分けられないため）。"""
+    ように。#161）。かたまりの頭のインデントは残す。書き直した二重のかたまりはここでは消さない
+    （一字一句同じ段落だけを、画面に出す前に `adp.interview.wording.clean_reply` で取り除く）。"""
     return "\n\n".join(c.strip("\n").rstrip() for c in chunks if c.strip())
 
 
