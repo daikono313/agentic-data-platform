@@ -5,7 +5,8 @@
 # - domains: 業務のまとまり（図の枠）
 # - concepts: 概念。kind は entity（もの・人・場所）、event（出来事。fact の候補）、
 #   state（定期的に測る状態。月末在庫など。定期スナップショットの fact の候補）
-#   - source / key: 概念の元になる源泉のテーブルと、その識別子の列
+#   - source / key: 概念の元になる源泉のテーブルと、その識別子の列（状態の概念では元にする記録の
+#     識別子。状態の粒度ではない）
 #   - attributes: 属性。column は source の列。ラベルは業務の言葉の正本（BEAM・dim と照合）
 #     - same_as: 同じ言葉を別の概念にも持つときの正本（<概念>.<属性>）。同じラベルは結ぶ
 #     - role: 役割（descriptive 説明 / numeric 数値 / temporal 時刻）。列の型と照合する
@@ -281,6 +282,13 @@ concepts:
     label: 入出庫数量
     column: quantity
     role: numeric
+- name: stock_level
+  label: 在庫数
+  domain: inventory
+  kind: state
+  source: raw.inventory
+  key: inventory_id
+  attributes: []
 relations:
 - from: customer
   to: order
@@ -342,6 +350,14 @@ relations:
   via: raw.inventory.product_id
   cardinality: one_to_many
   optional: false
+- from: store
+  to: stock_level
+  verb: 持つ
+  via: raw.inventory.store_id
+- from: product
+  to: stock_level
+  verb: 持つ
+  via: raw.inventory.product_id
 constraints:
 - concept: store
   text: channel が online / app の店舗は都道府県・地方を持たない
@@ -352,4 +368,6 @@ constraints:
 - concept: product
   text: unit_cost は標準原価で、実績原価ではない
 - concept: inventory_movement
-  text: 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。月末在庫は、その月までの最新の棚卸の数か、そこから後の入庫・移動出庫・廃棄を足した帳簿の数
+  text: 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。
+- concept: stock_level
+  text: 店舗 × 商品の、期間の終わりの在庫数。入出庫の増減を積み上げ、棚卸で数えた数に置き換える。期首の在庫は記録の外にあるので、最初の棚卸より前の期間は出さない
