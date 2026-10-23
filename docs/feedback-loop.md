@@ -35,11 +35,11 @@ make feedback-drafts            # .adp/eval-drafts/feedback_<session>.yml
 
 ## 4. 直して比べる
 
-1. 直す前に `make eval REPEAT=3`（結果は `.adp/evals/` に残る）
-2. プロンプトを直し、`PROMPT_VERSION`（`backend/src/adp/interview/prompts.py`）を上げる。上げ忘れても
+1. プロンプトを直し、`PROMPT_VERSION`（`backend/src/adp/interview/prompts.py`）を上げる。上げ忘れても
    バージョンには内容のハッシュが付くので比較はできるが、意図した変更は上げて区別する
-3. 直した後に `make eval REPEAT=3`
-4. `make eval-compare BEFORE=… AFTER=…` の結果を PR に貼る（certificate C10）
+2. 直す前（main の worktree）と直した後（ブランチの worktree）で、`make eval REPEAT=3` を同じ時間帯に
+   並べて回す（結果はそれぞれの `.adp/evals/` に残る。LLM の応答は時期でもぶれるため）
+3. `make eval-compare BEFORE=… AFTER=…` の結果を PR に貼る。判定は「合格率（中身）」で行う（certificate C10）
 
 ## 5. 確かめる
 
