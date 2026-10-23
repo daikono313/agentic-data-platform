@@ -767,3 +767,62 @@ def test_required_relation_skips_missing_key_source(tmp_path: Path) -> None:
     assert check(Ontology.model_validate(data), Catalog(db), None).errors == [
         "概念 customer: 源泉 raw.customers がカタログに無い"
     ]
+
+
+def test_history_model_is_a_dependent_of_the_dim() -> None:
+    """履歴モデル（ADR 0009）は dim のある entity の概念だけが持ち、ほかのモデルと重ねない。"""
+    from adp.ontology.models import link_history_models
+
+    data = _data()
+    data["concepts"][0]["history_model"] = "dim_customer_history"
+    assert Ontology.model_validate(data).concepts[0].history_model == "dim_customer_history"
+    data["concepts"][1]["history_model"] = "dim_order_history"
+    with pytest.raises(ValueError, match="history_model"):
+        Ontology.model_validate(data)
+    data = _data()
+    data["concepts"][0]["history_model"] = "dim_customer"
+    with pytest.raises(ValueError):
+        Ontology.model_validate(data)
+
+    ontology, linked = link_history_models(
+        Ontology.model_validate(_data()), [("dim_customer", "dim_customer_history")]
+    )
+    assert linked == ["customer"]
+    assert ontology.concepts[0].history_model == "dim_customer_history"
+    assert link_history_models(ontology, [("dim_customer", "dim_customer_history")])[1] == []
+
+
+def test_check_history_model_reads_source_through_snapshot(tmp_path: Path) -> None:
+    """履歴モデルは snapshot を経由して概念の源泉を読む。未整理のモデルにしない。"""
+    db = _db(tmp_path, "order_id int, customer_id int")
+    data = _data()
+    data["concepts"][0]["history_model"] = "dim_customer_history"
+    manifest = tmp_path / "manifest.json"
+    nodes = {
+        "model.p.dim_customer": {"name": "dim_customer", "resource_type": "model"},
+        "model.p.dim_customer_history": {"name": "dim_customer_history", "resource_type": "model"},
+        "model.p.stg_customers": {"name": "stg_customers", "resource_type": "model"},
+        "snapshot.p.snp_customers": {"name": "snp_customers", "resource_type": "snapshot"},
+    }
+    parents = {
+        "model.p.dim_customer": ["model.p.stg_customers"],
+        "model.p.dim_customer_history": ["snapshot.p.snp_customers"],
+        "snapshot.p.snp_customers": ["model.p.stg_customers"],
+        "model.p.stg_customers": ["source.p.raw.customers"],
+    }
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": nodes,
+                "sources": {"source.p.raw.customers": {"schema": "raw", "name": "customers"}},
+                "parent_map": parents,
+            }
+        )
+    )
+    result = check(Ontology.model_validate(data), Catalog(db), manifest)
+    assert not [e for e in result.errors if "customer" in e]
+
+    del nodes["model.p.dim_customer_history"]
+    manifest.write_text(json.dumps({"nodes": nodes, "parent_map": parents}))
+    result = check(Ontology.model_validate(data), Catalog(db), manifest)
+    assert "概念 customer: 履歴モデル dim_customer_history が dbt に無い" in result.errors

@@ -32,7 +32,7 @@ from adp.generation.project import ProjectInfo
 from adp.generation.repair import Repairer, RepairResult
 from adp.generation.semantic import MetricQuery
 from adp.llm import AgentRunner, LLMSettings
-from adp.ontology.models import ConceptKind, Ontology, link_models
+from adp.ontology.models import ConceptKind, Ontology, link_history_models, link_models
 from adp.ontology.models import dump as dump_ontology
 from adp.ontology.render import markdown as ontology_markdown
 from adp.vcs import (
@@ -345,7 +345,10 @@ class GenerationPipeline:
             ]
             links += [(d.base.table, d.name, "entity") for d in design.dims if not d.exists]
             ontology, linked = link_models(ontology, links)
-            if linked:
+            ontology, history = link_history_models(
+                ontology, [(d.name, d.history.model) for d in design.dims if d.history]
+            )
+            if linked or history:
                 ontology_path.write_text(dump_ontology(ontology), encoding="utf-8")
                 (wt_root / "docs" / "ontology.md").write_text(
                     ontology_markdown(ontology), encoding="utf-8"

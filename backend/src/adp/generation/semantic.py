@@ -218,6 +218,39 @@ def dim_semantics(dim: DimTable) -> tuple[dict[str, Any], dict[str, dict[str, An
     return model, columns
 
 
+AT_EVENT_SUFFIX = "_at_event"
+"""履歴モデルのディメンション名の接尾辞（当時の値。ADR 0009）。今の値の dim と同じ名前にすると、
+entity の名前が同じなので両方とも問い合わせられなくなる（MetricFlow の検証では見つからない）。"""
+
+
+def history_semantics(dim: DimTable) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """履歴モデル（ADR 0009）の (モデル単位の設定, 列ごとの設定)。
+
+    dim と同じキーを natural の entity（名前は dim の primary の entity と同じ）にし、期間を
+    validity_params にする。fct の外部の entity は、agg_time の日付がその期間に入る版に結合される。
+    期間付きのモデルには primary の entity を置けないので、版の単位を primary_entity に書く。
+    """
+    assert dim.history is not None
+    model: dict[str, Any] = {
+        "semantic_model": {"enabled": True},
+        "primary_entity": f"{dim.dimension}_version",
+    }
+    columns: dict[str, dict[str, Any]] = {
+        dim.key_column: {"entity": {"type": "natural", "name": dim.dimension}},
+        "valid_from": {
+            "granularity": "day",
+            "dimension": {"type": "time", "validity_params": {"is_start": True}},
+        },
+        "valid_to": {
+            "granularity": "day",
+            "dimension": {"type": "time", "validity_params": {"is_end": True}},
+        },
+    }
+    for c in dim.history.columns:
+        columns[c.name] = {"dimension": {"type": "categorical", "name": c.name + AT_EVENT_SUFFIX}}
+    return model, columns
+
+
 @dataclass
 class MetricDefinitions:
     in_model: list[dict[str, Any]]

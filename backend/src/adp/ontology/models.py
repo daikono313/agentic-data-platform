@@ -107,6 +107,9 @@ class Concept(_Strict):
     key: str = Field(pattern=_NAME)
     model: str | None = Field(default=None, pattern=r"^(dim|fct)_[a-z0-9_]+$")
     """対応する整備済みモデル。entity → dim_*、event・state → fct_*。まだ無ければ None。"""
+    history_model: str | None = Field(default=None, pattern=r"^dim_[a-z0-9_]+_history$")
+    """当時の値で見る属性の履歴モデル（SCD Type 2。ADR 0009）。model の dim の従属で、概念と
+    モデルの 1 対 1（ADR 0007）の例外。entity の概念だけが持つ。"""
     attributes: list[Attribute] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -114,6 +117,10 @@ class Concept(_Strict):
         expected = model_prefix(self.kind)
         if self.model is not None and not self.model.startswith(expected):
             raise ValueError(f"概念 {self.name}（{self.kind}）のモデルは {expected}* にする")
+        if self.history_model is not None and (self.kind != "entity" or self.model is None):
+            raise ValueError(
+                f"概念 {self.name} の history_model は、dim（model）のある entity の概念だけが持つ"
+            )
         for what, values in (
             ("名前", [a.name for a in self.attributes]),
             ("列", [a.column for a in self.attributes]),
@@ -191,7 +198,7 @@ class Ontology(_Strict):
         constraints = [(x.concept, x.text) for x in self.constraints]
         if len(constraints) != len(set(constraints)):
             raise ValueError("同じ制約が重複している")
-        models = [c.model for c in self.concepts if c.model]
+        models = [m for c in self.concepts for m in (c.model, c.history_model) if m]
         dup = {m for m in models if models.count(m) > 1}
         if dup:
             raise ValueError(f"1 つのモデルが複数の概念に対応している: {', '.join(sorted(dup))}")
@@ -304,6 +311,31 @@ def duplicate_message(word: str, refs: list[str]) -> str:
     )
 
 
+def link_history_models(
+    ontology: Ontology, models: list[tuple[str, str]]
+) -> tuple[Ontology, list[str]]:
+    """(dim, 履歴モデル) の組から、その dim の概念に履歴モデルを書き込む（ADR 0009）。書き込んだ
+    概念の名前も返す。"""
+    history = dict(models)
+    linked: list[str] = []
+    concepts = []
+    for c in ontology.concepts:
+        model = history.get(c.model or "")
+        if model is not None and c.history_model is None:
+            concepts.append(c.model_copy(update={"history_model": model}))
+            linked.append(c.name)
+        else:
+            concepts.append(c)
+    if not linked:
+        return ontology, []
+    return Ontology.model_validate(
+        {
+            **ontology.model_dump(mode="json", by_alias=True, exclude_none=True),
+            "concepts": [c.model_dump(mode="json", exclude_none=True) for c in concepts],
+        }
+    ), linked
+
+
 def link_models(
     ontology: Ontology, models: list[tuple[str, str, ConceptKind]]
 ) -> tuple[Ontology, list[str]]:
@@ -365,6 +397,7 @@ HEADER = """\
 #     - parent: 階層で 1 つ上の属性（同じ概念の属性。子の値ごとに親の値は 1 つ）
 #     - synonyms: 業務でほかに呼ぶ言葉（ほかの属性のラベル・同義語と重ねない）
 #   - model: 対応する整備済みモデル（entity → dim_*、event・state → fct_*）。まだ無ければ省略
+#   - history_model: 当時の値で見る属性の履歴モデル（dim_*_history。model の dim の従属。ADR 0009）
 # - relations: 概念どうしの関係。verb は from → to の矢印のラベル（動詞）
 #   - via: 関係を表す列（<schema>.<table>.<column>）
 #   - cardinality: キーを持つ側の 1 件に、via を持つ側が 1 件まで（one_to_one）か

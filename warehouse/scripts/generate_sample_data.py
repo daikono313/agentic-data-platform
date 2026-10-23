@@ -409,6 +409,12 @@ def load(db_path: Path, tables: Tables) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(db_path))
     try:
+        # 属性の履歴の snapshot（dbt の schema「snapshots」。adp の生成器の
+        # HISTORY_SNAPSHOT_SCHEMA）は源泉の版なので、源泉を作り直すときに消す（ADR 0009）
+        for (schema,) in con.execute(
+            "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE '%snapshots'"
+        ).fetchall():
+            con.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         con.execute("CREATE SCHEMA IF NOT EXISTS raw")
         with tempfile.TemporaryDirectory() as tmp:
             for name, ddl in DDL.items():

@@ -1,0 +1,11 @@
+# adp により生成
+version: 2
+snapshots:
+- name: snp_customers
+  description: raw.customers の行の版（属性の履歴の元。ADR 0009）
+  relation: ref('stg_customers')
+  config:
+    schema: snapshots
+    unique_key: customer_id
+    strategy: timestamp
+    updated_at: updated_at

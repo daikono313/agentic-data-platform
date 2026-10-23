@@ -1,0 +1,60 @@
+# adp により生成
+version: 2
+models:
+- name: dim_customer_history
+  description: 顧客の属性の履歴（SCD Type 2。ADR 0009）。期間は valid_from 以上 valid_to 未満。不明メンバーの行を含む
+  data_tests:
+  - dbt_utils.mutually_exclusive_ranges:
+      lower_bound_column: valid_from
+      upper_bound_column: valid_to
+      partition_by: customer_key
+      gaps: not_allowed
+  semantic_model:
+    enabled: true
+  primary_entity: customer_version
+  columns:
+  - name: customer_version_key
+    description: 版のキー（自然キーと版の始まり）
+    data_tests:
+    - unique
+    - not_null
+  - name: customer_key
+    description: サロゲートキー（dim_customer と同じ）
+    data_tests:
+    - not_null
+    entity:
+      type: natural
+      name: customer
+  - name: region
+    description: 居住地方（当時）
+    dimension:
+      type: categorical
+      name: region_at_event
+  - name: prefecture
+    description: 居住都道府県（当時）
+    dimension:
+      type: categorical
+      name: prefecture_at_event
+  - name: gender
+    description: 性別（当時）
+    dimension:
+      type: categorical
+      name: gender_at_event
+  - name: valid_from
+    description: 版の始まり（この時刻を含む）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_start: true
+  - name: valid_to
+    description: 版の終わり（この時刻を含まない）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_end: true

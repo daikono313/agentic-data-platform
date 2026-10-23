@@ -1,0 +1,11 @@
+# adp により生成
+version: 2
+snapshots:
+- name: snp_products
+  description: raw.products の行の版（属性の履歴の元。ADR 0009）
+  relation: ref('stg_products')
+  config:
+    schema: snapshots
+    unique_key: product_id
+    strategy: check
+    check_cols: all

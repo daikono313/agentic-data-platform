@@ -1,0 +1,55 @@
+# adp により生成
+version: 2
+models:
+- name: dim_product_history
+  description: 商品の属性の履歴（SCD Type 2。ADR 0009）。期間は valid_from 以上 valid_to 未満。不明メンバーの行を含む
+  data_tests:
+  - dbt_utils.mutually_exclusive_ranges:
+      lower_bound_column: valid_from
+      upper_bound_column: valid_to
+      partition_by: product_key
+      gaps: not_allowed
+  semantic_model:
+    enabled: true
+  primary_entity: product_version
+  columns:
+  - name: product_version_key
+    description: 版のキー（自然キーと版の始まり）
+    data_tests:
+    - unique
+    - not_null
+  - name: product_key
+    description: サロゲートキー（dim_product と同じ）
+    data_tests:
+    - not_null
+    entity:
+      type: natural
+      name: product
+  - name: category
+    description: 商品カテゴリ（当時）
+    dimension:
+      type: categorical
+      name: category_at_event
+  - name: product_name
+    description: 商品名（当時）
+    dimension:
+      type: categorical
+      name: product_name_at_event
+  - name: valid_from
+    description: 版の始まり（この時刻を含む）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_start: true
+  - name: valid_to
+    description: 版の終わり（この時刻を含まない）
+    data_tests:
+    - not_null
+    granularity: day
+    dimension:
+      type: time
+      validity_params:
+        is_end: true

@@ -103,6 +103,24 @@ class FactTable(BaseModel):
         return next((c for c in self.columns if c.source_ref == ref and c.role == role), None)
 
 
+class HistoryDesign(BaseModel):
+    """当時の値で見たい属性（BEAM の `history_required`）の、dbt snapshot と履歴モデル（SCD Type 2）
+    の作り方（ADR 0009）。SQL・YAML は `adp.generation.dbt.history_files` が作る。
+
+    snapshot はクレンジング層（stg）の行の版を記録し、履歴モデルは版ごとに、dim と同じキー・履歴の
+    属性・期間（valid_from 以上 valid_to 未満）を持つ。既存の dim と fct は変えない（R15）。
+    """
+
+    model: str
+    """履歴モデルの名前（`dim_<name>_history`）。"""
+    snapshot: str
+    """snapshot の名前（`snp_<源泉の表>`）。"""
+    natural_key: str
+    """源泉の自然キーの列（dim の自然キーと同じ）。"""
+    columns: list[Column]
+    """履歴の属性（expr は源泉の列名。名前・説明は dim の属性と同じ）。"""
+
+
 class DimTable(BaseModel):
     name: str
     dimension: str
@@ -119,6 +137,8 @@ class DimTable(BaseModel):
     """既存の dim を再利用する（カラム追加のみ）。"""
     new_columns: list[str] = Field(default_factory=list)
     """既存の dim に追加が必要な列。"""
+    history: HistoryDesign | None = None
+    """当時の値で見たい属性があるときの、snapshot と履歴モデル（ADR 0009）。"""
 
 
 class ExistingFact(BaseModel):

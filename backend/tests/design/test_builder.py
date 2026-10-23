@@ -119,9 +119,39 @@ def test_dims_follow_conventions(design: PhysicalDesign) -> None:
     assert design.uses_dim_date
 
 
-def test_unavailable_and_history_become_warnings(design: PhysicalDesign) -> None:
+def test_unavailable_becomes_warning(design: PhysicalDesign) -> None:
     refs = {i.ref for i in design.issues if i.severity == IssueSeverity.WARNING}
-    assert {"gross_margin", "customer.annual_income", "customer.membership_rank"} <= refs
+    assert {"gross_margin", "customer.annual_income"} <= refs
+
+
+def test_history_required_becomes_history_model(design: PhysicalDesign) -> None:
+    """当時の値で見たい属性は、snapshot と履歴モデルを作る（警告にしない。ADR 0009）。"""
+    customer = next(d for d in design.dims if d.name == "dim_customer")
+    assert customer.history is not None
+    assert customer.history.model == "dim_customer_history"
+    assert customer.history.snapshot == "snp_customers"
+    assert customer.history.natural_key == "customer_id"
+    assert [(c.name, c.expr) for c in customer.history.columns] == [
+        ("membership_rank", "membership_rank")
+    ]
+    refs = {i.ref for i in design.issues if i.severity == IssueSeverity.WARNING}
+    assert "customer.membership_rank" not in refs
+    # 履歴の要る属性が無い dim には作らない
+    assert all(d.history is None for d in design.dims if d.name != "dim_customer")
+
+
+def test_history_from_joined_table_or_expr_is_a_warning(beam: BeamModel) -> None:
+    """源泉の表の列でない属性（結合した表・式）の履歴は作らず、警告にする（ADR 0009）。"""
+    from adp.beam import SourceRef
+
+    attr = next(
+        a for e in beam.events for d in e.dimensions for a in d.attributes if a.history_required
+    )
+    attr.source = SourceRef(table=attr.source.table, expr=f"upper({attr.source.column})")  # type: ignore[union-attr]
+    design = DesignBuilder(FakeSchema()).build(beam)
+    customer = next(d for d in design.dims if d.name == "dim_customer")
+    assert customer.history is None
+    assert any("履歴は作らず" in i.message for i in design.issues)
 
 
 def test_missing_join_path_is_a_blocker(beam: BeamModel) -> None:

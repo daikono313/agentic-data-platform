@@ -69,8 +69,12 @@ def test_generated_models_build_and_match_reference(warehouse: Path) -> None:
     assert design.blockers == []
     generation = generate_models(design, info, beam)
 
-    # 共通ディメンションと staging は既存のものを再利用し、fct だけを生成する
+    # 共通ディメンションと staging は既存のものを再利用し、fct と、当時の値で見たい属性（会員
+    # ランク）の snapshot・履歴モデル（ADR 0009）を生成する
     assert [f.path for f in generation.files] == [
+        "snapshots/snp_customers.yml",
+        "models/marts/dim_customer_history.sql",
+        "models/marts/dim_customer_history.yml",
         "models/marts/fct_order_lines.sql",
         "models/marts/fct_order_lines.yml",
         "tests/assert_fct_order_lines_reconciles_with_source.sql",

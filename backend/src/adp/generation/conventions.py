@@ -179,6 +179,70 @@ def _dim_entities(models: list[_Model]) -> set[str]:
     return names
 
 
+def _entity(m: _Model, kind: str) -> str | None:
+    """その種類（primary・natural）の entity の名前。"""
+    for spec in m.columns.values():
+        entity = spec.get("entity") or {}
+        if entity.get("type") == kind:
+            return str(entity.get("name"))
+    return None
+
+
+def _dimension_names(m: _Model) -> set[str]:
+    """semantic model の時間以外のディメンションの名前（名前を書かなければ列名）。"""
+    names: set[str] = set()
+    for c, spec in m.columns.items():
+        dim = spec.get("dimension") or {}
+        if dim and dim.get("type") != "time":
+            names.add(str(dim.get("name") or c))
+    return names
+
+
+def _history_violations(models: list[_Model]) -> list[Violation]:
+    """履歴モデル（natural の entity を持つ dim。ADR 0009）の検査。
+
+    - natural の entity は、今の値の dim の primary の entity と同じ名前にする（fct を変えずに
+      結合する）
+    - ディメンション名を今の値の dim と重ねない（MetricFlow の検証では見つからないまま、両方とも
+      問い合わせられなくなる）
+    - 版の期間が重ならないことを dbt_utils.mutually_exclusive_ranges で確かめる
+    """
+    current = {e: m for m in models if m.is_dim and (e := _entity(m, "primary"))}
+    out: list[Violation] = []
+    for m in models:
+        entity = _entity(m, "natural") if m.is_dim else None
+        if entity is None:
+            continue
+        rule = "履歴（SCD Type 2）"
+        dim = current.get(entity)
+        if dim is None:
+            out.append(
+                Violation(
+                    m.name, rule, f"entity {entity} を primary に持つ今の値の dim がありません"
+                )
+            )
+        else:
+            overlap = sorted(_dimension_names(m) & _dimension_names(dim))
+            if overlap:
+                out.append(
+                    Violation(
+                        m.name,
+                        rule,
+                        f"ディメンション名 {', '.join(overlap)} が {dim.name} と重なっています"
+                        "（当時の値は <列>_at_event にする）",
+                    )
+                )
+        if "dbt_utils.mutually_exclusive_ranges" not in m.model_tests:
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    "版の期間の重なりのテスト（dbt_utils.mutually_exclusive_ranges）がありません",
+                )
+            )
+    return out
+
+
 def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
     """manifest だけで分かる違反（テスト・entity・列名）。"""
     models = _marts(manifest)
@@ -198,7 +262,7 @@ def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
                         f"列名 {', '.join(reserved)} は時間の粒度の名前と衝突します",
                     )
                 )
-    return out
+    return out + _history_violations(models)
 
 
 def _literal(value: object) -> str:

@@ -115,7 +115,8 @@ def strip_generated(warehouse: Path) -> None:
     源泉の宣言（`models/staging/_<source>__sources.yml`）は残す。クレンジング層（stg）と同じく
     生成した fct / dim より手前の基盤で、stg がそれを参照している（#104）。
     """
-    for path in [*(warehouse / "models").rglob("*"), *(warehouse / "tests").rglob("*")]:
+    generated = [warehouse / "models", warehouse / "tests", warehouse / "snapshots"]
+    for path in [p for d in generated for p in d.rglob("*")]:
         if (
             path.is_file()
             and path.suffix in {".sql", ".yml"}
