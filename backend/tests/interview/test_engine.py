@@ -230,8 +230,13 @@ def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:
     from adp.interview.tools import build_tools
 
     tools = {t.name: t for t in build_tools(new_state("x"))}
+    event = expected["events"][0]
+    # インタビューでまだ聞かない項目（bridge。ADR 0010）はスキーマに無く、LLM も送らない
+    event = event | {
+        "dimensions": [{k: v for k, v in d.items() if k != "bridge"} for d in event["dimensions"]]
+    }
     samples = {
-        "upsert_event": expected["events"][0],
+        "upsert_event": event,
         "upsert_metric": expected["metrics"][0],
         "add_gap": expected["gaps"][0],
     }
