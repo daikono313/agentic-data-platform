@@ -357,7 +357,7 @@ export interface Dimension {
    */
   fact_key?: SourceRef | null;
   /**
-   * 1 つの出来事に複数の値が付く切り口のとき、値の源泉（ブリッジ）。金額などを値の数で按分した fct を作る（ADR 0010）
+   * 1 つの出来事に複数の値が付く切り口（例: 1 注文に複数のプロモーション）のとき、値の源泉の表。金額・件数を付いた値の数で按分した、別の出来事（別の table_name）として記録する。1 回ごとの出来事だけ・1 つの出来事に 1 つまで・役割の名前（role）が要る
    */
   bridge?: Bridge | null;
 }
@@ -372,7 +372,7 @@ export interface Dimension {
  */
 export interface Bridge {
   /**
-   * 値の源泉（例: raw.order_promotions。1 行が出来事 × 値）
+   * 値の源泉の表（例: raw.order_promotions。1 行が、注文などの 1 件に付いた値 1 つ）
    */
   table: string;
   event_key: SourceRef1;

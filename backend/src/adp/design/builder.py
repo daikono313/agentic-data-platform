@@ -214,6 +214,11 @@ class _Sources:
         return "".join(parts)
 
 
+def only_base(expr: str) -> bool:
+    """SQL の式が、1 行の元の表（別名 t0）の列だけを参照するか。"""
+    return all(alias == "t0" for alias in re.findall(r"\b(t\d+)\.", expr))
+
+
 ALLOCATION_WEIGHT = "allocation_weight"
 """按分した fct の重みの列名（ADR 0010）。"""
 
@@ -710,6 +715,15 @@ class DesignBuilder:
         partition = ", ".join(exprs[c] for c in source_grain if c in exprs) or "1"
         weight = f"1.0 / count(*) over (partition by {partition})"
         sums = {m.name for m in event.measures if m.aggregation == Aggregation.SUM}
+        for c in columns:
+            if c.role == ColumnRole.MEASURE and c.source_ref in sums and not only_base(c.expr):
+                # 1 行の元の表以外（ブリッジや、粒度の粗い表）の値は、既に値ごと・まとまりごとの値
+                # なので、値の数で割ると誤る（ADR 0010）
+                self._blocker(
+                    f"[{event.name}] measure {c.source_ref} は 1 行の元の表の列ではないので、"
+                    f"{bridged.label}の数で按分できません",
+                    str(c.source_ref),
+                )
         allocated = [
             c.model_copy(update={"expr": f"({c.expr}) * {weight}"})
             if c.role == ColumnRole.MEASURE and c.source_ref in sums

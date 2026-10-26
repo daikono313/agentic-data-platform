@@ -358,12 +358,27 @@ def _bridge_issues(event: BusinessEvent, p: str) -> list[str]:
             "だけです（時点の値や段階の日時は値の数で割れない）"
         )
     for d in bridged:
+        if d.masterless:
+            issues.append(
+                f"{p} 複数の値の切り口 {d.ref} はマスタの無い値なので、按分した fct を作れません。"
+                "値の一覧（マスタ）の表を business_key にしてください"
+            )
+        if d.ref in event.grain_keys:
+            issues.append(
+                f"{p} 複数の値の切り口 {d.ref} は粒度のキー（grain_keys）に入れません。粒度は元の"
+                "出来事の 1 行のキーにします（値ごとの行は按分で作る）"
+            )
         if d.role is None:
             issues.append(
                 f"{p} 複数の値の切り口 {d.name} に役割の名前（role。例: applied_promotion）を"
                 "付けてください（1 件目だけを指す同じディメンションと区別する）"
             )
     for m in event.measures:
+        if m.aggregation == Aggregation.SUM and m.additivity != Additivity.ADDITIVE:
+            issues.append(
+                f"{p} measure {m.name} は足し上げできない値（{m.additivity}）なので、値の数で"
+                "按分できません"
+            )
         if m.aggregation == Aggregation.AVERAGE:
             issues.append(
                 f"{p} measure {m.name} は平均（average）なので、按分した fct には置けません。"

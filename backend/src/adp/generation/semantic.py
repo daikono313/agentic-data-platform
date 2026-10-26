@@ -308,7 +308,12 @@ def metric_definitions(
                 # 足しても全体と一致しない（非加算）ことを説明に書く
                 if measure.counts_rows:
                     simple |= {"agg": "sum", "expr": fact.allocation.weight_column}
-                elif measure.aggregation in _NOT_ALLOCATED:
+                if measure.aggregation not in _NOT_ALLOCATED:
+                    base["description"] += (
+                        f"\n{fact.allocation.dimension} ごとの値は、付いた値の数で按分した値"
+                        "（値ごとに足すと全体と一致する）"
+                    )
+                else:
                     base["description"] += (
                         f"\n{fact.allocation.dimension} ごとの値は按分しない"
                         "（値ごとに足しても全体とは一致しない）"

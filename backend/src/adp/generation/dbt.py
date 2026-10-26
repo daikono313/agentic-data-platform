@@ -20,7 +20,7 @@ from adp.cleansing.models import CleansingSpec, dump_spec, load_defaults, load_s
 from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
-from adp.design.builder import dim_key_expr, staging_model
+from adp.design.builder import dim_key_expr, only_base, staging_model
 from adp.generation.semantic import (
     AT_EVENT_SUFFIX,
     ROW_COUNT_EXPR,
@@ -749,7 +749,7 @@ def _extend_existing_fact(
     for m in new_in_model:
         expr = m.get("expr")
         col = fact.column(expr) if isinstance(expr, str) and expr not in have else None
-        if col is None or col.role != ColumnRole.MEASURE or not _only_base(col.expr):
+        if col is None or col.role != ColumnRole.MEASURE or not only_base(col.expr):
             continue  # 結合先の別名（t1 など）は、既存の fct と新しい設計で別のテーブルでありうる
         existing_name = same_expr.get(_norm_expr(col.expr))
         if existing_name in have and not any(
@@ -767,7 +767,7 @@ def _extend_existing_fact(
     for c in missing:
         if c.role not in (ColumnRole.MEASURE, ColumnRole.ATTRIBUTE):
             return None
-        if not _only_base(c.expr):
+        if not only_base(c.expr):
             return None
     new_top = [m for m in planned.get("metrics", []) or [] if m["name"] not in existing_metrics]
     if not missing and not new_in_model and not new_top:
@@ -794,11 +794,6 @@ def _extend_existing_fact(
 
 
 _SELECT_LINE = re.compile(r"^\s+(.+?)\s+as\s+(\w+),?\s*$", re.IGNORECASE)
-
-
-def _only_base(expr: str) -> bool:
-    """式が基のテーブル（t0）の列だけを参照するか。"""
-    return all(alias == "t0" for alias in re.findall(r"\b(t\d+)\.", expr))
 
 
 def _norm_expr(expr: str) -> str:
@@ -923,6 +918,13 @@ def generate_models(
             )
 
     for fact in design.facts:
+        if fact.name in existing and fact.allocation is not None:
+            # 按分した fct の SQL は決まった形でしか作らない（ADR 0010）。既にある fct（按分した
+            # fct の作り直しや、名前のぶつかる既存の fct）を LLM に書き直させない
+            raise ValueError(
+                f"{fact.name} は既にあるので、{fact.allocation.dimension} で按分した fct として"
+                "作れません。按分した出来事の table_name を、既存の fct と別の名前にしてください"
+            )
         if fact.name in existing:
             extended = _extend_existing_fact(fact, beam, design, info) if beam is not None else None
             if extended is not None:

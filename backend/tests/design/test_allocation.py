@@ -107,3 +107,79 @@ def test_bridge_needs_the_fact_key_in_the_bridge_table(beam: BeamModel) -> None:
     }
     with pytest.raises(ValueError, match="ブリッジの表"):
         BeamModel.model_validate(data)
+
+
+def test_more_bridge_issues(beam: BeamModel) -> None:
+    """マスタの無い値・粒度のキーに入れた切り口・足し上げできない値は、按分できない。"""
+    from adp.beam import Additivity, SourceRef
+
+    event = beam.events[0]
+    promotion = event.dimensions[2]
+    promotion.business_key = SourceRef(table="raw.order_promotions", column="promotion_id")
+    event.grain_keys = ["order_line_id", "applied_promotion"]
+    measure = event.measure("sales_amount")
+    assert measure is not None
+    measure.additivity = Additivity.SEMI_ADDITIVE
+    issues = beam.finalize_issues()
+    assert any("マスタの無い値" in i for i in issues)
+    assert any("粒度のキー（grain_keys）に入れません" in i for i in issues)
+    assert any("足し上げできない値" in i for i in issues)
+
+
+def test_measure_outside_the_base_table_is_a_blocker(beam: BeamModel) -> None:
+    """1 行の元の表以外（注文やブリッジ）の値は、既に値ごと・注文ごとの値なので按分しない。"""
+    from adp.beam import SourceRef
+
+    measure = beam.events[0].measure("sales_amount")
+    assert measure is not None
+    measure.source = SourceRef(table="raw.orders", column="order_id")
+    design = DesignBuilder(BridgeSchema()).build(beam)
+    assert any("1 行の元の表の列ではないので" in i.message for i in design.blockers)
+
+
+def test_existing_fact_is_not_rewritten(beam: BeamModel, tmp_path: Path) -> None:
+    """按分した fct が既にある（名前のぶつかる既存の fct を含む）ときは、書き直させずに止める。"""
+    from adp.generation import generate_models
+
+    class Info:
+        warehouse_dir = tmp_path
+
+        def existing_models(self) -> set[str]:
+            stg = {f"stg_{t}" for t in ("order_items", "orders", "order_promotions", "products")}
+            stg |= {"stg_promotions", "dim_product", "dim_promotion", "dim_order_status"}
+            return stg | {"fct_order_line_promotions"}
+
+        def existing_columns(self, model: str) -> set[str]:
+            return {"category", "promotion_name", "order_status"}
+
+    design = DesignBuilder(BridgeSchema()).build(beam)
+    with pytest.raises(ValueError, match="按分した fct として作れません"):
+        generate_models(design, Info(), beam)  # type: ignore[arg-type]
+
+
+def test_reconciliation_catches_wrong_weights_and_sums(beam: BeamModel) -> None:
+    """生成した突合テストの SQL が、重みの合計のずれと合計の不一致で行を返す。"""
+    import re
+
+    import duckdb
+
+    [fact] = DesignBuilder(BridgeSchema()).build(beam).facts
+    sql = re.sub(r"\{\{ ref\('(\w+)'\) \}\}", r"\1", reconciliation_test(fact).content)
+    con = duckdb.connect()
+    con.execute(
+        "create table stg_order_items as select * from (values (1, 2, 100, 0), (2, 1, 50, 0))"
+        " t(order_item_id, quantity, unit_price, discount_amount)"
+    )
+
+    def fails(rows: str) -> bool:
+        con.execute(
+            "create or replace table fct_order_line_promotions as select * from (values "
+            f"{rows}) t(order_line_id, applied_promotion_key, sales_amount, allocation_weight)"
+        )
+        return bool(con.execute(sql).fetchall())
+
+    # 明細 1（200 円）は 2 つのプロモーションで半分ずつ、明細 2（50 円）は付かない
+    assert not fails("(1, 'a', 100.0, 0.5), (1, 'b', 100.0, 0.5), (2, 'u', 50.0, 1.0)")
+    assert fails("(1, 'a', 200.0, 1.0), (1, 'b', 200.0, 1.0), (2, 'u', 50.0, 1.0)")  # 二重計上
+    assert fails("(1, 'a', 100.0, 0.5), (1, 'b', 100.0, 0.4), (2, 'u', 60.0, 1.0)")
+    assert fails("(1, 'a', 100.0, 0.5), (1, 'b', 100.0, 0.5)")  # 元の行が欠ける
