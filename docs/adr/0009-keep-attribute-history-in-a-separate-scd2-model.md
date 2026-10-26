@@ -101,4 +101,5 @@ v5（オーナーの指示、2026-10-12、#141）で、履歴の要る属性を�
 
 ## 追記
 
-- 2026-10-26: 後続の PR（#224）で生成器・検査を実装した。「守らせ方」の「今は無い」は古くなった。今の守らせ方は、生成器（`adp.generation.dbt.history_files`。snapshot・履歴モデル・semantic model）、生成するテスト（`dbt_utils.mutually_exclusive_ranges` で版の隙間・重なり）、`make dbt-build` の規約の検査（`adp.generation.conventions`。今の値の dim と同じ entity、ディメンション名の重なり、期間のテスト、各キーの版が暦の全体を覆うこと、不明メンバー）と、オントロジーの照合（概念の従属の `history_model` が snapshot を経由して源泉を読むこと）。規約は modeling-conventions の「SCD」（#225）。実装で分かったこと: dbt snapshot の版の始まりは源泉の更新日時か実行時刻なので、最初の版は暦の始まりまで広げないと、更新日時より前の出来事が当時の値に結合されない（`mutually_exclusive_ranges` だけでは見つからないので、規約の検査で止める）。暦の範囲は、生成物の Jinja の許可リストを広げずに `dim_date` から取る。
+- 2026-10-26: 後続の PR（#224）で生成器・検査を実装した。「守らせ方」の「今は無い」は古くなった。今の守らせ方は、生成器（`adp.generation.dbt.history_files`。snapshot・履歴モデル・semantic model）、生成するテスト（`dbt_utils.mutually_exclusive_ranges` で版の隙間・重なり）、`make dbt-build` の規約の検査（`adp.generation.conventions`。今の値の dim と同じ entity、ディメンション名の重なり、期間のテスト、各キーの版が暦の全体を覆うこと、不明メンバー）と、オントロジーの照合（概念の従属の `history_model` が snapshot を経由して源泉を読むこと）。規約は modeling-conventions の「SCD」（#225）。
+- 2026-10-26: 実装で分かったこと。案 A の「最初の版は暦の始まりまで広げる」は、`mutually_exclusive_ranges` では確かめられない（版どうしの隙間・重なりしか見ない）ので、規約の検査で止める。暦の範囲は、生成物の Jinja の許可リストを広げずに `dim_date` から取る。
