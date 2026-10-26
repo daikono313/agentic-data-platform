@@ -288,8 +288,8 @@ def generate(n_orders: int, seed: int) -> Tables:
     )
 
 
-SECOND_PROMOTION_RATE = 0.3
-"""プロモーションの付いた注文のうち、注文日に有効なほかのプロモーションがあるものに、
+SECOND_PROMOTION_RATE = 0.8
+"""プロモーションの付いた注文のうち、注文日に有効なほかのポイント付与のプロモーションがあるものに、
 2 つ目も付く割合。"""
 
 
@@ -297,7 +297,8 @@ def _order_promotions(
     seed: int, orders: list[tuple[object, ...]], promotions: list[tuple[object, ...]]
 ) -> list[tuple[object, ...]]:
     """注文ごとに適用されたプロモーション（1 件目は orders.promotion_id と同じ）。一部の注文には、
-    注文日に有効な 2 つ目のプロモーションも付く（多対多。ADR 0010）。"""
+    注文日に有効な 2 つ目のプロモーションも付く（多対多。ADR 0010）。値引額（order_items）は
+    1 件目の割引率だけで決まるので、2 つ目は値引きの無いポイント付与（point_up）から選ぶ。"""
     rng = _rng(seed, "order_promotions")
     rows: list[tuple[object, ...]] = []
     for order in orders:
@@ -306,7 +307,11 @@ def _order_promotions(
             continue
         rows.append((len(rows) + 1, order_id, first))
         d = order[3].date()  # type: ignore[attr-defined]
-        others = [p[0] for p in promotions if p[4] <= d <= p[5] and p[0] != first]  # type: ignore[operator]
+        others = [
+            p[0]
+            for p in promotions
+            if p[4] <= d <= p[5] and p[0] != first and p[2] == "point_up"  # type: ignore[operator]
+        ]
         if others and rng.random() < SECOND_PROMOTION_RATE:
             rows.append((len(rows) + 1, order_id, rng.choice(others)))
     return rows

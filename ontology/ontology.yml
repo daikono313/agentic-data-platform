@@ -377,7 +377,7 @@ relations:
   optional: false
 - from: promotion
   to: promotion_application
-  verb: 適用される
+  verb: 使われる
   via: raw.order_promotions.promotion_id
   cardinality: one_to_many
   optional: false

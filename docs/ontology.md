@@ -65,7 +65,7 @@ flowchart LR
   c_store -- "持つ" --> c_stock_level
   c_product -- "持つ" --> c_stock_level
   c_order -- "受ける" --> c_promotion_application
-  c_promotion -- "適用される" --> c_promotion_application
+  c_promotion -- "使われる" --> c_promotion_application
   k_0["channel が online / app の店舗は都道府県・地方を持たない"]:::constraint
   k_0 -.- c_store
   k_1["1 明細でも返品があれば order_status は returned"]:::constraint
@@ -126,7 +126,7 @@ flowchart LR
 | 店舗・チャネル | 持つ | 在庫数 | `raw.inventory.store_id` | - |
 | 商品 | 持つ | 在庫数 | `raw.inventory.product_id` | - |
 | 注文 | 受ける | プロモーションの適用 | `raw.order_promotions.order_id` | 注文 1 件にプロモーションの適用が複数、プロモーションの適用には必ず注文がある |
-| プロモーション | 適用される | プロモーションの適用 | `raw.order_promotions.promotion_id` | プロモーション 1 件にプロモーションの適用が複数、プロモーションの適用には必ずプロモーションがある |
+| プロモーション | 使われる | プロモーションの適用 | `raw.order_promotions.promotion_id` | プロモーション 1 件にプロモーションの適用が複数、プロモーションの適用には必ずプロモーションがある |
 
 ## 制約
 
