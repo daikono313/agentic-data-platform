@@ -414,3 +414,15 @@ async def test_closing_sentences_are_removed_when_a_question_is_shown() -> None:
     # 質問が無い発言では残す
     await collect(Interviewer(runner, LLMSettings()), state, "高い")
     assert state.messages[-1].text == "ご回答をお待ちしています。"
+
+
+def test_bridge_is_not_in_the_tool_schema() -> None:
+    """多対多の切り口（bridge。ADR 0010）は、インタビューで聞くようにする（C10）までは tool の
+    入力スキーマに出さない。"""
+    import json
+
+    from adp.beam import BusinessEvent
+    from adp.interview.tools import _schema
+
+    text = json.dumps(_schema(BusinessEvent), ensure_ascii=False)
+    assert '"bridge"' not in text and '"Bridge"' not in text

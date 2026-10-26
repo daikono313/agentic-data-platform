@@ -31,10 +31,19 @@ def _remaining(beam: BeamModel, check: Callable[[BeamModel], list[str]] | None =
     return f"確定までに残っている課題（{len(issues)} 件）:\n{head}{more}"
 
 
+_NOT_ASKED = {"Dimension": ("bridge",)}
+"""インタビューではまだ聞かない項目（tool の入力スキーマに出さない）。多対多の切り口（bridge。
+ADR 0010）は生成器が扱えるが、聞き方はインタビューの変更（C10）で足すまで出さない。"""
+
+
 def _schema(model: type[Any]) -> dict[str, Any]:
     """`{"data": <model>}` の入力スキーマ。$ref が解決できるよう $defs はルートに置く。"""
     schema = model.model_json_schema(mode="validation")
     defs = schema.pop("$defs", {})
+    for name, fields in _NOT_ASKED.items():
+        for field in fields:
+            defs.get(name, {}).get("properties", {}).pop(field, None)
+    defs.pop("Bridge", None)
     return {
         "type": "object",
         "properties": {"data": schema},
