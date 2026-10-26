@@ -147,7 +147,7 @@ def _foreign_keys(m: _Model, dim_entities: set[str]) -> list[Violation]:
                         f"外部キー {c} に not_null がありません（NULL は不明メンバーのキーにする）",
                     )
                 )
-            entity = spec.get("entity") or {}
+            entity = _column_entity(c, spec)
             if entity.get("type") == "foreign" and entity.get("name") not in dim_entities:
                 out.append(
                     Violation(
@@ -173,10 +173,18 @@ def _current_dims(models: list[_Model]) -> dict[str, _Model]:
     return {e: m for m in models if m.is_dim and (e := _entity(m, "primary"))}
 
 
+def _column_entity(column: str, spec: dict[str, Any]) -> dict[str, Any]:
+    """列の entity の設定。略記（`entity: unique`）は {type, name: 列名} として読む。"""
+    entity = spec.get("entity") or {}
+    if isinstance(entity, str):
+        return {"type": entity, "name": column}
+    return entity if isinstance(entity, dict) else {}
+
+
 def _entity_column(m: _Model, kind: str) -> tuple[str, str] | None:
     """その種類（primary・natural）の entity を置いた (列, entity の名前)。"""
     for c, spec in m.columns.items():
-        entity = spec.get("entity") or {}
+        entity = _column_entity(c, spec)
         if entity.get("type") == kind:
             return c, str(entity.get("name"))
     return None
@@ -242,6 +250,47 @@ def _history_violations(models: list[_Model]) -> list[Violation]:
     return out
 
 
+def _unique_entity_violations(manifest: dict[str, Any], models: list[_Model]) -> list[Violation]:
+    """`type: unique` の entity（列の entity と、役割の derived_semantics）の列に、`unique` の
+    テストがあるか（ADR 0010）。偽って unique と宣言すると、MetricFlow の検証は通るのに、結合で
+    行が増えて二重計上する。"""
+    by_node = {f"model.{m.node.get('package_name', 'adp')}.{m.name}": m for m in models}
+    by_name = {m.name: m for m in models}
+    # 列の entity も、dbt が semantic model の entities に入れる（expr は列名か None）
+    found: list[tuple[_Model, str, str]] = []  # (モデル, entity, 列)
+    for sm in (manifest.get("semantic_models") or {}).values():
+        nodes = (sm.get("depends_on") or {}).get("nodes") or []
+        owners = (by_node.get(n) or by_name.get(n.rpartition(".")[2]) for n in nodes)
+        owner = next((o for o in owners if o is not None), None)
+        if owner is None:
+            continue
+        for e in sm.get("entities") or []:
+            if e.get("type") == "unique":
+                found.append((owner, str(e.get("name")), str(e.get("expr") or e.get("name"))))
+    out: list[Violation] = []
+    for name, entity, column in sorted({(m.name, e, c) for m, e, c in found}):
+        m = by_name[name]
+        if column not in m.columns:
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    f"unique の entity {entity} の式 {column} が列ではありません"
+                    "（unique のテストで確かめられない）",
+                )
+            )
+        elif "unique" not in m.tests(column):
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    f"unique の entity {entity} の列 {column} に unique のテストがありません"
+                    "（偽りの宣言は二重計上になる）",
+                )
+            )
+    return out
+
+
 def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
     """manifest だけで分かる違反（テスト・entity・列名）。"""
     models = _marts(manifest)
@@ -261,7 +310,7 @@ def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
                         f"列名 {', '.join(reserved)} は時間の粒度の名前と衝突します",
                     )
                 )
-    return out + _history_violations(models)
+    return out + _history_violations(models) + _unique_entity_violations(manifest, models)
 
 
 def _literal(value: object) -> str:
