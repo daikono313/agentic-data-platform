@@ -1,0 +1,10 @@
+# adp.cleansing により生成（warehouse/cleansing/raw.order_promotions.yml）。手で編集しない（make cleansing）
+version: 2
+models:
+- name: stg_order_promotions
+  description: 注文に適用されたプロモーション（raw.order_promotions を整形）
+  columns:
+  - name: order_promotion_id
+    data_tests:
+    - unique
+    - not_null

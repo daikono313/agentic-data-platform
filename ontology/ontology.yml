@@ -293,6 +293,13 @@ concepts:
   source: raw.inventory
   key: inventory_id
   attributes: []
+- name: promotion_application
+  label: プロモーションの適用
+  domain: sales
+  kind: event
+  source: raw.order_promotions
+  key: order_promotion_id
+  attributes: []
 relations:
 - from: customer
   to: order
@@ -362,6 +369,18 @@ relations:
   to: stock_level
   verb: 持つ
   via: raw.inventory.product_id
+- from: order
+  to: promotion_application
+  verb: 受ける
+  via: raw.order_promotions.order_id
+  cardinality: one_to_many
+  optional: false
+- from: promotion
+  to: promotion_application
+  verb: 適用される
+  via: raw.order_promotions.promotion_id
+  cardinality: one_to_many
+  optional: false
 constraints:
 - concept: store
   text: channel が online / app の店舗は都道府県・地方を持たない
@@ -375,3 +394,5 @@ constraints:
   text: 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。
 - concept: stock_level
   text: 店舗 × 商品の、期間の終わりの在庫数。入出庫の増減を積み上げ、棚卸で数えた数に置き換える。期首の在庫は記録の外にあるので、最初の棚卸より前の期間は出さない
+- concept: promotion_application
+  text: 1 注文に複数のプロモーションが付くことがある。orders.promotion_id は 1 件目だけを持つ。プロモーション別の金額は、注文の金額を付いたプロモーションの数で按分して出す（ADR 0010）

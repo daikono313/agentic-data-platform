@@ -69,6 +69,9 @@ class Tables:
     reviews: list[tuple[object, ...]]
     """商品レビュー（明細の一部にだけある）。オントロジーにも dbt の sources にも無い、
     新しく届いた源泉の例（design-doc の S5。#118）。自由記述の列は持たない。"""
+    order_promotions: list[tuple[object, ...]]
+    """注文に適用されたプロモーション（1 注文に複数ありうる。多対多の切り口の例。ADR 0010・#143）。
+    orders.promotion_id は 1 件目だけを持つ。"""
 
 
 # カテゴリごとの返品しやすさ（明細単位の確率）と返品理由の重み
@@ -268,6 +271,7 @@ def generate(n_orders: int, seed: int) -> Tables:
 
     inventory = _inventory(seed, max(100, n_orders // 3), products, stores)
     reviews = _reviews(seed, orders, items, products)
+    order_promotions = _order_promotions(seed, orders, promotions)
     return Tables(
         customers,
         products,
@@ -280,7 +284,32 @@ def generate(n_orders: int, seed: int) -> Tables:
         returns,
         inventory,
         reviews,
+        order_promotions,
     )
+
+
+SECOND_PROMOTION_RATE = 0.3
+"""プロモーションの付いた注文のうち、注文日に有効なほかのプロモーションがあるものに、
+2 つ目も付く割合。"""
+
+
+def _order_promotions(
+    seed: int, orders: list[tuple[object, ...]], promotions: list[tuple[object, ...]]
+) -> list[tuple[object, ...]]:
+    """注文ごとに適用されたプロモーション（1 件目は orders.promotion_id と同じ）。一部の注文には、
+    注文日に有効な 2 つ目のプロモーションも付く（多対多。ADR 0010）。"""
+    rng = _rng(seed, "order_promotions")
+    rows: list[tuple[object, ...]] = []
+    for order in orders:
+        order_id, first = order[0], order[4]
+        if first is None:
+            continue
+        rows.append((len(rows) + 1, order_id, first))
+        d = order[3].date()  # type: ignore[attr-defined]
+        others = [p[0] for p in promotions if p[4] <= d <= p[5] and p[0] != first]  # type: ignore[operator]
+        if others and rng.random() < SECOND_PROMOTION_RATE:
+            rows.append((len(rows) + 1, order_id, rng.choice(others)))
+    return rows
 
 
 # カテゴリごとの評価（1〜5）の重み
@@ -402,6 +431,7 @@ DDL = {
         moved_at TIMESTAMP, movement_type VARCHAR, quantity INTEGER, updated_at TIMESTAMP""",
     "reviews": """review_id INTEGER, order_item_id INTEGER, product_id INTEGER,
         customer_id INTEGER, rating INTEGER, reviewed_at TIMESTAMP""",
+    "order_promotions": """order_promotion_id INTEGER, order_id INTEGER, promotion_id INTEGER""",
 }
 
 

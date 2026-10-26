@@ -66,6 +66,12 @@ sources:
           - {name: quantity, description: 数量}
           - {name: unit_price, description: 販売単価（円・税抜）}
           - {name: discount_amount, description: 値引額（円・税抜）}
+      - name: order_promotions
+        description: 注文に適用されたプロモーション（1 注文に複数ありうる。orders.promotion_id は 1 件目だけ。ADR 0010）
+        columns:
+          - {name: order_promotion_id, description: 注文プロモーションID, data_tests: [unique, not_null]}
+          - {name: order_id, description: 注文ID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'orders')", field: order_id}}}]}
+          - {name: promotion_id, description: プロモーションID, data_tests: [not_null, {relationships: {arguments: {to: "source('raw', 'promotions')", field: promotion_id}}}]}
       - name: payments
         description: 支払（How）
         columns:
