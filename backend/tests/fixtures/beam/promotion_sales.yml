@@ -1,0 +1,97 @@
+schema_version: 1
+name: promotion_sales
+title: プロモーション別の売上
+request: プロモーションごとの売上を見たい（1 つの注文に複数のプロモーションが付くことがある）
+events:
+  - name: promotion_applies_to_order_line
+    table_name: order_line_promotions
+    label: 注文明細にプロモーションが付く
+    subject: プロモーション
+    verb: 付く
+    object: 注文明細
+    story_type: discrete
+    grain: 注文明細 1 行 × 付いたプロモーション
+    grain_keys: [order_line_id]
+    degenerate_dimensions:
+      - name: order_line_id
+        label: 注文明細番号
+        source: {table: raw.order_items, column: order_item_id}
+    source_tables: [raw.orders, raw.order_items, raw.order_promotions]
+    priority: medium
+    impact: medium
+    effort: medium
+    measures:
+      - name: sales_amount
+        label: 売上金額（税抜・値引後。按分）
+        aggregation: sum
+        unit: 円
+        source: {table: raw.order_items, expr: "quantity * unit_price - discount_amount"}
+        availability: available
+      - name: order_line_count
+        label: 注文明細の件数（按分）
+        aggregation: count
+        unit: 件
+        availability: available
+    dimensions:
+      - w: when
+        name: date
+        label: 注文日
+        time_grain: day
+        fact_key: {table: raw.orders, column: ordered_at}
+      - w: what
+        name: product
+        label: 商品
+        business_key: {table: raw.products, column: product_id}
+        fact_key: {table: raw.order_items, column: product_id}
+        attributes:
+          - name: category
+            label: 商品カテゴリ
+            source: {table: raw.products, column: category}
+            availability: available
+      - w: why
+        name: promotion
+        role: applied_promotion
+        label: 適用されたプロモーション
+        business_key: {table: raw.promotions, column: promotion_id}
+        fact_key: {table: raw.order_promotions, column: promotion_id}
+        bridge:
+          table: raw.order_promotions
+          event_key: {table: raw.orders, column: order_id}
+          bridge_key: order_id
+        attributes:
+          - name: promotion_name
+            label: プロモーション名
+            source: {table: raw.promotions, column: promotion_name}
+            availability: available
+      - w: how
+        name: order_status
+        label: 注文ステータス
+        business_key: {table: raw.orders, column: order_status}
+        fact_key: {table: raw.orders, column: order_status}
+        attributes:
+          - name: order_status
+            label: 注文ステータス
+            source: {table: raw.orders, column: order_status}
+            availability: available
+metrics:
+  - name: promotion_sales
+    label: プロモーション別の売上金額
+    question: プロモーションごとの売上を見たい
+    framed_question: プロモーション別の売上金額（税抜・値引後。付いたプロモーションの数で按分）はいくらか
+    type: simple
+    event: promotion_applies_to_order_line
+    measure: sales_amount
+    filter: キャンセルされた注文を除く
+    filters:
+      - {ref: order_status.order_status, operator: '!=', values: [cancelled]}
+    group_by: [applied_promotion.promotion_name, date.month]
+    status: confirmed
+  - name: promotion_order_lines
+    label: プロモーション別の注文明細の件数
+    question: プロモーションごとの件数も見たい
+    framed_question: プロモーション別の注文明細の件数（付いたプロモーションの数で按分）はいくつか
+    type: simple
+    event: promotion_applies_to_order_line
+    measure: order_line_count
+    group_by: [applied_promotion.promotion_name]
+    status: confirmed

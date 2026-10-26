@@ -3,6 +3,7 @@
 from adp.design.builder import DesignBuilder, ForeignKey, SchemaInfo
 from adp.design.er import er_diagram
 from adp.design.models import (
+    AllocationDesign,
     Column,
     ColumnRole,
     DesignIssue,
@@ -17,6 +18,7 @@ from adp.design.models import (
 )
 
 __all__ = [
+    "AllocationDesign",
     "Column",
     "ColumnRole",
     "DesignBuilder",

@@ -709,7 +709,7 @@ def _extend_existing_fact(
     既存の列・指標は変えない。
     """
     model_file = getattr(info, "model_file", None)
-    if model_file is None or fact.snapshot is not None:
+    if model_file is None or fact.snapshot is not None or fact.allocation is not None:
         return (
             None  # 定期スナップショットの SQL は、列を足すと作り直しになる（エージェントに任せる）
         )

@@ -162,7 +162,8 @@
               "table": "raw.orders",
               "column": "customer_id",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "what",
@@ -218,7 +219,8 @@
               "table": "raw.order_items",
               "column": "product_id",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "when",
@@ -235,7 +237,8 @@
               "table": "raw.orders",
               "column": "ordered_at",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "where",
@@ -288,7 +291,8 @@
               "table": "raw.orders",
               "column": "store_id",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "why",
@@ -326,7 +330,8 @@
               "table": "raw.orders",
               "column": "promotion_id",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "how",
@@ -365,7 +370,8 @@
               "table": "raw.orders",
               "column": "order_status",
               "expr": null
-            }
+            },
+            "bridge": null
           },
           {
             "w": "how",
@@ -403,7 +409,8 @@
               "table": "raw.orders",
               "column": "payment_method",
               "expr": null
-            }
+            },
+            "bridge": null
           }
         ],
         "degenerate_dimensions": [

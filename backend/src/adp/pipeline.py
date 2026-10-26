@@ -341,7 +341,7 @@ class GenerationPipeline:
         if ontology is not None:
             # 作った fct / dim を、その源泉の概念に書き込む（fact / dim の整理。#69）
             links: list[tuple[str, str, ConceptKind]] = [
-                (f.base.table, f.name, concept_kind(f)) for f in design.facts
+                (f.concept_source, f.name, concept_kind(f)) for f in design.facts
             ]
             links += [(d.base.table, d.name, "entity") for d in design.dims if not d.exists]
             ontology, linked = link_models(ontology, links)

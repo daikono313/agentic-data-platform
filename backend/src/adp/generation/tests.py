@@ -99,6 +99,8 @@ def dim_column_tests(dim: DimTable, info: WarehouseInfo) -> dict[str, list[Any]]
 
 
 def reconciliation_test(fact: FactTable) -> GeneratedFile:
+    if fact.allocation is not None:
+        return _allocation_reconciliation_test(fact)
     base_measures = [
         c
         for c in fact.columns
@@ -129,6 +131,55 @@ f as (
 
 select *
 from s, f
+where {conds}
+"""
+    return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
+
+
+def _allocation_reconciliation_test(fact: FactTable) -> GeneratedFile:
+    """按分した fct（ADR 0010）の突合: 元の出来事の行の数と、重みを掛けた measure の合計が、
+    ベースのソースと一致し、元の行ごとの重みの合計が 1 であること。"""
+    a = fact.allocation
+    assert a is not None
+    measures = {
+        n: e for n, e in a.source_measures.items() if set(re.findall(r"\b(t\d+)\.", e)) <= {"t0"}
+    }
+    sums_src = "".join(f", sum({e}) as {n}" for n, e in measures.items())
+    sums_fct = "".join(f", sum({n}) as {n}" for n in measures)
+    grain = ", ".join(a.source_grain)
+    conds = " or ".join(
+        ["s.n <> f.n", "w.bad > 0"]
+        + [
+            f"abs(coalesce(s.{n}, 0) - coalesce(f.{n}, 0))"
+            f" > 1e-6 * greatest(1, abs(coalesce(s.{n}, 0)))"
+            for n in measures
+        ]
+    )
+    sql = f"""-- adp により生成。{fact.name} は {a.dimension} で按分した fct（ADR 0010）。
+-- 元の出来事の行の数と measure の合計がベースのソースと一致し、
+-- 元の行ごとの重みの合計が 1 であること
+with s as (
+    select count(*) as n{sums_src}
+    from {{{{ ref('{fact.base.model}') }}}} as t0
+),
+
+f as (
+    select count(distinct ({grain})) as n{sums_fct}
+    from {{{{ ref('{fact.name}') }}}}
+),
+
+w as (
+    select count(*) as bad
+    from (
+        select {grain}, sum({a.weight_column}) as total
+        from {{{{ ref('{fact.name}') }}}}
+        group by {grain}
+    ) as g
+    where abs(g.total - 1) > 1e-9
+)
+
+select *
+from s, f, w
 where {conds}
 """
     return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
@@ -184,7 +235,9 @@ def unit_test(
     beam: BeamModel, fact: FactTable, info: WarehouseInfo, example: EventExample, index: int
 ) -> dict[str, Any] | None:
     event = beam.event(fact.event)
-    if event is None:
+    if event is None or fact.allocation is not None:
+        # 按分した fct（ADR 0010）の unit test は後続（ブリッジに元の 1 行あたり複数の行を入れる）。
+        # 合計と重みは突合テストで確かめる
         return None
     tables = _alias_tables(fact)
     types = {a: dict(info.source_columns(t)) for a, t in tables.items()}

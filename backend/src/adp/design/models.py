@@ -24,6 +24,8 @@ class ColumnRole(StrEnum):
     """When の日時列。"""
     NATURAL_KEY = "natural_key"
     ATTRIBUTE = "attribute"
+    WEIGHT = "weight"
+    """按分した fct の重み（元の行ごとの合計が 1。ADR 0010）。"""
 
 
 class SourceTable(BaseModel):
@@ -45,6 +47,8 @@ class Join(BaseModel):
     left_column: str
     right: SourceTable
     right_column: str
+    fan_out: bool = False
+    """一対多の結合（按分した fct のブリッジ。BEAM で指定した 1 か所だけ。ADR 0010）。"""
 
 
 class Column(BaseModel):
@@ -78,6 +82,25 @@ class SnapshotDesign(BaseModel):
     """running_total の measure の列 → 値を置き換える行の条件（ソースの列の SQL）。"""
 
 
+class AllocationDesign(BaseModel):
+    """複数の値の切り口（多対多）で按分した fct の作り方（ADR 0010）。
+
+    粒度は「元の出来事の 1 行 × 付いた値」。加算できる measure には重み（元の行に付いた値の数で
+    均等に割った値。値の無い行は不明メンバーで 1）を掛ける。
+    """
+
+    dimension: str
+    """複数の値の切り口のディメンションの参照（役割の名前）。"""
+    bridge_table: str
+    """値の源泉（ブリッジ。オントロジーでは、この fct が結び付く概念の源泉）。"""
+    weight_column: str
+    """重みの列。"""
+    source_grain: list[str]
+    """元の出来事の粒度の列（重みの合計がこの粒度ごとに 1）。"""
+    source_measures: dict[str, str] = Field(default_factory=dict)
+    """重みを掛けた measure の列 → 掛ける前の式（突合テストで元の合計と比べる）。"""
+
+
 class FactTable(BaseModel):
     name: str
     event: str
@@ -94,6 +117,13 @@ class FactTable(BaseModel):
     agg_time_grain: TimeGrain | None = None
     snapshot: SnapshotDesign | None = None
     """定期スナップショット（periodic_snapshot）のときの作り方。"""
+    allocation: AllocationDesign | None = None
+    """複数の値の切り口で按分した fct のときの作り方（ADR 0010）。"""
+
+    @property
+    def concept_source(self) -> str:
+        """オントロジーで、この fct を結び付ける概念の源泉。按分した fct はブリッジの源泉。"""
+        return self.allocation.bridge_table if self.allocation else self.base.table
 
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)
