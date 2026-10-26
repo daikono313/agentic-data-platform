@@ -21,7 +21,6 @@ from adp.cleansing.render import SourceColumn
 from adp.cleansing.render import render as render_cleansing
 from adp.design import Column, ColumnRole, DimTable, FactTable, Join, PhysicalDesign, SourceTable
 from adp.design.builder import dim_key_expr, staging_model
-from adp.generation.conventions import CALENDAR_RANGE
 from adp.generation.semantic import (
     AT_EVENT_SUFFIX,
     ROW_COUNT_EXPR,
@@ -265,6 +264,14 @@ def dim_files(dim: DimTable, info: WarehouseInfo, semantic: bool = False) -> lis
 
 
 # --- 履歴（SCD Type 2。ADR 0009） ---------------------------------------------------------
+
+CALENDAR_RANGE = (
+    "cast(min(date_day) as timestamp) as starts_at,"
+    " cast(max(date_day) + interval 1 day as timestamp) as ends_at"
+)
+"""暦（dim_date）の範囲（始まりの時刻・終わりの時刻。終わりは含まない）。履歴モデルの版の期間は
+この範囲を覆う（ADR 0009）。生成器（history_files）と検査（adp.generation.conventions）で
+同じ式を使う。"""
 
 HISTORY_SNAPSHOT_SCHEMA = "snapshots"
 """snapshot を書く dbt の schema（サンプルデータを作り直すときに消す）。"""
