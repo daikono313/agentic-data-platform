@@ -242,6 +242,50 @@ def _history_violations(models: list[_Model]) -> list[Violation]:
     return out
 
 
+def _unique_entity_violations(manifest: dict[str, Any], models: list[_Model]) -> list[Violation]:
+    """`type: unique` の entity（列の entity と、役割の derived_semantics）の列に、`unique` の
+    テストがあるか（ADR 0010）。偽って unique と宣言すると、MetricFlow の検証は通るのに、結合で
+    行が増えて二重計上する。"""
+    by_node = {f"model.{m.node.get('package_name', 'adp')}.{m.name}": m for m in models}
+    by_name = {m.name: m for m in models}
+    found: list[tuple[_Model, str, str]] = []  # (モデル, entity, 列)
+    for m in models:
+        for c, spec in m.columns.items():
+            entity = spec.get("entity") or {}
+            if entity.get("type") == "unique":
+                found.append((m, str(entity.get("name")), c))
+    for sm in (manifest.get("semantic_models") or {}).values():
+        nodes = (sm.get("depends_on") or {}).get("nodes") or []
+        owner = next((by_node.get(n) or by_name.get(n.rpartition(".")[2]) for n in nodes), None)
+        if owner is None:
+            continue
+        for e in sm.get("entities") or []:
+            if e.get("type") == "unique":
+                found.append((owner, str(e.get("name")), str(e.get("expr") or e.get("name"))))
+    out: list[Violation] = []
+    for name, entity, column in sorted({(m.name, e, c) for m, e, c in found}):
+        m = by_name[name]
+        if column not in m.columns:
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    f"unique の entity {entity} の式 {column} が列ではありません"
+                    "（unique のテストで確かめられない）",
+                )
+            )
+        elif "unique" not in m.tests(column):
+            out.append(
+                Violation(
+                    m.name,
+                    "テスト（必須）",
+                    f"unique の entity {entity} の列 {column} に unique のテストがありません"
+                    "（偽りの宣言は二重計上になる）",
+                )
+            )
+    return out
+
+
 def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
     """manifest だけで分かる違反（テスト・entity・列名）。"""
     models = _marts(manifest)
@@ -261,7 +305,7 @@ def structural_violations(manifest: dict[str, Any]) -> list[Violation]:
                         f"列名 {', '.join(reserved)} は時間の粒度の名前と衝突します",
                     )
                 )
-    return out + _history_violations(models)
+    return out + _history_violations(models) + _unique_entity_violations(manifest, models)
 
 
 def _literal(value: object) -> str:
