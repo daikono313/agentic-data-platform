@@ -147,7 +147,7 @@ def _foreign_keys(m: _Model, dim_entities: set[str]) -> list[Violation]:
                         f"外部キー {c} に not_null がありません（NULL は不明メンバーのキーにする）",
                     )
                 )
-            entity = spec.get("entity") or {}
+            entity = _column_entity(c, spec)
             if entity.get("type") == "foreign" and entity.get("name") not in dim_entities:
                 out.append(
                     Violation(
@@ -173,10 +173,18 @@ def _current_dims(models: list[_Model]) -> dict[str, _Model]:
     return {e: m for m in models if m.is_dim and (e := _entity(m, "primary"))}
 
 
+def _column_entity(column: str, spec: dict[str, Any]) -> dict[str, Any]:
+    """列の entity の設定。略記（`entity: unique`）は {type, name: 列名} として読む。"""
+    entity = spec.get("entity") or {}
+    if isinstance(entity, str):
+        return {"type": entity, "name": column}
+    return entity if isinstance(entity, dict) else {}
+
+
 def _entity_column(m: _Model, kind: str) -> tuple[str, str] | None:
     """その種類（primary・natural）の entity を置いた (列, entity の名前)。"""
     for c, spec in m.columns.items():
-        entity = spec.get("entity") or {}
+        entity = _column_entity(c, spec)
         if entity.get("type") == kind:
             return c, str(entity.get("name"))
     return None
@@ -248,15 +256,12 @@ def _unique_entity_violations(manifest: dict[str, Any], models: list[_Model]) ->
     行が増えて二重計上する。"""
     by_node = {f"model.{m.node.get('package_name', 'adp')}.{m.name}": m for m in models}
     by_name = {m.name: m for m in models}
+    # 列の entity も、dbt が semantic model の entities に入れる（expr は列名か None）
     found: list[tuple[_Model, str, str]] = []  # (モデル, entity, 列)
-    for m in models:
-        for c, spec in m.columns.items():
-            entity = spec.get("entity") or {}
-            if entity.get("type") == "unique":
-                found.append((m, str(entity.get("name")), c))
     for sm in (manifest.get("semantic_models") or {}).values():
         nodes = (sm.get("depends_on") or {}).get("nodes") or []
-        owner = next((by_node.get(n) or by_name.get(n.rpartition(".")[2]) for n in nodes), None)
+        owners = (by_node.get(n) or by_name.get(n.rpartition(".")[2]) for n in nodes)
+        owner = next((o for o in owners if o is not None), None)
         if owner is None:
             continue
         for e in sm.get("entities") or []:

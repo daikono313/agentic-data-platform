@@ -279,3 +279,25 @@ def test_unique_entities_need_unique_tests() -> None:
         "unique の entity store_code の列 store_code に unique のテストがありません"
         "（偽りの宣言は二重計上になる）",
     ]
+
+
+def test_column_entity_shorthand_is_read() -> None:
+    """列の entity の略記（`entity: unique`）でも検査が落ちない。"""
+    dim = _model(
+        "dim_store",
+        {"store_key": {"entity": "primary"}, "store_code": {"entity": "unique"}},
+    )
+    roles = {
+        "semantic_model.adp.dim_store": {
+            "depends_on": {"nodes": ["model.adp.dim_store"]},
+            "entities": [{"name": "store_code", "type": "unique", "expr": None}],
+        }
+    }
+    messages = [
+        v.message
+        for v in structural_violations(_manifest(dim, *DIM_TESTS) | {"semantic_models": roles})
+    ]
+    assert messages == [
+        "unique の entity store_code の列 store_code に unique のテストがありません"
+        "（偽りの宣言は二重計上になる）"
+    ]
