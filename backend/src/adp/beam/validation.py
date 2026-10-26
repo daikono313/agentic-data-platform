@@ -172,6 +172,7 @@ def _event_issues(event: BusinessEvent, model: BeamModel) -> list[str]:
         issues += _state_issues(event, m, p)
         issues += _lag_issues(event, m, p)
     issues += _stage_issues(event, p)
+    issues += _bridge_issues(event, p)
 
     fact_keys: dict[str, set[str]] = {}
     for d in event.dimensions:
@@ -310,6 +311,19 @@ def _metric_issues(model: BeamModel) -> list[str]:
                     "ディメンション（商品など）の属性で切ってください"
                 )
             issues += _nested_filter_issues(model, metric, p)
+        bridged = [d.ref for d in event.dimensions if d.bridge is not None]
+        if (
+            bridged
+            and uses_measure
+            and not any(r.partition(".")[0] in bridged for r in metric.group_by)
+        ):
+            # 按分した fct には、複数の値で切る指標だけを置く（ADR 0010。値で切らない指標は
+            # 元の出来事の fct の既存の指標を使う）
+            issues.append(
+                f"{p} イベント {event.name} は複数の値の切り口（{', '.join(bridged)}）で按分した"
+                "出来事なので、指標の切り口にそのディメンションを入れてください。値で切らない指標は"
+                "元の出来事に置いてください"
+            )
         for ref in metric.group_by:
             kind = resolve_ref(event, ref)
             if kind is None or kind == "measure":
@@ -324,6 +338,62 @@ def _metric_issues(model: BeamModel) -> list[str]:
                         f"より細かいので切れません。{dim.time_grain} 以上の粒度で切るか、"
                         "記録の粒度（time_grain）を見直してください"
                     )
+    return issues
+
+
+def _bridge_issues(event: BusinessEvent, p: str) -> list[str]:
+    """多対多の切り口（ブリッジ）の決まり（ADR 0010）。按分した fct を作れる形か。"""
+    bridged = [d for d in event.dimensions if d.bridge is not None]
+    if not bridged:
+        return []
+    issues: list[str] = []
+    if len(bridged) > 1:
+        issues.append(
+            f"{p} 1 つの出来事に付く複数の値の切り口（bridge）は 1 つまでです"
+            f"（{', '.join(d.ref for d in bridged)}）。切り口ごとに出来事を分けてください"
+        )
+    if event.fact_type != FactType.TRANSACTION:
+        issues.append(
+            f"{p} 複数の値の切り口（bridge）で按分できるのは、1 回ごとの出来事（discrete）"
+            "だけです（時点の値や段階の日時は値の数で割れない）"
+        )
+    for d in bridged:
+        if d.masterless:
+            issues.append(
+                f"{p} 複数の値の切り口 {d.ref} はマスタの無い値なので、按分した fct を作れません。"
+                "値の一覧（マスタ）の表を business_key にしてください"
+            )
+        if d.ref in event.grain_keys:
+            issues.append(
+                f"{p} 複数の値の切り口 {d.ref} は粒度のキー（grain_keys）に入れません。粒度は元の"
+                "出来事の 1 行のキーにします（値ごとの行は按分で作る）"
+            )
+        if d.role is None:
+            issues.append(
+                f"{p} 複数の値の切り口 {d.name} に役割の名前（role。例: applied_promotion）を"
+                "付けてください（1 件目だけを指す同じディメンションと区別する）"
+            )
+    for m in event.measures:
+        if m.aggregation == Aggregation.SUM and m.additivity != Additivity.ADDITIVE:
+            issues.append(
+                f"{p} measure {m.name} は足し上げできない値（{m.additivity}）なので、値の数で"
+                "按分できません"
+            )
+        if m.aggregation == Aggregation.AVERAGE:
+            issues.append(
+                f"{p} measure {m.name} は平均（average）なので、按分した fct には置けません。"
+                "按分した合計 ÷ 按分した件数の比率（ratio）の指標で表してください"
+            )
+        if m.lag is not None:
+            issues.append(
+                f"{p} measure {m.name} は段階の間の時間なので、按分した fct には置けません"
+            )
+        if m.aggregation == Aggregation.COUNT and not m.counts_rows:
+            issues.append(
+                f"{p} measure {m.name} は列の件数（count）なので、按分の意味が決まりません。"
+                "出来事の件数（source を書かない count）か、個数の数え直し（count_distinct）に"
+                "してください"
+            )
     return issues
 
 

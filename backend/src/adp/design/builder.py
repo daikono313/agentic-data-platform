@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from adp.beam import (
+    Aggregation,
     Availability,
     BeamModel,
+    Bridge,
     BusinessEvent,
     Dimension,
     FactType,
@@ -26,6 +28,7 @@ from adp.beam import (
     W,
 )
 from adp.design.models import (
+    AllocationDesign,
     Column,
     ColumnRole,
     DesignIssue,
@@ -123,6 +126,27 @@ class _Sources:
             )
         return self.aliases[table]
 
+    def bridge(self, bridge: Bridge) -> str:
+        """複数の値の源泉（ブリッジ）への一対多の結合を足して、別名を返す（ADR 0010）。結合は
+        BEAM で指定したこの 1 か所だけで、ほかの源泉への経路は多対一のまま探す。"""
+        if bridge.table in self.aliases:
+            return self.aliases[bridge.table]
+        left = self.alias(bridge.event_key.table)
+        alias = f"t{len(self.aliases)}"
+        self.aliases[bridge.table] = alias
+        self.joins.append(
+            Join(
+                left_alias=left,
+                left_column=str(bridge.event_key.column),
+                right=SourceTable(
+                    table=bridge.table, model=staging_model(bridge.table), alias=alias
+                ),
+                right_column=bridge.bridge_key,
+                fan_out=True,
+            )
+        )
+        return alias
+
     def reachable(self, target: str) -> bool:
         try:
             self._path(target)
@@ -188,6 +212,15 @@ class _Sources:
             last = m.end()
         parts.append(qualify(ref.expr[last:]))
         return "".join(parts)
+
+
+def only_base(expr: str) -> bool:
+    """SQL の式が、1 行の元の表（別名 t0）の列だけを参照するか。"""
+    return all(alias == "t0" for alias in re.findall(r"\b(t\d+)\.", expr))
+
+
+ALLOCATION_WEIGHT = "allocation_weight"
+"""按分した fct の重みの列名（ADR 0010）。"""
 
 
 def dim_key_expr(expr: str) -> str:
@@ -341,7 +374,7 @@ class DesignBuilder:
         existing = {c.model for c in self.ontology.concepts if c.model}
         known = {c.source for c in self.ontology.concepts}
         blocked = {i.ref for i in self.issues if i.severity == IssueSeverity.BLOCKER}
-        models = [(f.base.table, f.name, concept_kind(f), f.event) for f in facts]
+        models = [(f.concept_source, f.name, concept_kind(f), f.event) for f in facts]
         models += [(d.base.table, d.name, "entity", d.dimension) for d in dims]
         new = [m for m in models if m[1] not in existing and m[0] in known and m[3] not in blocked]
         linked, _ = link_models(
@@ -401,7 +434,7 @@ class DesignBuilder:
         # 同じ源泉の出来事の fact と状態の fact（入出庫と月末在庫）は別の概念なので並べてよい
         by_base: dict[tuple[str, str], list[FactTable]] = {}
         for fact in facts:
-            by_base.setdefault((fact.base.table, concept_kind(fact)), []).append(fact)
+            by_base.setdefault((fact.concept_source, concept_kind(fact)), []).append(fact)
         for (table, _), same_base in by_base.items():
             if len(same_base) > 1:
                 names = "、".join(f"{f.name}（{f.event}）" for f in same_base)
@@ -417,7 +450,7 @@ class DesignBuilder:
         for c in self.ontology.concepts:
             by_kind.setdefault((c.kind, c.source), []).append(c)
         for fact in facts:
-            concepts = by_kind.get((concept_kind(fact), fact.base.table), [])
+            concepts = by_kind.get((concept_kind(fact), fact.concept_source), [])
             linked = [c for c in concepts if c.model]
             event = beam.event(fact.event)
             if not linked or event is None:
@@ -427,7 +460,8 @@ class DesignBuilder:
             model = concept.model or ""
             table_name = model.removeprefix("fct_")
             head = (
-                f"{fact.name} の源泉 {fact.base.table} の{KIND_LABELS[concept_kind(fact)]}は、既に"
+                f"{fact.name} の源泉 {fact.concept_source} の"
+                f"{KIND_LABELS[concept_kind(fact)]}は、既に"
                 f"「{concept.label}」（{model}）としてあります。"
             )
             if self.existing_facts is None:
@@ -515,6 +549,15 @@ class DesignBuilder:
                 return src.expr(ref)
             except JoinError as e:
                 self._blocker(f"{p} {what}: {e}", beam_ref)
+                return None
+
+        # 複数の値の切り口（ブリッジ）は、BEAM で指定した 1 か所だけ一対多で結合する（ADR 0010）
+        bridged = next((d for d in event.dimensions if d.bridge is not None), None)
+        if bridged is not None and bridged.bridge is not None:
+            try:
+                src.bridge(bridged.bridge)
+            except JoinError as e:
+                self._blocker(f"{p} 複数の値の切り口 {bridged.ref}: {e}", bridged.ref)
                 return None
 
         for dg in event.degenerate_dimensions:
@@ -628,6 +671,11 @@ class DesignBuilder:
                     grain_columns.append(f"{_time_base(gd)}_on")
                 else:
                     grain_columns.append(gd.ref if gd.masterless else f"{gd.ref}_key")
+        allocation = None
+        if bridged is not None and bridged.bridge is not None:
+            columns, grain_columns, allocation = self._allocate(
+                event, bridged, columns, grain_columns
+            )
         table_name = event.table_name or event.name
         fact = FactTable(
             name=event.fact_table,
@@ -642,10 +690,71 @@ class DesignBuilder:
             primary_entity=singular(table_name),
             agg_time_column=agg_time[0] if agg_time else None,
             agg_time_grain=agg_time[1].time_grain if agg_time else None,
+            allocation=allocation,
         )
         if event.fact_type == FactType.PERIODIC_SNAPSHOT:
             return self._snapshot(event, fact, resolve, src)
         return fact
+
+    def _allocate(
+        self,
+        event: BusinessEvent,
+        bridged: Dimension,
+        columns: list[Column],
+        grain_columns: list[str],
+    ) -> tuple[list[Column], list[str], AllocationDesign]:
+        """複数の値の切り口で按分する（ADR 0010）。粒度は「元の出来事の 1 行 × 付いた値」で、
+        重みは元の行に付いた値の数で均等に割った値（値の無い行は不明メンバーで 1）。合計（sum）の
+        measure には重みを掛ける。件数（source の無い count）は重みの合計にする（Semantic Layer）。
+        個数の数え直し（count_distinct）・最小・最大は値ごとに足しても全体と一致しないので、重みを
+        掛けない。"""
+        assert bridged.bridge is not None
+        key = f"{bridged.ref}_key"
+        source_grain = [c for c in grain_columns if c != key]
+        exprs = {c.name: c.expr for c in columns}
+        partition = ", ".join(exprs[c] for c in source_grain if c in exprs) or "1"
+        weight = f"1.0 / count(*) over (partition by {partition})"
+        sums = {m.name for m in event.measures if m.aggregation == Aggregation.SUM}
+        for c in columns:
+            if c.role == ColumnRole.MEASURE and c.source_ref in sums and not only_base(c.expr):
+                # 1 行の元の表以外（ブリッジや、粒度の粗い表）の値は、既に値ごと・まとまりごとの値
+                # なので、値の数で割ると誤る（ADR 0010）
+                self._blocker(
+                    f"[{event.name}] measure {c.source_ref} は 1 行の元の表の列ではないので、"
+                    f"{bridged.label}の数で按分できません",
+                    str(c.source_ref),
+                )
+        allocated = [
+            c.model_copy(update={"expr": f"({c.expr}) * {weight}"})
+            if c.role == ColumnRole.MEASURE and c.source_ref in sums
+            else c
+            for c in columns
+        ]
+        allocated.append(
+            Column(
+                name=ALLOCATION_WEIGHT,
+                role=ColumnRole.WEIGHT,
+                expr=weight,
+                description=f"按分の重み（元の 1 行に付いた{bridged.label}の数で均等に割った値）",
+                source_ref=bridged.ref,
+            )
+        )
+        grain = [*source_grain, key]
+        return (
+            allocated,
+            grain,
+            AllocationDesign(
+                dimension=bridged.ref,
+                bridge_table=bridged.bridge.table,
+                weight_column=ALLOCATION_WEIGHT,
+                source_grain=source_grain,
+                source_measures={
+                    c.name: c.expr
+                    for c in columns
+                    if c.role == ColumnRole.MEASURE and c.source_ref in sums
+                },
+            ),
+        )
 
     def _lag_column(self, event: BusinessEvent, m: Measure, columns: list[Column]) -> Column | None:
         """段階の間の時間（lag）の measure の列。段階の日時の列（`<base>_at`）から計算する

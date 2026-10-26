@@ -356,6 +356,44 @@ export interface Dimension {
    * イベント側のソースで、このディメンションを指すカラム（例: raw.orders.customer_id、When なら raw.orders.ordered_at）。役割ごとに異なる
    */
   fact_key?: SourceRef | null;
+  /**
+   * 1 つの出来事に複数の値が付く切り口（例: 1 注文に複数のプロモーション）のとき、値の源泉の表。金額・件数を付いた値の数で按分した、別の出来事（別の table_name）として記録する。1 回ごとの出来事だけ・1 つの出来事に 1 つまで・役割の名前（role）が要る
+   */
+  bridge?: Bridge | null;
+}
+/**
+ * 1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。
+ *
+ * 出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る。
+ * ディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。
+ *
+ * This interface was referenced by `BEAM`'s JSON-Schema
+ * via the `definition` "Bridge".
+ */
+export interface Bridge {
+  /**
+   * 値の源泉の表（例: raw.order_promotions。1 行が、注文などの 1 件に付いた値 1 つ）
+   */
+  table: string;
+  event_key: SourceRef1;
+  /**
+   * ブリッジの側で、出来事を指す列（例: order_id）
+   */
+  bridge_key: string;
+}
+/**
+ * ソースのどこから作るか。column か expr のどちらかを指定する。
+ */
+export interface SourceRef1 {
+  /**
+   * ソーステーブル（例: raw.orders）
+   */
+  table: string;
+  column?: string | null;
+  /**
+   * column で表せない場合の SQL 式
+   */
+  expr?: string | null;
 }
 /**
  * dim テーブルを持たない、fct に直接置く識別子（例: 注文番号）。

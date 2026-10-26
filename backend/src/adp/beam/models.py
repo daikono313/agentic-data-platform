@@ -362,6 +362,30 @@ class Attribute(_Base):
     )
 
 
+class Bridge(_Base):
+    """1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。
+
+    出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る。
+    ディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。
+    """
+
+    table: str = Field(
+        description="値の源泉の表（例: raw.order_promotions。1 行が、注文などの 1 件に付いた"
+        "値 1 つ）"
+    )
+    event_key: SourceRef = Field(
+        description="出来事の側で、ブリッジと結ぶ列（例: raw.orders.order_id）。出来事の 1 行から"
+        "多対一でたどれる列にする"
+    )
+    bridge_key: Identifier = Field(description="ブリッジの側で、出来事を指す列（例: order_id）")
+
+    @model_validator(mode="after")
+    def _check(self) -> Bridge:
+        if self.event_key.column is None:
+            raise ValueError("bridge の event_key は列にする（式は使えない）")
+        return self
+
+
 class Dimension(_Base):
     """6W のいずれかに対応するディメンション。"""
 
@@ -392,6 +416,12 @@ class Dimension(_Base):
         description="イベント側のソースで、このディメンションを指すカラム"
         "（例: raw.orders.customer_id、When なら raw.orders.ordered_at）。役割ごとに異なる",
     )
+    bridge: Bridge | None = Field(
+        default=None,
+        description="1 つの出来事に複数の値が付く切り口（例: 1 注文に複数のプロモーション）のとき、"
+        "値の源泉の表。金額・件数を付いた値の数で按分した、別の出来事（別の table_name）として"
+        "記録する。1 回ごとの出来事だけ・1 つの出来事に 1 つまで・役割の名前（role）が要る",
+    )
 
     @property
     def ref(self) -> str:
@@ -416,6 +446,14 @@ class Dimension(_Base):
         unknown = [h for h in self.hierarchy if h not in names]
         if unknown:
             raise ValueError(f"{self.name}: 階層に存在しない属性があります: {unknown}")
+        if self.bridge is not None:
+            if self.w == W.WHEN:
+                raise ValueError(f"{self.name}: When のディメンションに bridge は指定できません")
+            if self.fact_key is not None and self.fact_key.table != self.bridge.table:
+                raise ValueError(
+                    f"{self.name}: bridge のときの fact_key は、ブリッジの表"
+                    f"（{self.bridge.table}）の列にする"
+                )
         return self
 
 

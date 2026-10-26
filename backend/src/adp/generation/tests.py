@@ -27,6 +27,7 @@ from adp.beam import (
 )
 from adp.catalog.types import is_text_type
 from adp.design import ColumnRole, DimTable, FactTable
+from adp.design.builder import only_base
 from adp.generation.dbt import GeneratedFile, WarehouseInfo
 
 ACCEPTED_VALUES_MAX = 20
@@ -98,23 +99,26 @@ def dim_column_tests(dim: DimTable, info: WarehouseInfo) -> dict[str, list[Any]]
 # --- 突合 ----------------------------------------------------------------------------------
 
 
-def reconciliation_test(fact: FactTable) -> GeneratedFile:
-    base_measures = [
-        c
-        for c in fact.columns
-        if c.role == ColumnRole.MEASURE and set(re.findall(r"\b(t\d+)\.", c.expr)) <= {"t0"}
+def _sum_checks(measures: dict[str, str], tolerance: str) -> tuple[str, str, list[str]]:
+    """measure の合計を、ベースのソース（s）と fct（f）で比べる SQL の部品（select の列と条件）。
+    浮動小数点の合計は足す順番で末尾が変わるので、相対誤差で比べる。"""
+    sums_src = "".join(f", sum({e}) as {n}" for n, e in measures.items())
+    sums_fct = "".join(f", sum({n}) as {n}" for n in measures)
+    conds = [
+        f"abs(coalesce(s.{n}, 0) - coalesce(f.{n}, 0))"
+        f" > {tolerance} * greatest(1, abs(coalesce(s.{n}, 0)))"
+        for n in measures
     ]
-    sums_src = "".join(f", sum({c.expr}) as {c.name}" for c in base_measures)
-    sums_fct = "".join(f", sum({c.name}) as {c.name}" for c in base_measures)
-    # 浮動小数点の合計は足す順番で末尾が変わるので、相対誤差で比べる
-    conds = " or ".join(
-        ["s.n <> f.n"]
-        + [
-            f"abs(coalesce(s.{c.name}, 0) - coalesce(f.{c.name}, 0))"
-            f" > 1e-9 * greatest(1, abs(coalesce(s.{c.name}, 0)))"
-            for c in base_measures
-        ]
-    )
+    return sums_src, sums_fct, conds
+
+
+def reconciliation_test(fact: FactTable) -> GeneratedFile:
+    if fact.allocation is not None:
+        return _allocation_reconciliation_test(fact)
+    measures = {
+        c.name: c.expr for c in fact.columns if c.role == ColumnRole.MEASURE and only_base(c.expr)
+    }
+    sums_src, sums_fct, conds = _sum_checks(measures, "1e-9")
     sql = f"""-- adp により生成。{fact.name} の件数と measure の合計が、ベースのソースと一致すること
 -- （結合による行の重複・欠落の検出）
 with s as (
@@ -129,7 +133,45 @@ f as (
 
 select *
 from s, f
-where {conds}
+where {" or ".join(["s.n <> f.n", *conds])}
+"""
+    return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
+
+
+def _allocation_reconciliation_test(fact: FactTable) -> GeneratedFile:
+    """按分した fct（ADR 0010）の突合: 元の出来事の行の数と、重みを掛けた measure の合計が、
+    ベースのソースと一致し、元の行ごとの重みの合計が 1 であること。"""
+    a = fact.allocation
+    assert a is not None
+    measures = {n: e for n, e in a.source_measures.items() if only_base(e)}
+    sums_src, sums_fct, conds = _sum_checks(measures, "1e-6")
+    grain = ", ".join(a.source_grain)
+    sql = f"""-- adp により生成。{fact.name} は {a.dimension} で按分した fct（ADR 0010）。
+-- 元の出来事の行の数と measure の合計がベースのソースと一致し、
+-- 元の行ごとの重みの合計が 1 であること
+with s as (
+    select count(*) as n{sums_src}
+    from {{{{ ref('{fact.base.model}') }}}} as t0
+),
+
+f as (
+    select count(distinct ({grain})) as n{sums_fct}
+    from {{{{ ref('{fact.name}') }}}}
+),
+
+w as (
+    select count(*) as bad
+    from (
+        select {grain}, sum({a.weight_column}) as total
+        from {{{{ ref('{fact.name}') }}}}
+        group by {grain}
+    ) as g
+    where abs(g.total - 1) > 1e-9
+)
+
+select *
+from s, f, w
+where {" or ".join(["s.n <> f.n", "w.bad > 0", *conds])}
 """
     return GeneratedFile(f"tests/assert_{fact.name}_reconciles_with_source.sql", sql)
 
@@ -184,7 +226,9 @@ def unit_test(
     beam: BeamModel, fact: FactTable, info: WarehouseInfo, example: EventExample, index: int
 ) -> dict[str, Any] | None:
     event = beam.event(fact.event)
-    if event is None:
+    if event is None or fact.allocation is not None:
+        # 按分した fct（ADR 0010）の unit test は後続（ブリッジに元の 1 行あたり複数の行を入れる）。
+        # 合計と重みは突合テストで確かめる
         return None
     tables = _alias_tables(fact)
     types = {a: dict(info.source_columns(t)) for a, t in tables.items()}

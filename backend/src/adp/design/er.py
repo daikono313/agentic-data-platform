@@ -9,6 +9,7 @@ _TYPE = {
     ColumnRole.PRIMARY_KEY: "key",
     ColumnRole.FOREIGN_KEY: "key",
     ColumnRole.MEASURE: "number",
+    ColumnRole.WEIGHT: "number",
     ColumnRole.TIME: "date",
     ColumnRole.TIMESTAMP: "timestamp",
 }

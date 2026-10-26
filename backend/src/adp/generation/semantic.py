@@ -269,6 +269,10 @@ def measure_expr(measure: Measure) -> str:
     return ROW_COUNT_EXPR if measure.counts_rows else measure.name
 
 
+_NOT_ALLOCATED = (Aggregation.COUNT_DISTINCT, Aggregation.MIN, Aggregation.MAX)
+"""按分した fct でも重みを掛けない集計（ADR 0010）。"""
+
+
 def metric_definitions(
     beam: BeamModel, design: PhysicalDesign, fact: FactTable
 ) -> MetricDefinitions:
@@ -299,6 +303,21 @@ def metric_definitions(
                 "agg": _AGG[measure.aggregation],
                 "expr": measure_expr(measure),
             }
+            if fact.allocation is not None:
+                # 按分した fct（ADR 0010）: 件数は重みの合計。個数の数え直し・最小・最大は値ごとに
+                # 足しても全体と一致しない（非加算）ことを説明に書く
+                if measure.counts_rows:
+                    simple |= {"agg": "sum", "expr": fact.allocation.weight_column}
+                if measure.aggregation not in _NOT_ALLOCATED:
+                    base["description"] += (
+                        f"\n{fact.allocation.dimension} ごとの値は、付いた値の数で按分した値"
+                        "（値ごとに足すと全体と一致する）"
+                    )
+                else:
+                    base["description"] += (
+                        f"\n{fact.allocation.dimension} ごとの値は按分しない"
+                        "（値ごとに足しても全体とは一致しない）"
+                    )
             if flt:
                 simple["filter"] = flt
             nad = non_additive_dimension(event, fact, measure)
