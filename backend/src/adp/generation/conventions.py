@@ -20,6 +20,7 @@ from typing import Any
 from adp.beam import FactType
 from adp.catalog.catalog import Catalog, CatalogUnavailable, quote_ident
 from adp.catalog.types import is_text_type
+from adp.generation.dbt import CALENDAR_RANGE
 
 Query = Callable[[str], list[tuple[Any, ...]]]
 
@@ -331,13 +332,6 @@ def _types(m: _Model, query: Query) -> dict[str, str]:
     )
     return {str(c): str(t).upper() for c, t in rows}
 
-
-CALENDAR_RANGE = (
-    "cast(min(date_day) as timestamp) as starts_at,"
-    " cast(max(date_day) + interval 1 day as timestamp) as ends_at"
-)
-"""暦（dim_date）の範囲（始まりの時刻・終わりの時刻。終わりは含まない）。履歴モデルの版の期間は
-この範囲を覆う（ADR 0009）。生成器（adp.generation.dbt.history_files）と検査で同じ式を使う。"""
 
 UNKNOWN_KEY = "md5('__unknown__')"
 """不明メンバーのキー（マクロ unknown_key() の値。規約「具体例 → unit test」）。"""
