@@ -6,8 +6,8 @@ dbt プロジェクト。**ここのコード（SQL・YAML）は AI か決定的
 |---|---|
 | `cleansing/*.yml` | プロファイルから雛形 → **人間**が確認・修正（手で直してよい） |
 | `models/staging/stg_*` | `cleansing/` から決定的に生成（`make cleansing`） |
-| 生成した `fct_*` と Semantic Layer・テスト（`tests/assert_<fct>_reconciles_with_source.sql` を含む） | アプリの生成器（テンプレート）と生成エージェント（AI。テンプレートで作れない作業と修復） |
-| 共通ディメンション `models/marts/dim_*`・`_marts.yml` | 開発時に Claude Code が書いたもの（生成器の元ではない） |
+| 生成した `fct_*` と Semantic Layer・属性の履歴（`snapshots/snp_*.yml`・`models/marts/dim_*_history`）・テスト（`tests/assert_<fct>_reconciles_with_source.sql` を含む） | アプリの生成器（テンプレート）と生成エージェント（AI。テンプレートで作れない作業と修復） |
+| 共通ディメンション `models/marts/dim_*`（生成した `dim_*_history` を除く）・`_marts.yml` | 開発時に Claude Code が書いたもの（生成器の元ではない） |
 | `models/staging/_sources.yml` | Claude Code |
 | `models/staging/_<source>__sources.yml` | 取り込み（#69）と生成が書く（宣言の無い源泉の宣言） |
 | `chart_specs/` | 生成ジョブが書く（`store_sales.yml` は開発時の見本）。エージェントは書けない |
@@ -23,7 +23,7 @@ dbt プロジェクト。**ここのコード（SQL・YAML）は AI か決定的
 - `models/staging/stg_*` はクレンジング層。`cleansing/<schema>.<table>.yml`（と `cleansing/_defaults.yml`）の定義から生成する（`make cleansing`）。stg は手で書かない（ADR 0004）。
 - Semantic Layer は **latest spec** で書く。model の YAML の中に `semantic_model:` を置き、columns に `entity` / `dimension`、`metrics` を書く（[参考](https://docs.getdbt.com/docs/build/latest-metrics-spec)）。
 - サロゲートキーは `dbt_utils.generate_surrogate_key`。日付ディメンションは `dim_date`（`dbt_utils.date_spine`）。
-- SCD は Type1（上書き）のみ。
+- SCD は Type1（上書き）を基本にする。当時の値で見たい属性は、生成器が dbt の snapshot（`snapshots/snp_<表>.yml`）と履歴モデル（`models/marts/dim_<name>_history`）を作る（ADR 0009。規約は [docs/modeling-conventions.md の「SCD」](../docs/modeling-conventions.md#scd)）。
 - テスト: 全 dim / fct の PK に unique と not_null、FK に relationships、fct の粒度に `dbt_utils.unique_combination_of_columns`。BEAM の具体例があれば unit test にする。
 - 既存の dim は再利用し、カラムの追加のみ許可する。既存カラムの変更や削除はしない。
 - 変更したら `dbt build` と `dbt parse` と `mf validate-configs` を実行する。
