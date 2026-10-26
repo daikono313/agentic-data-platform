@@ -270,7 +270,8 @@ CALENDAR_RANGE = (
     " cast(max(date_day) + interval 1 day as timestamp) as ends_at"
 )
 """暦（dim_date）の範囲（始まりの時刻・終わりの時刻。終わりは含まない）。履歴モデルの版の期間は
-この範囲を覆う（ADR 0009）。生成器（adp.generation.dbt.history_files）と検査で同じ式を使う。"""
+この範囲を覆う（ADR 0009）。生成器（history_files）と検査（adp.generation.conventions）で
+同じ式を使う。"""
 
 HISTORY_SNAPSHOT_SCHEMA = "snapshots"
 """snapshot を書く dbt の schema（サンプルデータを作り直すときに消す）。"""
