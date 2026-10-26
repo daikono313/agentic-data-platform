@@ -251,3 +251,53 @@ def test_history_coverage_is_checked_against_the_calendar() -> None:
     assert any("覆っていないキーが 3 件" in m for m in messages)
     # 不明メンバーは、fct と結合する natural の entity の列で探す
     assert any('where "store_key" = ' in s for s in sqls)
+
+
+def test_unique_entities_need_unique_tests() -> None:
+    """unique の entity（列の entity・役割の derived_semantics）の列には unique のテストが要る
+    （偽って unique と宣言すると二重計上する。ADR 0010）。"""
+    dim = _model(
+        "dim_store",
+        {"store_key": {"entity": {"type": "primary", "name": "store"}}, "store_code": {}},
+    )
+    roles = {
+        "semantic_model.adp.dim_store": {
+            "depends_on": {"nodes": ["model.adp.dim_store"]},
+            "entities": [
+                {"name": "store", "type": "primary", "expr": None},
+                {"name": "pickup_store", "type": "unique", "expr": "store_key"},
+                {"name": "store_code", "type": "unique", "expr": "store_code"},
+                {"name": "computed", "type": "unique", "expr": "upper(store_code)"},
+            ],
+        }
+    }
+    manifest = _manifest(dim, *DIM_TESTS) | {"semantic_models": roles}
+    messages = [v.message for v in structural_violations(manifest)]
+    assert messages == [
+        "unique の entity computed の式 upper(store_code) が列ではありません（unique のテストで"
+        "確かめられない）",
+        "unique の entity store_code の列 store_code に unique のテストがありません"
+        "（偽りの宣言は二重計上になる）",
+    ]
+
+
+def test_column_entity_shorthand_is_read() -> None:
+    """列の entity の略記（`entity: unique`）でも検査が落ちない。"""
+    dim = _model(
+        "dim_store",
+        {"store_key": {"entity": "primary"}, "store_code": {"entity": "unique"}},
+    )
+    roles = {
+        "semantic_model.adp.dim_store": {
+            "depends_on": {"nodes": ["model.adp.dim_store"]},
+            "entities": [{"name": "store_code", "type": "unique", "expr": None}],
+        }
+    }
+    messages = [
+        v.message
+        for v in structural_violations(_manifest(dim, *DIM_TESTS) | {"semantic_models": roles})
+    ]
+    assert messages == [
+        "unique の entity store_code の列 store_code に unique のテストがありません"
+        "（偽りの宣言は二重計上になる）"
+    ]

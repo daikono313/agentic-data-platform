@@ -1,6 +1,6 @@
 # モデリング規約
 
-`warehouse/` の dbt モデルの規約。既存の共通ディメンション（`dim_*`）と、アプリが生成するモデルの両方に適用する。**この文書は人間が持ち主**で、生成器（`backend/src/adp/generation/`。AI が書くコード）はこの文書をテンプレートとして実装している。規約を変えるときは、まずこの文書を直し、それに合わせて生成器を直す。リファレンス fct（`backend/tests/fixtures/generation/reference/`。生成器とは別に書いたもの）は、生成結果と行単位で一致することをテストで確認している。整備済みの dim / fct（手で書いた共通の dim を含む）が規約に合っているかは、`make dbt-build` の最後に決まった規則で検査する（`backend/src/adp/generation/conventions.py`。主キー・粒度・外部キーのテスト、role の entity、不明メンバーの行、履歴モデルの entity・ディメンション名の重なり・版の期間）。
+`warehouse/` の dbt モデルの規約。既存の共通ディメンション（`dim_*`）と、アプリが生成するモデルの両方に適用する。**この文書は人間が持ち主**で、生成器（`backend/src/adp/generation/`。AI が書くコード）はこの文書をテンプレートとして実装している。規約を変えるときは、まずこの文書を直し、それに合わせて生成器を直す。リファレンス fct（`backend/tests/fixtures/generation/reference/`。生成器とは別に書いたもの）は、生成結果と行単位で一致することをテストで確認している。整備済みの dim / fct（手で書いた共通の dim を含む）が規約に合っているかは、`make dbt-build` の最後に決まった規則で検査する（`backend/src/adp/generation/conventions.py`。主キー・粒度・外部キーのテスト、role の entity、不明メンバーの行、履歴モデルの entity・ディメンション名の重なり・版の期間、unique の entity の列の unique のテスト）。
 
 ## レイヤー
 
@@ -20,7 +20,7 @@
 2. **データ全体**: 無ければ、源泉（未整理のものを含む）にあるかを探す
 3. **新規作成**: 2 で見つかれば、その源泉のクレンジング層（stg）と fact を新しく作る。源泉がオントロジーに無ければ、先に取り込む（オントロジーへの追加。CLAUDE.md の規約）
 
-fact / dim はオントロジーの概念と 1 対 1 にする（出来事 → fct、もの・人・場所 → dim）。同じ概念の 2 つ目のモデルは作らない（設計の段階で止まり、`make dbt-build` の検査でも落ちる）。共通の暦（`dim_date`）だけは概念を持たない。
+fact / dim はオントロジーの概念と 1 対 1 にする（出来事 → fct、もの・人・場所 → dim）。同じ概念の 2 つ目のモデルは作らない（設計の段階で止まり、`make dbt-build` の検査でも落ちる）。共通の暦（`dim_date`）だけは概念を持たない。例外は属性の履歴モデル（`dim_<name>_history`）で、dim の従属として概念に結び付ける（「SCD」）。
 
 属性の言葉（ラベル）は、オントロジーの属性のラベルにそろえる（BEAM の属性のラベルと dim の列の説明。説明は「ラベル（補足）」でもよい）。同じラベルの属性を別々に作らない。同じ値を持つ列なら `same_as` で正本を示し、意味が違えばラベルを分ける（[ADR 0006](adr/0006-make-ontology-labels-the-business-terms.md)。`make dbt-build` の検査で落ちる）。
 
@@ -91,7 +91,25 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
 
 ## SCD
 
-- MVP では Type1（上書き）のみ（design-doc R6）。BEAM で `history_required: true` の属性も Type1 で実装し、PR の未解決事項に書く。
+- Type1（上書き）を基本にする（design-doc R6）。dim は今の値だけを持つ。
+- BEAM で `history_required: true` の属性（当時の値で見たいもの）は、dim を変えずに、dbt の snapshot と履歴モデル（SCD Type 2）を足して持つ（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)）。
+  - snapshot（`snapshots/snp_<表>.yml`）はクレンジング層（stg）の行の版を記録する。stg に日時型の更新日時（`updated_at`。源泉の `updated_at` を別の名前に変えた列も含む）があればその時刻で、無ければ snapshot を実行した時刻で版を分ける（実行の間に何度か変わったときは、最後の値だけが残る）。
+  - 履歴モデル（`dim_<name>_history`）の列:
+    - 版のキー `<name>_version_key`（主キー）
+    - dim と同じキー `<name>_key`（fct の外部キーと結合する）
+    - 履歴の属性（説明は「<ラベル>（当時）」）
+    - 期間 `valid_from` 以上 `valid_to` 未満
+    - 不明メンバーの行（期間は暦の全体）
+  - 期間は、キーごとに暦（`dim_date`）の始まりから終わりまでを、隙間も重なりもなく覆う（最初の版は暦の始まりから、今の版は暦の終わりまで）。版どうしの隙間・重なりはテスト（下の「テスト（必須）」）で、暦の全体を覆うこと（今の値の dim のキーに版があることを含む）は `make dbt-build` の規約の検査で確かめる。
+  - 履歴モデルは、オントロジーでは概念の従属（`history_model`）で、概念とモデルの 1 対 1 の例外。
+  - Semantic Layer の書き方は「Semantic Layer > semantic model」。
+- 次の属性は履歴を作らず、今の値（Type1）だけを持つ（生成器が警告を出す）:
+  - 結合した表や式から来る属性
+  - 自然キーが式の dim の属性
+  - 源泉の表の名前が snapshot の名前にできない（英小文字・数字・`_` 以外を含む）dim の属性
+  - 履歴モデルや dbt の snapshot の列と名前がぶつかる属性（属性の名前が `valid_from`・`valid_to`・`<name>_key`・`<name>_version_key`、源泉の列の名前が `dbt_`・`adp_` で始まるもの）
+- 役割付きの使われ方（配送先顧客など）では、当時の値で切れない（履歴モデルは役割の無い外部キーとだけ結合する。生成器が警告を出す）。
+- snapshot を始める前の変更は復元できない。始める前の出来事は、始めた時点の値で集計する。
 
 ## テスト（必須）
 
@@ -101,6 +119,7 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
 | fct の外部キー | `relationships`（dim へ）。transaction fact では `not_null` も付ける |
 | fct の粒度 | grain_keys が1つなら主キーの `unique`、複数なら `dbt_utils.unique_combination_of_columns` |
 | 区分値 | `accepted_values`（不明メンバー行の値も含める） |
+| 履歴モデルの版の期間 | `dbt_utils.mutually_exclusive_ranges`（`lower_bound_column: valid_from`、`upper_bound_column: valid_to`、`partition_by: <name>_key`、`gaps: not_allowed`） |
 | fct の計算列 | BEAM の具体例から作る unit test |
 | fct の件数と金額 | ソースとの突合テスト（`tests/assert_<fct>_reconciles_with_source.sql`）。periodic snapshot は合計を足せないので、区切りごとに期間が途切れていないことと、記録のある期間の値（`last_value` は期間の最後の記録の値、`running_total` は、置き換える行があれば最後の記録が置き換える行の期間でその値、無ければ期間の終わりまでの記録の合計）との一致を見る（fct に行が無いものも違いにする） |
 
@@ -129,6 +148,11 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
 - When と `dim_date`
   - `dim_date` は time spine を兼ね、`date_day` を `entity: {type: primary, name: date}` にする（属性は categorical）。
   - fct の agg_time の日付列について `derived_semantics: {entities: [{type: foreign, name: date, expr: <日付列>}]}` を書く（MVP では agg_time の When だけ dim_date の属性で集計できる）。
+- 属性の履歴モデル（「SCD」）
+  - model に `primary_entity: <name>_version` を書く（期間付きのモデルには primary の entity を置けない）。
+  - `<name>_key` は `entity: {type: natural, name: <dimension name>}`（今の値の dim の primary の entity と同じ名前。fct を変えずに、agg_time の日付がその期間に入る版と結合する）。
+  - 履歴の属性は `dimension: {type: categorical, name: <属性>_at_event}`（今の値の dim と同じ名前にすると、どちらも問い合わせられなくなる。`mf validate-configs` では見つからないので、規約の検査で止める）。
+  - `valid_from` / `valid_to` は `granularity: day` と `dimension: {type: time, validity_params: {is_start: true}}`（終わりは `is_end: true`）。
 - dim の列名に `day` / `week` / `month` / `quarter` / `year` を使わない（時間粒度の名前と衝突して検証に失敗する）。
 
 ### metric
