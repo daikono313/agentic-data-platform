@@ -46,7 +46,7 @@
 - **複数ユーザーでの利用や認証。** MVP はローカルで 1 ユーザーが使う前提。
 - **本番 DWH（Snowflake / BigQuery など）への接続。** MVP は DuckDB のみ。DWH を差し替えられる設計にはするが、検証はしない。
 - **汎用 BI やダッシュボードの編集機能。** v2 で描画は入れるが、表示するのは Semantic Layer の指標を、決まった切り口・期間・チャートの種類で見る画面まで。ダッシュボードの自由なレイアウト編集、アドホックな SQL、権限管理は作らない（[ADR 0002](adr/0002-visualization-dbt-charts.md)）。
-- **一部の属性の履歴管理。** 役割付きのディメンション（配送先顧客など）と、結合した表から来る属性の履歴は作らない。snapshot を始める前の変更は復元しない（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)）。
+- **一部の属性の履歴管理。** 役割付きの使われ方（配送先顧客など）で当時の値で切ること、結合した表や式から来る属性などの履歴は扱わない（一覧は [modeling-conventions の「SCD」](modeling-conventions.md#scd)）。snapshot を始める前の変更は復元しない（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)）。
 - **EC 以外の業務での品質保証。** 動作はするかもしれないが、eval は EC 売上のみ。
 - **集計済みマート（`agg_*`）の生成。** 集計は Semantic Layer に一元化する。
 - **Canvas / Matrix の UI 上での直接編集。** 修正はチャット経由で行う。
@@ -403,7 +403,7 @@ v2 以降は、開始画面（要求の入力・既存の指標とバスマト�
 | R3 | UI は日本語。識別子は英語の snake_case。dbt の description は日本語 | 利用者とコード規約の両方に合わせる |
 | R4 | モデルは Sonnet 5.5 を既定とし、失敗時に Opus 5.5 へ上げる | コスト効率。再試行率は記録する |
 | R5 | 集計は Semantic Layer に一元化し、マートは dim / fct まで | 指標定義の二重管理を避ける |
-| R6 | SCD は Type1 を基本にする。当時の値でも見たい属性（BEAM の `history_required`）は、dbt snapshot と別の履歴モデル（SCD Type 2）で持ち、既存の dim は変えない（生成器が `warehouse/snapshots/snp_<表>.yml` と `dim_<name>_history` を作る。役割付きの使われ方・結合した表や式から来る属性の履歴は作らず、警告を出す） | 当時の値で集計する要求に、既存の dim・fct・チャートを変えずに応えるため（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)、#141） |
+| R6 | SCD は Type1 を基本にする。当時の値でも見たい属性（BEAM の `history_required`）は、dbt snapshot と別の履歴モデル（SCD Type 2）で持ち、既存の dim は変えない（生成器が `warehouse/snapshots/snp_<表>.yml` と `dim_<name>_history` を作る。履歴を作らない場合の一覧と作り方は [modeling-conventions の「SCD」](modeling-conventions.md#scd)） | 当時の値で集計する要求に、既存の dim・fct・チャートを変えずに応えるため（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)、#141） |
 | R7 | ソースに無い要求は記録して先へ進み、PR に書き、issue も起票する | インタビューを止めない |
 | R8 | Canvas / Matrix は表示のみ。修正はチャット経由 | 同期処理の複雑さを避ける |
 | R9 | /goal の開発は issue ごとに PR を作り、CI green とレビュー合格で自己マージする | [certificate.md](certificate.md) を参照 |
