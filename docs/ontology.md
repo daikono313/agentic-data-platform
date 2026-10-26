@@ -15,6 +15,7 @@ flowchart LR
     a_order["注文日時<br/>注文ステータス<br/>支払方法"]:::attr
     c_order_line(["注文明細"])
     a_order_line["販売数量<br/>販売単価<br/>値引額"]:::attr
+    c_promotion_application(["プロモーションの適用"])
   end
   subgraph d_merchandise["商品"]
     c_product("商品")
@@ -63,6 +64,8 @@ flowchart LR
   c_inventory_movement -- "動かす" --> c_product
   c_store -- "持つ" --> c_stock_level
   c_product -- "持つ" --> c_stock_level
+  c_order -- "受ける" --> c_promotion_application
+  c_promotion -- "使われる" --> c_promotion_application
   k_0["channel が online / app の店舗は都道府県・地方を持たない"]:::constraint
   k_0 -.- c_store
   k_1["1 明細でも返品があれば order_status は returned"]:::constraint
@@ -75,12 +78,14 @@ flowchart LR
   k_4 -.- c_inventory_movement
   k_5["店舗 × 商品の、期間の終わりの在庫数。入出庫の増減を積み上げ、棚卸で数えた数に置き換える。期首の在庫は記録の外にあるので、最初の棚卸より前の期間は出さない"]:::constraint
   k_5 -.- c_stock_level
+  k_6["1 注文に複数のプロモーションが付くことがある。orders.promotion_id は 1 件目だけを持つ。プロモーション別の金額は、注文の金額を付いたプロモーションの数で按分して出す（ADR 0010）"]:::constraint
+  k_6 -.- c_promotion_application
   classDef attr fill:#f4f4f5,stroke:#a1a1aa,color:#3f3f46,font-size:11px
   classDef constraint fill:#dcfce7,stroke:#22c55e,color:#14532d,font-size:11px
   classDef event fill:#166534,stroke:#14532d,color:#ffffff
   classDef entity fill:#1e3a8a,stroke:#172554,color:#ffffff
   classDef state fill:#9a3412,stroke:#7c2d12,color:#ffffff
-  class c_order,c_order_line,c_payment,c_shipment,c_return,c_inventory_movement event
+  class c_order,c_order_line,c_payment,c_shipment,c_return,c_inventory_movement,c_promotion_application event
   class c_customer,c_product,c_store,c_promotion entity
   class c_stock_level state
 ```
@@ -100,6 +105,7 @@ flowchart LR
 | 返品 `return` | 出来事 | 決済・配送・返品 | `raw.returns`（`return_id`） | 未整備 | 返品日時（`returned_at`。時刻）、返品数量（`quantity`。数値）、返品理由（`return_reason`。説明） |
 | 在庫の入出庫 `inventory_movement` | 出来事 | 在庫 | `raw.inventory`（`inventory_id`） | `fct_stock_movements` | 入出庫日時（`moved_at`。時刻）、入出庫区分（`movement_type`。説明）、入出庫数量（`quantity`。数値） |
 | 在庫数 `stock_level` | 状態 | 在庫 | `raw.inventory`（`inventory_id`） | 未整備 | - |
+| プロモーションの適用 `promotion_application` | 出来事 | 販売 | `raw.order_promotions`（`order_promotion_id`） | 未整備 | - |
 
 ## 関係
 
@@ -119,6 +125,8 @@ flowchart LR
 | 在庫の入出庫 | 動かす | 商品 | `raw.inventory.product_id` | 商品 1 件に在庫の入出庫が複数、在庫の入出庫には必ず商品がある |
 | 店舗・チャネル | 持つ | 在庫数 | `raw.inventory.store_id` | - |
 | 商品 | 持つ | 在庫数 | `raw.inventory.product_id` | - |
+| 注文 | 受ける | プロモーションの適用 | `raw.order_promotions.order_id` | 注文 1 件にプロモーションの適用が複数、プロモーションの適用には必ず注文がある |
+| プロモーション | 使われる | プロモーションの適用 | `raw.order_promotions.promotion_id` | プロモーション 1 件にプロモーションの適用が複数、プロモーションの適用には必ずプロモーションがある |
 
 ## 制約
 
@@ -130,3 +138,4 @@ flowchart LR
 | 商品 | unit_cost は標準原価で、実績原価ではない |
 | 在庫の入出庫 | 数量は入庫（receipt）が増えた数（プラス）、移動出庫（transfer_out）・廃棄（disposal）が減った数（マイナス）。棚卸（count）の数量は数えた在庫数そのもの（実数。0 以上）で、増減ではないので増減の合計に足さない。 |
 | 在庫数 | 店舗 × 商品の、期間の終わりの在庫数。入出庫の増減を積み上げ、棚卸で数えた数に置き換える。期首の在庫は記録の外にあるので、最初の棚卸より前の期間は出さない |
+| プロモーションの適用 | 1 注文に複数のプロモーションが付くことがある。orders.promotion_id は 1 件目だけを持つ。プロモーション別の金額は、注文の金額を付いたプロモーションの数で按分して出す（ADR 0010） |

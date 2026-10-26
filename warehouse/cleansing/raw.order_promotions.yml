@@ -1,0 +1,3 @@
+source: raw.order_promotions
+description: 注文に適用されたプロモーション（raw.order_promotions を整形）
+key: order_promotion_id

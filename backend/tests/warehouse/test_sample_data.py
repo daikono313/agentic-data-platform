@@ -143,3 +143,23 @@ def test_load_drops_history_snapshots(gen: ModuleType, tmp_path: Path) -> None:
     }
     con.close()
     assert "main_snapshots" not in schemas and "raw" in schemas
+
+
+def test_order_promotions(gen: ModuleType) -> None:
+    """注文に適用されたプロモーション（多対多の切り口の例。ADR 0010）の不変条件。"""
+    tables = gen.generate(3000, 42)
+    promotions = {p[0]: p for p in tables.promotions}
+    by_order: dict[object, list[object]] = {}
+    for _, order_id, promotion_id in tables.order_promotions:
+        by_order.setdefault(order_id, []).append(promotion_id)
+    orders = {o[0]: o for o in tables.orders}
+    # プロモーションの付いた注文ごとに行があり、1 件目は orders.promotion_id と同じ
+    assert set(by_order) == {o[0] for o in tables.orders if o[4] is not None}
+    assert all(orders[o][4] == ps[0] for o, ps in by_order.items())
+    assert any(len(ps) == 2 for ps in by_order.values())
+    for order_id, ps in by_order.items():
+        assert len(ps) <= 2 and len(set(ps)) == len(ps)
+        d = orders[order_id][3].date()
+        assert all(promotions[p][4] <= d <= promotions[p][5] for p in ps)
+        # 値引額は 1 件目の割引率だけで決まるので、2 つ目は値引きの無いポイント付与
+        assert all(promotions[p][2] == "point_up" for p in ps[1:])
