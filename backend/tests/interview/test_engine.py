@@ -230,10 +230,13 @@ def test_tool_input_schemas_accept_valid_data(expected: dict[str, Any]) -> None:
     from adp.interview.tools import build_tools
 
     tools = {t.name: t for t in build_tools(new_state("x"))}
+    from adp.interview.tools import _NOT_ASKED
+
     event = expected["events"][0]
-    # インタビューでまだ聞かない項目（bridge。ADR 0010）はスキーマに無く、LLM も送らない
+    # インタビューでまだ聞かない項目（_NOT_ASKED）はスキーマに無く、LLM も送らない
+    hidden = set(_NOT_ASKED["Dimension"])
     event = event | {
-        "dimensions": [{k: v for k, v in d.items() if k != "bridge"} for d in event["dimensions"]]
+        "dimensions": [{k: v for k, v in d.items() if k not in hidden} for d in event["dimensions"]]
     }
     samples = {
         "upsert_event": event,
@@ -425,9 +428,15 @@ def test_bridge_is_not_in_the_tool_schema() -> None:
     """多対多の切り口（bridge。ADR 0010）は、インタビューで聞くようにする（C10）までは tool の
     入力スキーマに出さない。"""
     import json
+    import re
 
-    from adp.beam import BusinessEvent
-    from adp.interview.tools import _schema
+    from adp.interview.tools import build_tools
 
-    text = json.dumps(_schema(BusinessEvent), ensure_ascii=False)
-    assert '"bridge"' not in text and '"Bridge"' not in text
+    for tool in build_tools(new_state("x")):
+        text = json.dumps(tool.input_schema, ensure_ascii=False, default=str)
+        assert '"bridge"' not in text and '"Bridge"' not in text
+        # 参照の切れた $ref が無い（隠した項目の定義も一緒に落とす）
+        if isinstance(tool.input_schema, dict):
+            defs = tool.input_schema.get("$defs", {})
+            for ref in set(re.findall(r'"#/\$defs/(\w+)"', text)):
+                assert ref in defs

@@ -43,7 +43,14 @@ def _schema(model: type[Any]) -> dict[str, Any]:
     for name, fields in _NOT_ASKED.items():
         for field in fields:
             defs.get(name, {}).get("properties", {}).pop(field, None)
-    defs.pop("Bridge", None)
+    # 隠した項目だけが参照していた定義（Bridge など）も落とす（どこからも参照されない $defs）
+    while True:
+        text = json.dumps([schema, defs])
+        unused = [d for d in defs if f'"#/$defs/{d}"' not in text]
+        if not unused:
+            break
+        for d in unused:
+            del defs[d]
     return {
         "type": "object",
         "properties": {"data": schema},
