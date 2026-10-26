@@ -92,7 +92,7 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
 ## SCD
 
 - Type1（上書き）を基本にする（design-doc R6）。dim は今の値だけを持つ。
-- BEAM で `history_required: true` の属性（当時の値で見たいもの）は、dim を変えずに、dbt snapshot と履歴モデル（SCD Type 2）を足して持つ（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)）。
+- BEAM で `history_required: true` の属性（当時の値で見たいもの）は、dim を変えずに、dbt の snapshot と履歴モデル（SCD Type 2）を足して持つ（[ADR 0009](adr/0009-keep-attribute-history-in-a-separate-scd2-model.md)）。
   - snapshot（`snapshots/snp_<表>.yml`）はクレンジング層（stg）の行の版を記録する。stg に日時型の更新日時（`updated_at`。源泉の `updated_at` を別の名前に変えた列も含む）があればその時刻で、無ければ snapshot を実行した時刻で版を分ける（実行の間に何度か変わったときは、最後の値だけが残る）。
   - 履歴モデル（`dim_<name>_history`）の列:
     - 版のキー `<name>_version_key`（主キー）
@@ -107,7 +107,7 @@ story_type が recurring のイベント（月末在庫など）は、記録の�
   - 結合した表や式から来る属性
   - 自然キーが式の dim の属性
   - 源泉の表の名前が snapshot の名前にできない（英小文字・数字・`_` 以外を含む）dim の属性
-  - 履歴モデルや dbt snapshot の列と名前がぶつかる属性（属性の名前が `valid_from`・`valid_to`・`<name>_key`・`<name>_version_key`、源泉の列の名前が `dbt_`・`adp_` で始まるもの）
+  - 履歴モデルや dbt の snapshot の列と名前がぶつかる属性（属性の名前が `valid_from`・`valid_to`・`<name>_key`・`<name>_version_key`、源泉の列の名前が `dbt_`・`adp_` で始まるもの）
 - 役割付きの使われ方（配送先顧客など）では、当時の値で切れない（履歴モデルは役割の無い外部キーとだけ結合する。生成器が警告を出す）。
 - snapshot を始める前の変更は復元できない。始める前の出来事は、始めた時点の値で集計する。
 
