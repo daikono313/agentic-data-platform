@@ -35,7 +35,7 @@ BEAM 成果物（`backend/src/adp/beam/models.py`）から、次のルールで�
 | `event.table_name`（必須） | `fct_<table_name>`（例: `order_lines` → `fct_order_lines`） |
 | `story_type` | discrete → transaction、recurring → periodic snapshot、evolving → accumulating snapshot |
 | `measures[].source` | fct の列 `<measure.name>`。`column` ならそのまま、`expr` なら **fct の SQL で計算する**（staging では計算しない） |
-| 件数だけの measure（`aggregation: count` で `source` が無いもの） | fct に列を持たない（中身の無い fact。factless fact）。Semantic Layer の指標は `agg: count`・`expr: 1` で fct の行を数える。1 行より粗い単位（注文明細の粒度で注文を数えるなど）や重複を除いた数（異なる顧客の数など）は、`count_distinct` にして、数えるキーの列を `source` に書く |
+| 件数だけの measure（`aggregation: count` で `source` が無いもの） | fct に列を持たない（中身の無い fact。factless fact）。Semantic Layer の指標は `agg: count`・`expr: 1` で fct の行を数える（按分した fct では重みの列の合計にする。`agg: sum`、[ADR 0010](adr/0010-allocate-many-to-many-facts-by-weight.md)）。1 行より粗い単位（注文明細の粒度で注文を数えるなど）や重複を除いた数（異なる顧客の数など）は、`count_distinct` にして、数えるキーの列を `source` に書く |
 | `degenerate_dimensions[]` | fct の列 `<name>`（source の列を改名） |
 | `grain_keys` | fct の主キー。縮退ディメンションならその列、dimension ref なら後述のキー列。複数あれば `dbt_utils.unique_combination_of_columns`、1つなら `unique` |
 
