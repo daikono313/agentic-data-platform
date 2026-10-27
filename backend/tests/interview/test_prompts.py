@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 
 from adp.interview import new_state
-from adp.interview.prompts import INTERVIEW_PATH, interview_body, system_prompt
+from adp.interview.prompts import (
+    INTERVIEW_PATH,
+    KNOWLEDGE_PATH,
+    interview_body,
+    knowledge_body,
+    system_prompt,
+)
 from adp.interview.state import PHASE_LABELS, Phase
 
 
@@ -45,11 +51,16 @@ def test_interview_phases_match_the_code() -> None:
     frontend = (REPO_ROOT / "frontend" / "src" / "api" / "types.ts").read_text(encoding="utf-8")
     phases = re.findall(r"\{ id: '(\w+)', label: '([^']+)' \}", frontend)
     assert phases == [(p.value, PHASE_LABELS[p]) for p in Phase]
-    # 前書き（持ち主のルール）はプロンプトに入れず、段階から後だけを入れる
-    assert body in system_prompt()
-    preamble = INTERVIEW_PATH.read_text(encoding="utf-8").split(body, 1)[0]
-    for line in preamble.splitlines()[1:]:
-        assert not line.strip() or line not in system_prompt(), line
+
+
+def test_knowledge_preambles_are_not_in_the_prompt() -> None:
+    """知識ファイルの前書き（持ち主・書き方のルール）はプロンプトに入れず、本文だけを入れる（#136・#151）。"""
+    prompt = system_prompt()
+    for path, body in ((INTERVIEW_PATH, interview_body()), (KNOWLEDGE_PATH, knowledge_body())):
+        assert body in prompt
+        preamble = path.read_text(encoding="utf-8").split(body, 1)[0]
+        for line in preamble.splitlines()[1:]:
+            assert not line.strip() or line not in prompt, line
 
 
 def test_each_phase_has_purpose_and_questions() -> None:

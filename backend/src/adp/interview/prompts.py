@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 
 from adp.llm.settings import REPO_ROOT
 
-PROMPT_VERSION = "interview-v27"
+PROMPT_VERSION = "interview-v28"
 """プロンプトを意図して変えたら上げる。フィードバック・eval の結果と結び付ける（#44）。"""
 
 KNOWLEDGE_PATH = REPO_ROOT / "docs" / "knowledge" / "beam.md"
@@ -77,18 +78,27 @@ dbt のディメンショナルモデルと MetricFlow の指標の生成に使�
 """
 
 
-def interview_body() -> str:
-    """interview.md の、最初の段階（行頭の「## 1. 」）から後。前書き（持ち主・書き方）は入れない。"""
-    text = INTERVIEW_PATH.read_text(encoding="utf-8")
-    start = re.search(r"^## 1\. ", text, re.MULTILINE)
+def _body(path: Path, heading: str) -> str:
+    """知識ファイルの、行頭の見出し `heading` から後。前書き（持ち主・書き方）は入れない。"""
+    text = path.read_text(encoding="utf-8")
+    start = re.search(rf"^{re.escape(heading)}", text, re.MULTILINE)
     if start is None:
-        raise ValueError(f"{INTERVIEW_PATH} に「## 1. 」の段階がありません")
+        raise ValueError(f"{path} に「{heading}」がありません")
     return text[start.start() :]
 
 
+def interview_body() -> str:
+    """interview.md の、最初の段階（行頭の「## 1. 」）から後。"""
+    return _body(INTERVIEW_PATH, "## 1. ")
+
+
+def knowledge_body() -> str:
+    """beam.md の「## 基本の考え方」から後。"""
+    return _body(KNOWLEDGE_PATH, "## 基本の考え方")
+
+
 def system_prompt() -> str:
-    knowledge = KNOWLEDGE_PATH.read_text(encoding="utf-8") if KNOWLEDGE_PATH.exists() else ""
-    return SYSTEM_PROMPT.format(knowledge=knowledge, interview=interview_body())
+    return SYSTEM_PROMPT.format(knowledge=knowledge_body(), interview=interview_body())
 
 
 def prompt_version() -> str:
