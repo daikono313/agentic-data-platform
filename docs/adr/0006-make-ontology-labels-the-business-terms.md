@@ -1,7 +1,7 @@
 # 0006: オントロジーの属性のラベルを業務の言葉の正本にする
 
 - 日付: 2026-10-19
-- ステータス: Proposed
+- ステータス: Accepted（2026-10-27、オーナー（Claude Code のセッションで回答））
 - 関連: [#137](https://github.com/daikono313/agentic-data-platform/issues/137)、#194、#195、design-doc の R24、ADR [0007](0007-map-each-concept-to-one-model.md)
 - 見直し: 実データに切り替えるとき（同じ言葉・同じ値の列が増えるため）、または文脈ごとに別の言い方が要る要求が続いたとき（同義語を扱う #137 の後続で）
 
