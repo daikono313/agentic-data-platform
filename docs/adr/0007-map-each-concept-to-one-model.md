@@ -1,7 +1,7 @@
 # 0007: オントロジーの概念と fact / dim を 1 対 1 にする
 
 - 日付: 2026-10-19
-- ステータス: Proposed
+- ステータス: Accepted（2026-10-27、オーナー（Claude Code のセッションで回答））
 - 関連: #67、#113、#114、[#137](https://github.com/daikono313/agentic-data-platform/issues/137)、design-doc の R25、[modeling-conventions](../modeling-conventions.md)、ADR [0006](0006-make-ontology-labels-the-business-terms.md)
 - 見直し: 同じ概念に粒度の違う fct（例: 注文の明細とヘッダ）が要る要求が続いたとき、または dim_date 以外の共通のモデル（例: 通貨・地域の対応表）が要るとき
 

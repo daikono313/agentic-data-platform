@@ -1,7 +1,7 @@
 # 0008: 状態（定期スナップショット）の値の求め方を BEAM の measure に書き、生成器が SQL を作る
 
 - 日付: 2026-10-22
-- ステータス: Proposed
+- ステータス: Accepted（2026-10-27、オーナー（Claude Code のセッションで回答））
 - 関連: [#138](https://github.com/daikono313/agentic-data-platform/issues/138)、#134、#46、design-doc の R5・R26、ADR [0004](0004-cleansing-layer.md)・[0007](0007-map-each-concept-to-one-model.md)
 - 見直し: 「最後の値」「積み上げ」で表せない状態の要求（例: 期間の平均残高、段階を経て進む状態）が来たとき、または源泉に期首の残高の記録が入ったとき
 
