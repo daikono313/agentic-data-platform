@@ -183,3 +183,78 @@ def test_reconciliation_catches_wrong_weights_and_sums(beam: BeamModel) -> None:
     assert fails("(1, 'a', 200.0, 1.0), (1, 'b', 200.0, 1.0), (2, 'u', 50.0, 1.0)")  # 二重計上
     assert fails("(1, 'a', 100.0, 0.5), (1, 'b', 100.0, 0.4), (2, 'u', 60.0, 1.0)")
     assert fails("(1, 'a', 100.0, 0.5), (1, 'b', 100.0, 0.5)")  # 元の行が欠ける
+
+
+def _with_share(beam: BeamModel) -> BeamModel:
+    event = beam.events[0]
+    promotion = next(d for d in event.dimensions if d.bridge is not None)
+    assert promotion.bridge is not None
+    promotion.bridge.weight = "share"
+    return beam
+
+
+class ShareSchema(BridgeSchema):
+    COLUMNS = BridgeSchema.COLUMNS | {
+        "raw.order_promotions": ["order_promotion_id", "order_id", "promotion_id", "share"]
+    }
+
+
+def test_weight_from_the_share_column(beam: BeamModel) -> None:
+    """割合の列があれば、元の行ごとの合計で割って重みにする。合計が 0 か、NULL・負の値があれば
+    均等、ブリッジの無い行は 1（ADR 0010）。"""
+    import duckdb
+
+    design = DesignBuilder(ShareSchema()).build(_with_share(beam))
+    assert design.blockers == []
+    [fact] = design.facts
+    assert fact.allocation is not None and fact.allocation.weight_source == "share"
+    weight = next(c for c in fact.columns if c.name == "allocation_weight")
+    assert "raw.order_promotions の share" in weight.description
+    assert "share の割合で按分" in metric_definitions(beam, design, fact).in_model[0]["description"]
+    con = duckdb.connect()
+    rows = con.execute(
+        f"select t0.order_item_id, t2.promotion_id, {weight.expr} as w from (values"
+        " (1, 'a', 1), (1, 'b', 3), (2, 'a', null), (2, 'b', 1), (3, 'a', 0), (3, 'b', 0),"
+        " (4, 'a', -1), (4, 'b', 2), (5, null, null))"
+        " t(order_item_id, promotion_id, share), lateral (select order_item_id) t0(order_item_id),"
+        " lateral (select promotion_id, share) t2(promotion_id, share)"
+        " order by 1, 2"
+    ).fetchall()
+    assert [(k, p, round(w, 6)) for k, p, w in rows] == [
+        (1, "a", 0.25),
+        (1, "b", 0.75),
+        (2, "a", 0.5),  # NULL がある
+        (2, "b", 0.5),
+        (3, "a", 0.5),  # 合計が 0
+        (3, "b", 0.5),
+        (4, "a", 0.5),  # 負の値がある
+        (4, "b", 0.5),
+        (5, None, 1.0),  # ブリッジの無い行
+    ]
+
+
+def test_missing_share_column_is_a_blocker(beam: BeamModel) -> None:
+    design = DesignBuilder(BridgeSchema()).build(_with_share(beam))
+    assert any(
+        "割合の列 share が raw.order_promotions にありません" in b.message for b in design.blockers
+    )
+
+
+def test_allocated_unit_test_uses_the_share(beam: BeamModel) -> None:
+    """unit test は、割合 1 : 3 の値を 2 つ付け、重み 0.25・0.75 で分かれることを見る。"""
+    from adp.generation.tests import unit_test
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [(c, "INTEGER") for c in ShareSchema.COLUMNS[table]]
+
+    beam = _with_share(beam)
+    [fact] = DesignBuilder(ShareSchema()).build(beam).facts
+    event = beam.events[0]
+    ut = unit_test(beam, fact, Info(), event.examples[0], 0)  # type: ignore[arg-type]
+    assert ut is not None
+    bridge = next(g for g in ut["given"] if g["input"] == "ref('stg_order_promotions')")
+    assert [r["share"] for r in bridge["rows"]] == [1, 3]
+    rows = ut["expect"]["rows"]
+    assert [r["allocation_weight"] for r in rows] == [0.25, 0.75, 1]
+    assert [r["sales_amount"] for r in rows] == [150.0, 450.0, rows[2]["sales_amount"]]

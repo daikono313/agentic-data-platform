@@ -364,7 +364,8 @@ export interface Dimension {
 /**
  * 1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。
  *
- * 出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る。
+ * 出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る（割合の
+ * 列 weight があれば、その割合で按分する）。
  * ディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。
  *
  * This interface was referenced by `BEAM`'s JSON-Schema
@@ -380,6 +381,10 @@ export interface Bridge {
    * ブリッジの側で、出来事を指す列（例: order_id）
    */
   bridge_key: string;
+  /**
+   * ブリッジの側で、値ごとの割合の列（例: share）。出来事ごとの合計で割って重みにする（合計が 0 か、NULL・負の値があれば均等）。無ければ付いた値の数で均等に割る
+   */
+  weight?: string | null;
 }
 /**
  * ソースのどこから作るか。column か expr のどちらかを指定する。
