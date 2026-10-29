@@ -75,6 +75,11 @@ def staging_model(table: str) -> str:
     return "stg_" + table.rpartition(".")[2]
 
 
+def fact_entity(fact_table: str) -> str:
+    """fct の主 entity 名（fct_order_lines → order_line）。"""
+    return singular(fact_table.removeprefix("fct_"))
+
+
 def singular(name: str) -> str:
     """fct の名詞（複数形）から主 entity 名を作る（order_lines → order_line）。"""
     if name.endswith("ies"):
@@ -287,6 +292,7 @@ class DesignBuilder:
         self._check_ontology_sources(facts, dims)
         self._check_duplicate_facts(beam, facts)
         self._check_linkable(facts, dims)
+        self._link_source_entities(beam, facts)
         design = PhysicalDesign(
             beam=beam.name,
             facts=facts,
@@ -297,6 +303,53 @@ class DesignBuilder:
         self._check_metrics(beam, design)
         design.issues = list(self.issues)
         return design
+
+    def _link_source_entities(self, beam: BeamModel, facts: list[FactTable]) -> None:
+        """按分した fct（ADR 0010）に、元の出来事の fct の主 entity を外部の entity として持たせる。
+
+        元の fct の主 entity を結合に使えるのは、列の entity（`FactTable.entity_column`。粒度が
+        縮退ディメンション 1 列）のときだけ。按分した fct の元の粒度（source_grain）も 1 列で、
+        源泉が同じときに限って結び付ける（複数の列の粒度は、entity を 1 列で表せない）。元の fct は
+        次から探し、1 つに決まらなければ結び付けない。
+        - 同じ BEAM の fct
+        - 既存の fct: オントロジーの出来事の概念（源泉・キーが同じで、モデルのあるもの）のうち、
+          確定した BEAM 成果物（existing_facts）で粒度が同じ源泉の 1 列だと確かめられたもの
+        按分した fct のほかの entity・ディメンションと名前が重なるときも、結び付けない。
+        """
+        for fact in facts:
+            a = fact.allocation
+            event = beam.event(fact.event)
+            if a is None or event is None or len(a.source_grain) != 1:
+                continue
+            dg = event.degenerate(a.source_grain[0])
+            if dg is None or dg.source.column is None:
+                continue
+            grain = frozenset({f"{dg.source.table}.{dg.source.column}"})
+            found = {
+                f.primary_entity
+                for f in facts
+                if f.allocation is None
+                and f.entity_column is not None
+                and (e := beam.event(f.event)) is not None
+                and grain_sources(e) == grain
+            }
+            if not found and self.ontology is not None and self.existing_facts is not None:
+                for c in self.ontology.concepts:
+                    known = self.existing_facts.get(c.model or "")
+                    if (
+                        c.kind == "event"
+                        and c.model is not None
+                        and (c.source, c.key) == (dg.source.table, dg.source.column)
+                        and known is not None
+                        and known.fact_type is not None
+                        and known.grain_sources == grain
+                    ):
+                        found.add(fact_entity(c.model))
+            taken = {fact.primary_entity, "date"}
+            taken |= {d.role or d.ref for d in event.dimensions}
+            taken |= {d.name for d in event.degenerate_dimensions}
+            if len(found) == 1 and (entity := found.pop()) not in taken:
+                a.source_entity = entity
 
     def _check_ontology(self, dims: list[DimTable]) -> None:
         """同じ源泉の概念に dim があるのに、別の名前の dim を作ろうとしていないか。
@@ -684,7 +737,6 @@ class DesignBuilder:
             columns, grain_columns, allocation = self._allocate(
                 event, bridged, columns, grain_columns, src.aliases[bridged.bridge.table]
             )
-        table_name = event.table_name or event.name
         fact = FactTable(
             name=event.fact_table,
             event=event.name,
@@ -695,7 +747,7 @@ class DesignBuilder:
             base=src.base,
             joins=src.joins,
             columns=columns,
-            primary_entity=singular(table_name),
+            primary_entity=fact_entity(event.fact_table),
             agg_time_column=agg_time[0] if agg_time else None,
             agg_time_grain=agg_time[1].time_grain if agg_time else None,
             allocation=allocation,

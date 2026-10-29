@@ -102,6 +102,10 @@ class AllocationDesign(BaseModel):
     """元の出来事の粒度の列（重みの合計がこの粒度ごとに 1）。"""
     source_measures: dict[str, str] = Field(default_factory=dict)
     """重みを掛けた measure の列 → 掛ける前の式（突合テストで元の合計と比べる）。"""
+    source_entity: str | None = None
+    """元の出来事の fct の主 entity（例: order_line）。source_grain の列をこの名前の外部の entity
+    にし、按分した行から元の fct の属性へ結合できるようにする。元の fct の粒度が 1 列の縮退
+    ディメンションで、その列が source_grain と同じ源泉のときだけ（それ以外は None）。"""
 
 
 class FactTable(BaseModel):
@@ -127,6 +131,15 @@ class FactTable(BaseModel):
     def concept_source(self) -> str:
         """オントロジーで、この fct を結び付ける概念の源泉。按分した fct はブリッジの源泉。"""
         return self.allocation.bridge_table if self.allocation else self.base.table
+
+    @property
+    def entity_column(self) -> str | None:
+        """主 entity を置く列（粒度が縮退ディメンション 1 列のとき）。無ければ None（主 entity は
+        モデル単位の primary_entity にし、ほかの fct からは結合できない）。"""
+        if len(self.grain_columns) != 1:
+            return None
+        c = self.column(self.grain_columns[0])
+        return c.name if c is not None and c.role == ColumnRole.DEGENERATE else None
 
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)

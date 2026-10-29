@@ -158,7 +158,7 @@ def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str,
             name = d.ref if d else c.name.removesuffix("_key")
             result[c.name] = {"entity": {"type": "foreign", "name": name}}
         elif c.role == ColumnRole.DEGENERATE:
-            if fact.grain_columns == [c.name]:
+            if fact.entity_column == c.name:
                 result[c.name] = {"entity": {"type": "primary", "name": fact.primary_entity}}
             else:
                 result[c.name] = {"dimension": {"type": "categorical"}}
@@ -189,15 +189,17 @@ def fact_model_semantics(
     """fct のモデル単位で足す設定。"""
     model: dict[str, Any] = {"semantic_model": {"enabled": True}}
     entities = role_entities(fact, event) if event is not None else []
+    if fact.allocation is not None and fact.allocation.source_entity is not None:
+        # 按分した行から元の出来事の fct へ結合する（多対一。ADR 0010）
+        (column,) = fact.allocation.source_grain
+        entities.append({"type": "foreign", "name": fact.allocation.source_entity, "expr": column})
     if fact.agg_time_column:
         model["agg_time_dimension"] = fact.agg_time_column
         if has_date_entity:
             entities.append({"type": "foreign", "name": "date", "expr": fact.agg_time_column})
     if entities:
         model["derived_semantics"] = {"entities": entities}
-    if len(fact.grain_columns) != 1 or fact.grain_columns[0] not in {
-        c.name for c in fact.columns if c.role == ColumnRole.DEGENERATE
-    }:
+    if fact.entity_column is None:
         model["primary_entity"] = fact.primary_entity
     return model
 
