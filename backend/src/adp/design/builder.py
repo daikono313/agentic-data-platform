@@ -287,6 +287,7 @@ class DesignBuilder:
         self._check_ontology_sources(facts, dims)
         self._check_duplicate_facts(beam, facts)
         self._check_linkable(facts, dims)
+        self._link_source_entities(beam, facts)
         design = PhysicalDesign(
             beam=beam.name,
             facts=facts,
@@ -297,6 +298,51 @@ class DesignBuilder:
         self._check_metrics(beam, design)
         design.issues = list(self.issues)
         return design
+
+    def _link_source_entities(self, beam: BeamModel, facts: list[FactTable]) -> None:
+        """按分した fct（ADR 0010）に、元の出来事の fct の主 entity を外部の entity として持たせる。
+
+        元の fct の主 entity が列の entity になるのは、粒度が 1 列の縮退ディメンションのときだけ
+        （`fact_semantics`）。按分した fct の元の粒度（source_grain）も 1 列で、源泉が同じときに
+        限って結び付ける（複数の列の粒度は、entity を 1 列で表せないので結び付けない）。
+        元の fct は、同じ BEAM の fct か、オントロジーの出来事の概念（源泉・キーが同じで、モデルの
+        あるもの）から探す。既存の fct の主 entity は、生成の規則（`fct_<table_name>` の単数形）で
+        決まる。按分した fct のほかの entity と名前が重なるときは、結び付けない。
+        """
+        for fact in facts:
+            a = fact.allocation
+            event = beam.event(fact.event)
+            if a is None or event is None or len(a.source_grain) != 1:
+                continue
+            dg = event.degenerate(a.source_grain[0])
+            if dg is None or dg.source.column is None:
+                continue
+            source = (dg.source.table, dg.source.column)
+            entity = next(
+                (
+                    f.primary_entity
+                    for f in facts
+                    if f.allocation is None
+                    and (e := beam.event(f.event)) is not None
+                    and len(f.grain_columns) == 1
+                    and e.degenerate(f.grain_columns[0]) is not None
+                    and grain_sources(e) == {".".join(source)}
+                ),
+                None,
+            )
+            if entity is None and self.ontology is not None:
+                model = next(
+                    (
+                        c.model
+                        for c in self.ontology.concepts
+                        if c.kind == "event" and c.model is not None and (c.source, c.key) == source
+                    ),
+                    None,
+                )
+                entity = singular(model.removeprefix("fct_")) if model else None
+            taken = {fact.primary_entity, "date"} | {d.role or d.ref for d in event.dimensions}
+            if entity is not None and entity not in taken:
+                a.source_entity = entity
 
     def _check_ontology(self, dims: list[DimTable]) -> None:
         """同じ源泉の概念に dim があるのに、別の名前の dim を作ろうとしていないか。

@@ -189,6 +189,10 @@ def fact_model_semantics(
     """fct のモデル単位で足す設定。"""
     model: dict[str, Any] = {"semantic_model": {"enabled": True}}
     entities = role_entities(fact, event) if event is not None else []
+    if fact.allocation is not None and fact.allocation.source_entity is not None:
+        # 按分した行から元の出来事の fct へ結合する（多対一。ADR 0010）
+        (column,) = fact.allocation.source_grain
+        entities.append({"type": "foreign", "name": fact.allocation.source_entity, "expr": column})
     if fact.agg_time_column:
         model["agg_time_dimension"] = fact.agg_time_column
         if has_date_entity:
