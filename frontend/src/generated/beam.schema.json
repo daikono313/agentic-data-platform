@@ -141,7 +141,7 @@
     },
     "Bridge": {
       "additionalProperties": false,
-      "description": "1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。\n\n出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る。\nディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。",
+      "description": "1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。\n\n出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る（割合の\n列 weight があれば、その割合で按分する）。\nディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。",
       "properties": {
         "table": {
           "description": "値の源泉の表（例: raw.order_promotions。1 行が、注文などの 1 件に付いた値 1 つ）",
@@ -155,6 +155,19 @@
           "description": "ブリッジの側で、出来事を指す列（例: order_id）",
           "pattern": "^[a-z][a-z0-9_]*$",
           "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ブリッジの側で、値ごとの割合の列（例: share）。出来事ごとの合計で割って重みにする（合計が 0 か、NULL・負の値があれば均等）。無ければ付いた値の数で均等に割る"
         }
       },
       "required": [

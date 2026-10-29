@@ -365,7 +365,8 @@ class Attribute(_Base):
 class Bridge(_Base):
     """1 つの出来事に複数の値が付く切り口（多対多）の、値の源泉（ブリッジ。ADR 0010）。
 
-    出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る。
+    出来事の 1 行に付いた値の数で、加算できる値（金額・件数）を均等に按分した fct を作る（割合の
+    列 weight があれば、その割合で按分する）。
     ディメンションの fact_key は、この表の値の列（例: raw.order_promotions.promotion_id）にする。
     """
 
@@ -378,6 +379,11 @@ class Bridge(_Base):
         "多対一でたどれる列にする"
     )
     bridge_key: Identifier = Field(description="ブリッジの側で、出来事を指す列（例: order_id）")
+    weight: Identifier | None = Field(
+        default=None,
+        description="ブリッジの側で、値ごとの割合の列（例: share）。出来事ごとの合計で割って重みに"
+        "する（合計が 0 か、NULL・負の値があれば均等）。無ければ付いた値の数で均等に割る",
+    )
 
     @model_validator(mode="after")
     def _check(self) -> Bridge:
