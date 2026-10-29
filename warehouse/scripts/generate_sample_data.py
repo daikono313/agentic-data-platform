@@ -4,17 +4,24 @@
 乱数シードを固定しているので、同じ引数なら同じデータになる。
 
     python scripts/generate_sample_data.py --db data/dev.duckdb --orders 30000 --seed 42
+
+顧客の一部は、期間中に引っ越し（都道府県・地方）や会員ランクの変更がある（今の値は変更の後の値）。
+--dbt を渡すと、HISTORY_CUTOFFS の各時点の源泉を順に書いて、そのたびに dbt の snapshot を取る。
+最後に今の源泉を書くので、次の dbt build の snapshot で今の版が足され、属性の履歴（ADR 0009）に
+当時の値の版が残る。
 """
 
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import os
 import random
+import subprocess
 import tempfile
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import duckdb
@@ -72,6 +79,9 @@ class Tables:
     order_promotions: list[tuple[object, ...]]
     """注文に適用されたプロモーション（1 注文に複数ありうる。多対多の切り口の例。ADR 0010・#143）。
     orders.promotion_id は 1 件目だけを持つ。"""
+    customer_past_versions: list[tuple[object, ...]]
+    """顧客の過去の版（customers と同じ列。updated_at はその版になった日時）。源泉の表には
+    書かない。as_of で、ある時点の源泉を作るのに使う（属性の履歴の例。ADR 0009・#141）。"""
 
 
 # カテゴリごとの返品しやすさ（明細単位の確率）と返品理由の重み
@@ -110,6 +120,85 @@ def _customers(seed: int, n: int) -> list[tuple[object, ...]]:
             )
         )
     return rows
+
+
+CUSTOMER_MOVE_RATE = 0.15
+"""期間中に引っ越す（都道府県が変わる）顧客の割合。"""
+CUSTOMER_RANK_CHANGE_RATE = 0.2
+"""期間中に会員ランクが変わる顧客の割合。"""
+HISTORY_CUTOFFS = (date(2024, 7, 1), date(2025, 1, 1), date(2025, 7, 1))
+"""--dbt で snapshot を取る時点（この日の 0 時の源泉）。最後の時点の後の変更は、今の源泉を書いた
+後の dbt build の snapshot が記録する。"""
+
+
+def _snapshot_stage(at: datetime) -> int:
+    """その版を初めて記録する snapshot の番号（HISTORY_CUTOFFS の位置。最後の時点より後は、今の
+    源泉の snapshot で len(HISTORY_CUTOFFS)）。時点の源泉は、その時点以前の版を持つ（as_of）。"""
+    return bisect.bisect_left([datetime.combine(c, time()) for c in HISTORY_CUTOFFS], at)
+
+
+def _customer_history(
+    seed: int, customers: list[tuple[object, ...]]
+) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
+    """顧客の今の行と過去の版。今の値は _customers のまま（集計の数字を変えない）で、変更の
+    前の値を作る。引っ越しの前は別の都道府県、ランクの変更の前は 1 つ下（bronze なら silver）。
+    updated_at は最後の変更の日時になる。
+
+    版はすべて snapshot に残るようにする（この版が、当時の値の正解になる）。snapshot は取った
+    時点の値しか残さないので、変更は最初の時点（HISTORY_CUTOFFS[0]）より後・登録の翌日以降・
+    END までに起こし、登録や別の変更と同じ時点の間（_snapshot_stage が同じ）に入る変更は
+    起こさない（入れると、前の版が snapshot に残らない）。"""
+    rng = _rng(seed, "customer_changes")
+    prefectures = [(r, p) for r, ps in REGIONS.items() for p in ps]
+    ranks = [r for r, _ in MEMBERSHIP_RANKS]
+    current: list[tuple[object, ...]] = []
+    past: list[tuple[object, ...]] = []
+    for row in customers:
+        signup = row[7]
+        assert isinstance(signup, date)
+        first = max(signup + timedelta(days=1), HISTORY_CUTOFFS[0])
+        events: list[tuple[datetime, str]] = []
+        stages = {_snapshot_stage(datetime.combine(signup, time()))}
+        for kind, rate in (("move", CUSTOMER_MOVE_RATE), ("rank", CUSTOMER_RANK_CHANGE_RATE)):
+            if rng.random() < rate and first <= END:
+                changed_at = datetime.combine(rand_date(rng, first, END), time()) + timedelta(
+                    hours=rng.randint(9, 20), minutes=rng.randint(0, 59)
+                )
+                if _snapshot_stage(changed_at) not in stages:
+                    stages.add(_snapshot_stage(changed_at))
+                    events.append((changed_at, kind))
+        # 今の行から、変更を新しい順に戻して前の版を作る
+        state = list(row)
+        versions: list[tuple[object, ...]] = []
+        for changed_at in sorted({t for t, _ in events}, reverse=True):
+            state[8] = changed_at
+            versions.append(tuple(state))
+            for _, kind in [e for e in events if e[0] == changed_at]:
+                if kind == "move":
+                    region, pref = rng.choice([rp for rp in prefectures if rp[1] != state[4]])
+                    state[4], state[5] = pref, region
+                else:
+                    i = ranks.index(str(state[6]))
+                    state[6] = ranks[i - 1] if i > 0 else ranks[1]
+        state[8] = datetime.combine(signup, time())
+        versions.append(tuple(state))
+        current.append(versions[0])
+        past.extend(reversed(versions[1:]))
+    return current, past
+
+
+def as_of(tables: Tables, cutoff: date) -> Tables:
+    """cutoff の 0 時の源泉。顧客は、その時点で登録済みの顧客の、その時点の値にする（ほかの表は
+    そのまま。snapshot が読むのは顧客などのマスタだけ）。"""
+    at = datetime.combine(cutoff, time())
+    latest: dict[object, tuple[object, ...]] = {}
+    for row in sorted(
+        [*tables.customer_past_versions, *tables.customers],
+        key=lambda r: (r[0], r[8]),  # type: ignore[arg-type,return-value]
+    ):
+        if row[8] <= at:  # type: ignore[operator]
+            latest[row[0]] = row
+    return replace(tables, customers=list(latest.values()))
 
 
 def _products(seed: int) -> list[tuple[object, ...]]:
@@ -173,7 +262,9 @@ def _promotions(seed: int) -> list[tuple[object, ...]]:
 
 
 def generate(n_orders: int, seed: int) -> Tables:
-    customers = _customers(seed, max(50, n_orders // 6))
+    customers, customer_past_versions = _customer_history(
+        seed, _customers(seed, max(50, n_orders // 6))
+    )
     products = _products(seed)
     stores = _stores(seed)
     promotions = _promotions(seed)
@@ -285,6 +376,7 @@ def generate(n_orders: int, seed: int) -> Tables:
         inventory,
         reviews,
         order_promotions,
+        customer_past_versions,
     )
 
 
@@ -440,17 +532,18 @@ DDL = {
 }
 
 
-def load(db_path: Path, tables: Tables) -> None:
+def load(db_path: Path, tables: Tables, *, drop_snapshots: bool = True) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(db_path))
     try:
         # 属性の履歴の snapshot（dbt の schema「snapshots」。adp の生成器の
-        # HISTORY_SNAPSHOT_SCHEMA）は源泉の版なので、源泉を作り直すときに消す（ADR 0009）
+        # HISTORY_SNAPSHOT_SCHEMA）は源泉の版なので、源泉を作り直すときに消す（ADR 0009）。
+        # 時点ごとに源泉を書いて snapshot を取るとき（--dbt）は、最初の時点だけで消す
         snapshot_schemas = con.execute(
             "SELECT schema_name FROM information_schema.schemata"
             " WHERE schema_name LIKE '%snapshots'"
         ).fetchall()
-        for (schema,) in snapshot_schemas:
+        for (schema,) in snapshot_schemas if drop_snapshots else []:
             con.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         con.execute("CREATE SCHEMA IF NOT EXISTS raw")
         with tempfile.TemporaryDirectory() as tmp:
@@ -464,6 +557,46 @@ def load(db_path: Path, tables: Tables) -> None:
         con.close()
 
 
+def take_history_snapshots(dbt: str, db_path: Path, tables: Tables) -> None:
+    """HISTORY_CUTOFFS の時点の源泉を順に書き、そのたびに snapshot（と、それが読む stg）を
+    dbt で作る。snapshot は実行した時点の源泉しか見ないので、源泉を時点ごとに書き換えて、
+    運用で snapshot を定期的に取ったときと同じ版を残す（ADR 0009）。テストは最後の dbt build で
+    行う（途中の時点では、顧客より後の注文が源泉のテストに掛かる）。
+
+    最後に今の源泉を書く（snapshot は消さない）。途中で dbt が失敗したら、今の源泉を書き直し、
+    途中までの snapshot を消してから例外を上げる。"""
+    warehouse = Path(__file__).resolve().parents[1]
+    env = {
+        **os.environ,
+        "DBT_PROFILES_DIR": str(warehouse),
+        "ADP_DUCKDB_PATH": str(db_path.resolve()),
+    }
+    try:
+        for i, cutoff in enumerate(HISTORY_CUTOFFS):
+            load(db_path, as_of(tables, cutoff), drop_snapshots=i == 0)
+            subprocess.run(
+                [
+                    dbt,
+                    "build",
+                    "--select",
+                    "+resource_type:snapshot",
+                    "--resource-type",
+                    "model",
+                    "--resource-type",
+                    "snapshot",
+                    "--quiet",
+                ],
+                cwd=warehouse,
+                env=env,
+                check=True,
+            )
+            print(f"snapshot as of {cutoff}")
+    except BaseException:
+        load(db_path, tables)
+        raise
+    load(db_path, tables, drop_snapshots=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -471,9 +604,16 @@ def main() -> None:
     )
     parser.add_argument("--orders", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--dbt",
+        help="dbt の実行ファイル。渡すと、HISTORY_CUTOFFS の時点の源泉ごとに snapshot を取る",
+    )
     args = parser.parse_args()
     tables = generate(args.orders, args.seed)
-    load(args.db, tables)
+    if args.dbt:
+        take_history_snapshots(args.dbt, args.db, tables)
+    else:
+        load(args.db, tables)
     counts = {k: len(getattr(tables, k)) for k in DDL}
     print(f"generated into {args.db}: {counts}")
 
