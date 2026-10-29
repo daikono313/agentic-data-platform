@@ -226,9 +226,7 @@ def unit_test(
     beam: BeamModel, fact: FactTable, info: WarehouseInfo, example: EventExample, index: int
 ) -> dict[str, Any] | None:
     event = beam.event(fact.event)
-    if event is None or fact.allocation is not None:
-        # 按分した fct（ADR 0010）の unit test は後続（ブリッジに元の 1 行あたり複数の行を入れる）。
-        # 合計と重みは突合テストで確かめる
+    if event is None:
         return None
     tables = _alias_tables(fact)
     types = {a: dict(info.source_columns(t)) for a, t in tables.items()}
@@ -264,13 +262,18 @@ def unit_test(
                         continue  # 結合キーを NULL にすると結合が外れる（欠損の具体例。#142）
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
                     set_by_example.add((alias, col))
-            # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
-            for j in fact.joins:
-                left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
-                if left in set_by_example:
-                    result[right[0]][right[1]] = result[left[0]][left[1]]
-                elif right in set_by_example:
-                    result[left[0]][left[1]] = result[right[0]][right[1]]
+            # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）。
+            # 結合がつながっているとき（明細 → 注文 → ブリッジ）は、先の結合まで伝える
+            changed = True
+            while changed:
+                changed = False
+                for j in fact.joins:
+                    left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
+                    if (left in set_by_example) != (right in set_by_example):
+                        src, dst = (left, right) if left in set_by_example else (right, left)
+                        result[dst[0]][dst[1]] = result[src[0]][src[1]]
+                        set_by_example.add(dst)
+                        changed = True
             _solve_example_measures(event, fact, example, result, types, set_by_example)
         else:
             # 結合キー以外の外部キーの自然キーを NULL にする（不明メンバーになることを検証）
@@ -287,10 +290,25 @@ def unit_test(
         return result
 
     cases = [rows("example"), rows("unknown")]
+    if fact.allocation is not None:
+        return _allocation_unit_test(event, fact, types, tables, cases, index)
     try:
         expected = [_expected(event, fact, r, types) for r in cases]
     except _NoUnitTest:
         return None
+    return {
+        "name": f"test_{fact.name}_example_{index + 1}",
+        "description": "BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。"
+        "2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する",
+        "model": fact.name,
+        "given": _given(fact, tables, {a: [c[a] for c in cases] for a in tables}),
+        "expect": {"rows": expected},
+    }
+
+
+def _given(
+    fact: FactTable, tables: dict[str, str], rows: dict[str, list[dict[str, object]]]
+) -> list[dict[str, Any]]:
     given = []
     for alias in tables:
         model = (
@@ -298,13 +316,70 @@ def unit_test(
             if alias == fact.base.alias
             else next(j.right.model for j in fact.joins if j.right.alias == alias)
         )
-        given.append({"input": f"ref('{model}')", "rows": [c[alias] for c in cases]})
+        given.append({"input": f"ref('{model}')", "rows": rows[alias]})
+    return given
+
+
+def _other_value(value: object) -> object:
+    """value と違う、同じ型の値（ブリッジの 2 つ目の値）。"""
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int | float):
+        return value + 1
+    return f"{value}_2"
+
+
+def _allocation_unit_test(
+    event: BusinessEvent,
+    fact: FactTable,
+    types: dict[str, dict[str, str]],
+    tables: dict[str, str],
+    cases: list[dict[str, dict[str, object]]],
+    index: int,
+) -> dict[str, Any] | None:
+    """按分した fct（ADR 0010）の unit test。具体例の 1 行にブリッジの値を 2 つ付け、合計の
+    measure が重み（均等なら 0.5 ずつ、割合の列なら 1 : 3）で分かれること、ブリッジの無い行
+    （2 行目）は不明メンバーのキーで重み 1 になることを確かめる。具体例の measure の値は、按分する
+    前の元の 1 行の値と読む。"""
+    a = fact.allocation
+    assert a is not None
+    bridge = next((j.right.alias for j in fact.joins if j.fan_out), None)
+    key = fact.column(f"{a.dimension}_key")
+    value = re.search(r"(t\d+)\.(\w+)", key.expr) if key is not None else None
+    if bridge is None or value is None or value.group(1) != bridge:
+        return None
+    example, unknown = cases
+    first, second = dict(example[bridge]), dict(example[bridge])
+    second[value.group(2)] = _other_value(first[value.group(2)])
+    weights = (0.5, 0.5)
+    if a.weight_source is not None:  # 割合の列 1 : 3 → 重み 0.25 : 0.75
+        first[a.weight_source], second[a.weight_source] = 1, 3
+        weights = (0.25, 0.75)
+    no_bridge = dict.fromkeys(unknown[bridge])
+    outputs = [
+        ({**example, bridge: first}, weights[0]),
+        ({**example, bridge: second}, weights[1]),
+        ({**unknown, bridge: no_bridge}, 1),
+    ]
+    try:
+        expected = []
+        for row, weight in outputs:
+            out = _expected(event, fact, row, types)
+            for m in a.source_measures:
+                if isinstance(v := out.get(m), int | float):
+                    out[m] = v * weight
+            expected.append(out | {a.weight_column: weight})
+    except _NoUnitTest:
+        return None
+    rows = {t: [example[t], unknown[t]] for t in tables if t != bridge}
+    rows[bridge] = [first, second]
     return {
         "name": f"test_{fact.name}_example_{index + 1}",
-        "description": "BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。"
-        "2 行目は外部キーの自然キーが NULL で、不明メンバーのキーになることを検証する",
+        "description": "BEAM の具体例から生成（期待値は BEAM の定義から独立に計算）。具体例の行に"
+        f"{a.dimension} を 2 つ付け、合計が重みで按分されることと、{a.dimension} の無い行が"
+        "不明メンバーのキーで重み 1 になることを検証する",
         "model": fact.name,
-        "given": given,
+        "given": _given(fact, tables, rows),
         "expect": {"rows": expected},
     }
 

@@ -612,6 +612,14 @@ class DesignBuilder:
             except JoinError as e:
                 self._blocker(f"{p} 複数の値の切り口 {bridged.ref}: {e}", bridged.ref)
                 return None
+            weight = bridged.bridge.weight
+            if weight is not None and weight not in self.schema.columns(bridged.bridge.table):
+                self._blocker(
+                    f"{p} 複数の値の切り口 {bridged.ref} の割合の列 {weight} が"
+                    f" {bridged.bridge.table} にありません",
+                    bridged.ref,
+                )
+                return None
 
         for dg in event.degenerate_dimensions:
             if (expr := resolve(dg.source, f"縮退ディメンション {dg.name}", dg.name)) is not None:
@@ -727,7 +735,7 @@ class DesignBuilder:
         allocation = None
         if bridged is not None and bridged.bridge is not None:
             columns, grain_columns, allocation = self._allocate(
-                event, bridged, columns, grain_columns
+                event, bridged, columns, grain_columns, src.aliases[bridged.bridge.table]
             )
         fact = FactTable(
             name=event.fact_table,
@@ -754,9 +762,12 @@ class DesignBuilder:
         bridged: Dimension,
         columns: list[Column],
         grain_columns: list[str],
+        bridge_alias: str,
     ) -> tuple[list[Column], list[str], AllocationDesign]:
         """複数の値の切り口で按分する（ADR 0010）。粒度は「元の出来事の 1 行 × 付いた値」で、
-        重みは元の行に付いた値の数で均等に割った値（値の無い行は不明メンバーで 1）。合計（sum）の
+        重みは元の行に付いた値の数で均等に割った値（値の無い行は不明メンバーで 1）。ブリッジに割合の
+        列があれば、その列を元の行ごとの合計で割った値にする（合計が 0 か、NULL・負の値があれば
+        均等。値の無い行は割合が NULL なので均等の 1）。合計（sum）の
         measure には重みを掛ける。件数（source の無い count）は重みの合計にする（Semantic Layer）。
         個数の数え直し（count_distinct）・最小・最大は値ごとに足しても全体と一致しないので、重みを
         掛けない。"""
@@ -765,7 +776,17 @@ class DesignBuilder:
         source_grain = [c for c in grain_columns if c != key]
         exprs = {c.name: c.expr for c in columns}
         partition = ", ".join(exprs[c] for c in source_grain if c in exprs) or "1"
-        weight = f"1.0 / count(*) over (partition by {partition})"
+        over = f"over (partition by {partition})"
+        weight = f"1.0 / count(*) {over}"
+        share = bridged.bridge.weight
+        if share is not None:
+            # 割合の列の型は設計の段階ではわからないので、数値にできない値は NULL（均等）にする
+            col = f"try_cast({bridge_alias}.{share} as double)"
+            weight = (
+                f"case when count({col}) {over} = count(*) {over}"
+                f" and min({col}) {over} >= 0 and sum({col}) {over} > 0"
+                f" then {col} / sum({col}) {over} else {weight} end"
+            )
         sums = {m.name for m in event.measures if m.aggregation == Aggregation.SUM}
         for c in columns:
             if c.role == ColumnRole.MEASURE and c.source_ref in sums and not only_base(c.expr):
@@ -787,7 +808,10 @@ class DesignBuilder:
                 name=ALLOCATION_WEIGHT,
                 role=ColumnRole.WEIGHT,
                 expr=weight,
-                description=f"按分の重み（元の 1 行に付いた{bridged.label}の数で均等に割った値）",
+                description=f"按分の重み（{bridged.bridge.table} の {share} を元の 1 行ごとの合計で"
+                "割った値。割れないときは均等）"
+                if share is not None
+                else f"按分の重み（元の 1 行に付いた{bridged.label}の数で均等に割った値）",
                 source_ref=bridged.ref,
             )
         )
@@ -799,6 +823,7 @@ class DesignBuilder:
                 dimension=bridged.ref,
                 bridge_table=bridged.bridge.table,
                 weight_column=ALLOCATION_WEIGHT,
+                weight_source=share,
                 source_grain=source_grain,
                 source_measures={
                     c.name: c.expr

@@ -86,7 +86,8 @@ class AllocationDesign(BaseModel):
     """複数の値の切り口（多対多）で按分した fct の作り方（ADR 0010）。
 
     粒度は「元の出来事の 1 行 × 付いた値」。加算できる measure には重み（元の行に付いた値の数で
-    均等に割った値。値の無い行は不明メンバーで 1）を掛ける。
+    均等に割った値か、ブリッジの割合の列を元の行ごとの合計で割った値。値の無い行は不明メンバーで
+    1）を掛ける。
     """
 
     dimension: str
@@ -95,6 +96,8 @@ class AllocationDesign(BaseModel):
     """値の源泉（ブリッジ。オントロジーでは、この fct が結び付く概念の源泉）。"""
     weight_column: str
     """重みの列。"""
+    weight_source: str | None = None
+    """重みの元にしたブリッジの割合の列（無ければ均等）。"""
     source_grain: list[str]
     """元の出来事の粒度の列（重みの合計がこの粒度ごとに 1）。"""
     source_measures: dict[str, str] = Field(default_factory=dict)
