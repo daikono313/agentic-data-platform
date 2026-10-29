@@ -262,13 +262,18 @@ def unit_test(
                         continue  # 結合キーを NULL にすると結合が外れる（欠損の具体例。#142）
                     result[alias][col] = _cast(example.values[k], types[alias].get(col, ""))
                     set_by_example.add((alias, col))
-            # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）
-            for j in fact.joins:
-                left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
-                if left in set_by_example:
-                    result[right[0]][right[1]] = result[left[0]][left[1]]
-                elif right in set_by_example:
-                    result[left[0]][left[1]] = result[right[0]][right[1]]
+            # 具体例が結合キーの片側を決めたら、もう片側にも同じ値を入れる（結合が外れないように）。
+            # 結合がつながっているとき（明細 → 注文 → ブリッジ）は、先の結合まで伝える
+            changed = True
+            while changed:
+                changed = False
+                for j in fact.joins:
+                    left, right = (j.left_alias, j.left_column), (j.right.alias, j.right_column)
+                    if (left in set_by_example) != (right in set_by_example):
+                        src, dst = (left, right) if left in set_by_example else (right, left)
+                        result[dst[0]][dst[1]] = result[src[0]][src[1]]
+                        set_by_example.add(dst)
+                        changed = True
             _solve_example_measures(event, fact, example, result, types, set_by_example)
         else:
             # 結合キー以外の外部キーの自然キーを NULL にする（不明メンバーになることを検証）

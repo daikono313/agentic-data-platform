@@ -728,7 +728,8 @@ class DesignBuilder:
         weight = f"1.0 / count(*) {over}"
         share = bridged.bridge.weight
         if share is not None:
-            col = f"{bridge_alias}.{share}"
+            # 割合の列の型は設計の段階ではわからないので、数値にできない値は NULL（均等）にする
+            col = f"try_cast({bridge_alias}.{share} as double)"
             weight = (
                 f"case when count({col}) {over} = count(*) {over}"
                 f" and min({col}) {over} >= 0 and sum({col}) {over} > 0"

@@ -258,3 +258,31 @@ def test_allocated_unit_test_uses_the_share(beam: BeamModel) -> None:
     rows = ut["expect"]["rows"]
     assert [r["allocation_weight"] for r in rows] == [0.25, 0.75, 1]
     assert [r["sales_amount"] for r in rows] == [150.0, 450.0, rows[2]["sales_amount"]]
+
+
+def test_example_join_key_reaches_the_bridge(beam: BeamModel) -> None:
+    """具体例が明細の注文番号を決めたら、注文 → ブリッジの結合の先まで同じ値を入れる（結合が
+    つながっていても外れない）。"""
+    from adp.beam.models import DegenerateDimension, EventExample, SourceRef
+    from adp.generation.tests import unit_test
+
+    class Info:
+        def source_columns(self, table: str) -> list[tuple[str, str]]:
+            return [(c, "INTEGER") for c in BridgeSchema.COLUMNS[table]]
+
+    event = beam.events[0]
+    event.degenerate_dimensions.append(
+        DegenerateDimension(
+            name="order_id",
+            label="注文番号",
+            source=SourceRef(table="raw.order_items", column="order_id"),
+        )
+    )
+    event.examples = [EventExample(values={**event.examples[0].values, "order_id": 1001})]
+    [fact] = DesignBuilder(BridgeSchema()).build(beam).facts
+    ut = unit_test(beam, fact, Info(), event.examples[0], 0)  # type: ignore[arg-type]
+    assert ut is not None
+    given = {g["input"]: g["rows"] for g in ut["given"]}
+    assert given["ref('stg_order_items')"][0]["order_id"] == 1001
+    assert given["ref('stg_orders')"][0]["order_id"] == 1001
+    assert [r["order_id"] for r in given["ref('stg_order_promotions')"]] == [1001, 1001]
