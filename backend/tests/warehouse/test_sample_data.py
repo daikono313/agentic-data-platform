@@ -184,7 +184,8 @@ def test_customer_history(gen: ModuleType) -> None:
         assert vs[0][8] == gen.datetime.combine(signup, gen.time())
         for before, after in zip(vs, vs[1:], strict=False):
             assert before[8] < after[8]
-            assert gen.START <= after[8].date() <= gen.END and after[8].date() > signup
+            assert gen.HISTORY_CUTOFFS[0] <= after[8].date() <= gen.END
+            assert after[8].date() > signup
             # 版が分かれるのは、引っ越し（都道府県）か会員ランクが変わったとき。名前などは同じ
             assert (before[4], before[6]) != (after[4], after[6])
             assert before[:4] == after[:4] and before[7] == after[7]
@@ -235,8 +236,47 @@ def test_take_history_snapshots(gen: ModuleType, tmp_path: Path) -> None:
     assert len(calls) == len(gen.HISTORY_CUTOFFS)
     expected = f"{db.resolve()} build --select +resource_type:snapshot"
     assert all(c.startswith(expected) for c in calls)
-    # 最後に書いたのは最後の時点の源泉（今の源泉は呼び出し側が書く）
+    # 最後に今の源泉を書く
     con = duckdb.connect(str(db), read_only=True)
-    last = gen.as_of(tables, gen.HISTORY_CUTOFFS[-1])
-    assert _one(con, "select count(*) from raw.customers") == len(last.customers)
+    assert _one(con, "select max(updated_at) from raw.customers") == max(
+        c[8] for c in tables.customers
+    )
+    assert _one(con, "select count(*) from raw.customers") == len(tables.customers)
     con.close()
+
+
+def test_take_history_snapshots_restores_current_source_on_failure(
+    gen: ModuleType, tmp_path: Path
+) -> None:
+    """途中で dbt が失敗したら、今の源泉を書き直し、途中までの snapshot を消してから失敗する。"""
+    dbt = tmp_path / "dbt"
+    dbt.write_text("#!/bin/sh\nexit 1\n")
+    dbt.chmod(0o755)
+    db = tmp_path / "f.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema main_snapshots")
+    con.close()
+    tables = gen.generate(300, 42)
+    with pytest.raises(gen.subprocess.CalledProcessError):
+        gen.take_history_snapshots(str(dbt), db, tables)
+    con = duckdb.connect(str(db), read_only=True)
+    assert _one(con, "select count(*) from raw.customers") == len(tables.customers)
+    assert (
+        _one(
+            con,
+            "select count(*) from information_schema.schemata where schema_name like '%snapshots'",
+        )
+        == 0
+    )
+    con.close()
+
+
+def test_every_customer_version_reaches_the_snapshot(gen: ModuleType) -> None:
+    """生成した版（当時の値の正解）が、すべて snapshot に残る。snapshot は時点ごとの源泉
+    （as_of）と今の源泉の、各顧客の行を記録する（timestamp の strategy なので、updated_at の
+    変わった行だけが新しい版になる）。最初の版が抜けると、履歴モデルが後の版を暦の始まりまで
+    広げて当時の値を誤る。時点の間の 2 回の変更が 1 つに潰れることも無い。"""
+    tables = gen.generate(3000, 42)
+    sources = [gen.as_of(tables, c).customers for c in gen.HISTORY_CUTOFFS] + [tables.customers]
+    recorded = {row for rows in sources for row in rows}
+    assert recorded == {*tables.customer_past_versions, *tables.customers}

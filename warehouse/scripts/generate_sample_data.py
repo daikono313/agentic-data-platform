@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import os
 import random
@@ -126,8 +127,14 @@ CUSTOMER_MOVE_RATE = 0.15
 CUSTOMER_RANK_CHANGE_RATE = 0.2
 """期間中に会員ランクが変わる顧客の割合。"""
 HISTORY_CUTOFFS = (date(2024, 7, 1), date(2025, 1, 1), date(2025, 7, 1))
-"""--dbt で snapshot を取る時点（この日の 0 時の源泉）。snapshot は取った時点の値しか残さないので、
-時点の間に何度か変わった顧客は、最後の値だけが残る（ADR 0009）。"""
+"""--dbt で snapshot を取る時点（この日の 0 時の源泉）。最後の時点の後の変更は、今の源泉を書いた
+後の dbt build の snapshot が記録する。"""
+
+
+def _snapshot_stage(at: datetime) -> int:
+    """その版を初めて記録する snapshot の番号（HISTORY_CUTOFFS の位置。最後の時点より後は、今の
+    源泉の snapshot で len(HISTORY_CUTOFFS)）。時点の源泉は、その時点以前の版を持つ（as_of）。"""
+    return bisect.bisect_left([datetime.combine(c, time()) for c in HISTORY_CUTOFFS], at)
 
 
 def _customer_history(
@@ -135,7 +142,12 @@ def _customer_history(
 ) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
     """顧客の今の行と過去の版。今の値は _customers のまま（集計の数字を変えない）で、変更の
     前の値を作る。引っ越しの前は別の都道府県、ランクの変更の前は 1 つ下（bronze なら silver）。
-    変更は登録の翌日以降・期間（START〜END）の中に起き、updated_at は最後の変更の日時になる。"""
+    updated_at は最後の変更の日時になる。
+
+    版はすべて snapshot に残るようにする（この版が、当時の値の正解になる）。snapshot は取った
+    時点の値しか残さないので、変更は最初の時点（HISTORY_CUTOFFS[0]）より後・登録の翌日以降・
+    END までに起こし、登録や別の変更と同じ時点の間（_snapshot_stage が同じ）に入る変更は
+    起こさない（入れると、前の版が snapshot に残らない）。"""
     rng = _rng(seed, "customer_changes")
     prefectures = [(r, p) for r, ps in REGIONS.items() for p in ps]
     ranks = [r for r, _ in MEMBERSHIP_RANKS]
@@ -144,14 +156,17 @@ def _customer_history(
     for row in customers:
         signup = row[7]
         assert isinstance(signup, date)
-        first = max(signup + timedelta(days=1), START)
+        first = max(signup + timedelta(days=1), HISTORY_CUTOFFS[0])
         events: list[tuple[datetime, str]] = []
+        stages = {_snapshot_stage(datetime.combine(signup, time()))}
         for kind, rate in (("move", CUSTOMER_MOVE_RATE), ("rank", CUSTOMER_RANK_CHANGE_RATE)):
             if rng.random() < rate and first <= END:
                 changed_at = datetime.combine(rand_date(rng, first, END), time()) + timedelta(
                     hours=rng.randint(9, 20), minutes=rng.randint(0, 59)
                 )
-                events.append((changed_at, kind))
+                if _snapshot_stage(changed_at) not in stages:
+                    stages.add(_snapshot_stage(changed_at))
+                    events.append((changed_at, kind))
         # 今の行から、変更を新しい順に戻して前の版を作る
         state = list(row)
         versions: list[tuple[object, ...]] = []
@@ -546,32 +561,40 @@ def take_history_snapshots(dbt: str, db_path: Path, tables: Tables) -> None:
     """HISTORY_CUTOFFS の時点の源泉を順に書き、そのたびに snapshot（と、それが読む stg）を
     dbt で作る。snapshot は実行した時点の源泉しか見ないので、源泉を時点ごとに書き換えて、
     運用で snapshot を定期的に取ったときと同じ版を残す（ADR 0009）。テストは最後の dbt build で
-    行う（途中の時点では、顧客より後の注文が源泉のテストに掛かる）。"""
+    行う（途中の時点では、顧客より後の注文が源泉のテストに掛かる）。
+
+    最後に今の源泉を書く（snapshot は消さない）。途中で dbt が失敗したら、今の源泉を書き直し、
+    途中までの snapshot を消してから例外を上げる。"""
     warehouse = Path(__file__).resolve().parents[1]
     env = {
         **os.environ,
         "DBT_PROFILES_DIR": str(warehouse),
         "ADP_DUCKDB_PATH": str(db_path.resolve()),
     }
-    for i, cutoff in enumerate(HISTORY_CUTOFFS):
-        load(db_path, as_of(tables, cutoff), drop_snapshots=i == 0)
-        subprocess.run(
-            [
-                dbt,
-                "build",
-                "--select",
-                "+resource_type:snapshot",
-                "--resource-type",
-                "model",
-                "--resource-type",
-                "snapshot",
-                "--quiet",
-            ],
-            cwd=warehouse,
-            env=env,
-            check=True,
-        )
-        print(f"snapshot as of {cutoff}")
+    try:
+        for i, cutoff in enumerate(HISTORY_CUTOFFS):
+            load(db_path, as_of(tables, cutoff), drop_snapshots=i == 0)
+            subprocess.run(
+                [
+                    dbt,
+                    "build",
+                    "--select",
+                    "+resource_type:snapshot",
+                    "--resource-type",
+                    "model",
+                    "--resource-type",
+                    "snapshot",
+                    "--quiet",
+                ],
+                cwd=warehouse,
+                env=env,
+                check=True,
+            )
+            print(f"snapshot as of {cutoff}")
+    except BaseException:
+        load(db_path, tables)
+        raise
+    load(db_path, tables, drop_snapshots=False)
 
 
 def main() -> None:
@@ -589,7 +612,8 @@ def main() -> None:
     tables = generate(args.orders, args.seed)
     if args.dbt:
         take_history_snapshots(args.dbt, args.db, tables)
-    load(args.db, tables, drop_snapshots=not args.dbt)
+    else:
+        load(args.db, tables)
     counts = {k: len(getattr(tables, k)) for k in DDL}
     print(f"generated into {args.db}: {counts}")
 

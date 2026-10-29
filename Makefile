@@ -8,11 +8,11 @@ MF := cd warehouse && DBT_PROFILES_DIR=. $(abspath .)/backend/.venv/bin/mf
 setup:
 	cd backend && uv sync --locked
 	cd frontend && pnpm install --frozen-lockfile
-	$(DBT) deps
 	$(MAKE) sample-data
 
 # 顧客の属性の変更が履歴（snapshot）に残るよう、過去の時点の源泉ごとに dbt で snapshot を取ってから今の源泉を書く（ADR 0009）
 sample-data:
+	$(DBT) deps
 	cd warehouse && $(abspath .)/backend/.venv/bin/python scripts/generate_sample_data.py --orders $(SAMPLE_ORDERS) --dbt $(abspath .)/backend/.venv/bin/dbt
 
 lint: check-secrets
