@@ -30,6 +30,9 @@ def test_allocated_fact_sums_to_the_total(tmp_path: Path) -> None:
     info = ProjectInfo(warehouse, catalog)
     generation = generate_models(design, info, beam)
     info.write(generation.files)
+    # 具体例から、ブリッジに値を 2 つ付けた unit test を作る（dbt build で実行される）
+    fct_yml = next(f for f in generation.files if f.path.endswith("fct_order_line_promotions.yml"))
+    assert "test_fct_order_line_promotions_example_1" in fct_yml.content
     # 既存の dim_promotion への役割の entity はエージェントへの作業（add_role_entities）なので、
     # ここでは作業の結果を手で足す
     assert [t.kind for t in generation.tasks] == ["add_role_entities"]

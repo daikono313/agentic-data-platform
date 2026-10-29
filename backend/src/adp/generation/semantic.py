@@ -310,8 +310,13 @@ def metric_definitions(
                     simple |= {"agg": "sum", "expr": fact.allocation.weight_column}
                 if measure.aggregation not in _NOT_ALLOCATED:
                     base["description"] += (
-                        f"\n{fact.allocation.dimension} ごとの値は、付いた値の数で按分した値"
-                        "（値ごとに足すと全体と一致する）"
+                        f"\n{fact.allocation.dimension} ごとの値は、"
+                        + (
+                            f"{fact.allocation.weight_source} の割合"
+                            if fact.allocation.weight_source
+                            else "付いた値の数"
+                        )
+                        + "で按分した値（値ごとに足すと全体と一致する）"
                     )
                 else:
                     base["description"] += (

@@ -73,6 +73,12 @@ events:
             label: 注文ステータス
             source: {table: raw.orders, column: order_status}
             availability: available
+    examples:
+      - values:
+          order_line_id: 1
+          date: "2024-03-01"
+          order_status.order_status: completed
+          sales_amount: 600
 metrics:
   - name: promotion_sales
     label: プロモーション別の売上金額
