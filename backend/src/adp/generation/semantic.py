@@ -158,7 +158,7 @@ def fact_semantics(fact: FactTable, event: BusinessEvent) -> dict[str, dict[str,
             name = d.ref if d else c.name.removesuffix("_key")
             result[c.name] = {"entity": {"type": "foreign", "name": name}}
         elif c.role == ColumnRole.DEGENERATE:
-            if fact.grain_columns == [c.name]:
+            if fact.entity_column == c.name:
                 result[c.name] = {"entity": {"type": "primary", "name": fact.primary_entity}}
             else:
                 result[c.name] = {"dimension": {"type": "categorical"}}
@@ -199,9 +199,7 @@ def fact_model_semantics(
             entities.append({"type": "foreign", "name": "date", "expr": fact.agg_time_column})
     if entities:
         model["derived_semantics"] = {"entities": entities}
-    if len(fact.grain_columns) != 1 or fact.grain_columns[0] not in {
-        c.name for c in fact.columns if c.role == ColumnRole.DEGENERATE
-    }:
+    if fact.entity_column is None:
         model["primary_entity"] = fact.primary_entity
     return model
 

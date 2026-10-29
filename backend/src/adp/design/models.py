@@ -129,6 +129,15 @@ class FactTable(BaseModel):
         """オントロジーで、この fct を結び付ける概念の源泉。按分した fct はブリッジの源泉。"""
         return self.allocation.bridge_table if self.allocation else self.base.table
 
+    @property
+    def entity_column(self) -> str | None:
+        """主 entity を置く列（粒度が縮退ディメンション 1 列のとき）。無ければ None（主 entity は
+        モデル単位の primary_entity にし、ほかの fct からは結合できない）。"""
+        if len(self.grain_columns) != 1:
+            return None
+        c = self.column(self.grain_columns[0])
+        return c.name if c is not None and c.role == ColumnRole.DEGENERATE else None
+
     def column(self, name: str) -> Column | None:
         return next((c for c in self.columns if c.name == name), None)
 

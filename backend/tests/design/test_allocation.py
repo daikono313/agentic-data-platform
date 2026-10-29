@@ -5,9 +5,18 @@ from typing import Any
 
 import pytest
 
-from adp.beam import Aggregation, BeamModel, DegenerateDimension, SourceRef, StoryType, load
+from adp.beam import (
+    Aggregation,
+    BeamModel,
+    DegenerateDimension,
+    FactType,
+    SourceRef,
+    StoryType,
+    load,
+)
 from adp.design import ColumnRole, DesignBuilder, ForeignKey
 from adp.design.check import load_ontology
+from adp.design.models import ExistingFact
 from adp.generation.semantic import fact_model_semantics, metric_definitions
 from adp.generation.tests import reconciliation_test
 from adp.llm.settings import REPO_ROOT
@@ -193,13 +202,24 @@ def test_reconciliation_catches_wrong_weights_and_sums(beam: BeamModel) -> None:
 
 
 def _source_entity(
-    beam: BeamModel, ontology: Ontology | None = None
+    beam: BeamModel,
+    ontology: Ontology | None = None,
+    existing: dict[str, ExistingFact] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    design = DesignBuilder(BridgeSchema(), ontology=ontology).build(beam)
+    design = DesignBuilder(BridgeSchema(), ontology=ontology, existing_facts=existing).build(beam)
     fact = next(f for f in design.facts if f.allocation is not None)
     assert fact.allocation is not None
     event = beam.event(fact.event)
     return fact.allocation.source_entity, fact_model_semantics(fact, True, event)
+
+
+ORDER_LINES = {
+    "fct_order_lines": ExistingFact(
+        fact_type=FactType.TRANSACTION,
+        grain_sources=frozenset({"raw.order_items.order_item_id"}),
+    )
+}
+"""確定した BEAM 成果物にある元の明細の fct（粒度は縮退ディメンション order_item_id の 1 列）。"""
 
 
 def _ontology() -> Ontology:
@@ -211,7 +231,7 @@ def _ontology() -> Ontology:
 def test_source_entity_from_the_ontology(beam: BeamModel) -> None:
     """元の明細の fct（オントロジーの出来事の概念 order_line の fct_order_lines）の主 entity を、
     元の粒度の列を式にした外部の entity にする（按分した行から元の fct の属性で切れる）。"""
-    entity, model = _source_entity(beam, _ontology())
+    entity, model = _source_entity(beam, _ontology(), ORDER_LINES)
     assert entity == "order_line"
     entities = model["derived_semantics"]["entities"]
     assert {"type": "foreign", "name": "order_line", "expr": "order_line_id"} in entities
@@ -237,8 +257,27 @@ def test_source_entity_from_the_same_beam(beam: BeamModel) -> None:
     assert entity == "order_item"
 
 
-def test_no_source_entity_without_the_original_fact(beam: BeamModel) -> None:
-    entity, model = _source_entity(beam)
+@pytest.mark.parametrize(
+    "existing",
+    [
+        None,  # 既存の fct の粒度が分からない
+        {},  # 確定した BEAM 成果物に無い
+        {  # 粒度が違う（複数の列の粒度は、主 entity が列の entity にならない）
+            "fct_order_lines": ExistingFact(
+                fact_type=FactType.TRANSACTION,
+                grain_sources=frozenset(
+                    {"raw.order_items.order_item_id", "raw.order_items.product_id"}
+                ),
+            )
+        },
+        {"fct_order_lines": ExistingFact(fact_type=None, conflict="食い違い")},
+    ],
+)
+def test_no_source_entity_without_a_confirmed_original_fact(
+    beam: BeamModel, existing: dict[str, ExistingFact] | None
+) -> None:
+    """元の fct の粒度を確かめられないときは付けない（結合できない名前を指さない）。"""
+    entity, model = _source_entity(beam, _ontology(), existing)
     assert entity is None
     assert all(e["name"] != "order_line" for e in model["derived_semantics"]["entities"])
 
@@ -246,7 +285,7 @@ def test_no_source_entity_without_the_original_fact(beam: BeamModel) -> None:
 def test_source_entity_does_not_collide(beam: BeamModel) -> None:
     """按分した fct のほかの entity（ここでは主 entity）と同じ名前なら付けない。"""
     beam.events[0].table_name = "order_line"
-    entity, _ = _source_entity(beam, _ontology())
+    entity, _ = _source_entity(beam, _ontology(), ORDER_LINES)
     assert entity is None
 
 
@@ -261,5 +300,5 @@ def test_no_source_entity_for_a_composite_grain(beam: BeamModel) -> None:
         )
     )
     event.grain_keys = ["order_line_id", "order_id"]
-    entity, _ = _source_entity(beam, _ontology())
+    entity, _ = _source_entity(beam, _ontology(), ORDER_LINES)
     assert entity is None

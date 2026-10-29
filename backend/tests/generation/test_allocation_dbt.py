@@ -12,7 +12,7 @@ from adp.beam import load
 from adp.catalog.catalog import Catalog
 from adp.design import DesignBuilder
 from adp.design.catalog_schema import CatalogSchema
-from adp.design.check import load_ontology
+from adp.design.check import existing_facts, load_ontology
 from adp.evals.repair import prepare_warehouse
 from adp.generation import generate_models
 from adp.generation.conventions import check_warehouse
@@ -35,7 +35,9 @@ def test_allocated_fact_sums_to_the_total(tmp_path: Path) -> None:
     info.write(generate_models(design, info, original).files)
     beam = load(FIXTURE)
     ontology = load_ontology(REPO_ROOT / "ontology" / "ontology.yml")
-    design = DesignBuilder(CatalogSchema(catalog), ontology=ontology).build(beam)
+    design = DesignBuilder(
+        CatalogSchema(catalog), ontology=ontology, existing_facts=existing_facts(REPO_ROOT / "beam")
+    ).build(beam)
     assert design.blockers == []
     [fact] = design.facts
     assert fact.allocation is not None and fact.allocation.source_entity == "order_line"
@@ -94,7 +96,7 @@ def test_allocated_fact_sums_to_the_total(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stdout[-3000:]
     stores = list(csv.DictReader(by_store.open()))
-    assert {r["order_line__store__store_name"] for r in stores} - {""}
+    assert stores and all(r["order_line__store__store_name"] for r in stores)  # 全行が結合する
     store_total = sum(float(r["promotion_sales"]) for r in stores)
     con = duckdb.connect(str(warehouse / "data" / "dev.duckdb"), read_only=True)
     (total,) = con.execute(
