@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import duckdb
 import pytest
@@ -163,3 +164,79 @@ def test_order_promotions(gen: ModuleType) -> None:
         assert all(promotions[p][4] <= d <= promotions[p][5] for p in ps)
         # 値引額は 1 件目の割引率だけで決まるので、2 つ目は値引きの無いポイント付与
         assert all(promotions[p][2] == "point_up" for p in ps[1:])
+
+
+def test_customer_history(gen: ModuleType) -> None:
+    """顧客の一部は期間中に引っ越し・会員ランクの変更がある（属性の履歴の例。ADR 0009・#141）。
+    今の値は変更を入れる前と同じ（集計の数字を変えない）で、過去の版だけが増える。"""
+    tables = gen.generate(3000, 42)
+    base = gen._customers(42, len(tables.customers))
+    assert [r[:8] for r in tables.customers] == [r[:8] for r in base]
+    regions = {p: r for r, ps in gen.REGIONS.items() for p in ps}
+    versions: dict[object, list[tuple[Any, ...]]] = {}
+    for row in [*tables.customer_past_versions, *tables.customers]:
+        versions.setdefault(row[0], []).append(row)
+    counts = [len(vs) for vs in versions.values()]
+    assert 2 in counts and 3 in counts and counts.count(1) > len(counts) / 2
+    for vs in versions.values():
+        vs.sort(key=lambda r: r[8])
+        signup = vs[0][7]
+        assert vs[0][8] == gen.datetime.combine(signup, gen.time())
+        for before, after in zip(vs, vs[1:], strict=False):
+            assert before[8] < after[8]
+            assert gen.START <= after[8].date() <= gen.END and after[8].date() > signup
+            # 版が分かれるのは、引っ越し（都道府県）か会員ランクが変わったとき。名前などは同じ
+            assert (before[4], before[6]) != (after[4], after[6])
+            assert before[:4] == after[:4] and before[7] == after[7]
+        assert all(regions[v[4]] == v[5] for v in vs)
+        # 今の行は最後の版
+        assert vs[-1] in tables.customers
+
+
+def test_as_of(gen: ModuleType) -> None:
+    """ある時点の源泉: 顧客はその時点で登録済みの顧客の、その時点の値。ほかの表は同じ。"""
+    tables = gen.generate(3000, 42)
+    cutoff = gen.HISTORY_CUTOFFS[1]
+    at = gen.datetime.combine(cutoff, gen.time())
+    past = gen.as_of(tables, cutoff)
+    assert past.orders == tables.orders and past.products == tables.products
+    assert {c[0] for c in past.customers} == {c[0] for c in tables.customers if c[7] <= cutoff}
+    rows = [*tables.customer_past_versions, *tables.customers]
+    for c in past.customers:
+        assert c[8] == max(r[8] for r in rows if r[0] == c[0] and r[8] <= at)
+    assert past.customers != [c for c in tables.customers if c[7] <= cutoff]
+    # 期間の後の時点は今の源泉
+    assert gen.as_of(tables, gen.END + gen.timedelta(days=1)).customers == tables.customers
+
+
+def test_load_can_keep_history_snapshots(gen: ModuleType, tmp_path: Path) -> None:
+    """時点ごとに源泉を書いて snapshot を取るとき（--dbt）は、2 回目からは snapshot を消さない。"""
+    db = tmp_path / "x.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema main_snapshots")
+    con.execute("create table main_snapshots.snp_customers (customer_id int)")
+    con.close()
+    gen.load(db, gen.generate(50, 1), drop_snapshots=False)
+    con = duckdb.connect(str(db), read_only=True)
+    assert _one(con, "select count(*) from main_snapshots.snp_customers") == 0
+    con.close()
+
+
+def test_take_history_snapshots(gen: ModuleType, tmp_path: Path) -> None:
+    """時点ごとに源泉を書き、そのたびに同じ DB へ dbt で snapshot（と stg）を作る。"""
+    log = tmp_path / "calls.txt"
+    dbt = tmp_path / "dbt"
+    dbt.write_text(f'#!/bin/sh\necho "$ADP_DUCKDB_PATH $*" >> {log}\n')
+    dbt.chmod(0o755)
+    db = tmp_path / "h.duckdb"
+    tables = gen.generate(300, 42)
+    gen.take_history_snapshots(str(dbt), db, tables)
+    calls = log.read_text().splitlines()
+    assert len(calls) == len(gen.HISTORY_CUTOFFS)
+    expected = f"{db.resolve()} build --select +resource_type:snapshot"
+    assert all(c.startswith(expected) for c in calls)
+    # 最後に書いたのは最後の時点の源泉（今の源泉は呼び出し側が書く）
+    con = duckdb.connect(str(db), read_only=True)
+    last = gen.as_of(tables, gen.HISTORY_CUTOFFS[-1])
+    assert _one(con, "select count(*) from raw.customers") == len(last.customers)
+    con.close()

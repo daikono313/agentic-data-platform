@@ -11,8 +11,9 @@ setup:
 	$(DBT) deps
 	$(MAKE) sample-data
 
+# 顧客の属性の変更が履歴（snapshot）に残るよう、過去の時点の源泉ごとに dbt で snapshot を取ってから今の源泉を書く（ADR 0009）
 sample-data:
-	cd warehouse && $(abspath .)/backend/.venv/bin/python scripts/generate_sample_data.py --orders $(SAMPLE_ORDERS)
+	cd warehouse && $(abspath .)/backend/.venv/bin/python scripts/generate_sample_data.py --orders $(SAMPLE_ORDERS) --dbt $(abspath .)/backend/.venv/bin/dbt
 
 lint: check-secrets
 	cd backend && uv run ruff check . ../warehouse/scripts && uv run ruff format --check . ../warehouse/scripts && uv run mypy src tests
