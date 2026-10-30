@@ -248,6 +248,8 @@ def _check(beam: BeamModel, spec: Any) -> CheckResult:
         "measure_lag": lambda: _measure_lag(beam, opts),
         # 指標が、その源泉の出来事の件数（source の無い count。factless fact）を数える（#204）
         "metric_counts_rows": lambda: _metric_counts_rows(beam, raw),
+        # 指標の出来事が、その源泉を多対多の切り口の値の表（bridge）として按分する（ADR 0010）
+        "metric_bridge": lambda: _metric_bridge(beam, raw),
     }
     passed, detail = checks[name]()
     return CheckResult(label, passed, detail)
@@ -416,6 +418,20 @@ def _metric_counts_rows(beam: BeamModel, table: Any) -> tuple[bool, str]:
         if e is not None and m.measure is not None
     ]
     return f"rows:{table}" in seen, str(seen)
+
+
+def _metric_bridge(beam: BeamModel, table: Any) -> tuple[bool, str]:
+    """指標の出来事に、table を値の表（bridge）にした切り口がある（#143）。"""
+    if not isinstance(table, str) or not table:
+        raise ValueError(f"metric_bridge には源泉（<schema>.<table>）が必要です: {table}")
+    seen = [
+        d.bridge.table
+        for _, e in _metrics_events(beam)
+        if e is not None
+        for d in e.dimensions
+        if d.bridge is not None
+    ]
+    return table in seen, str(seen)
 
 
 def _ratio_of(beam: BeamModel, opts: dict[str, Any]) -> tuple[bool, str]:

@@ -1,0 +1,21 @@
+# #143（ADR 0010）: 1 つの注文に複数のプロモーションが付く。注文 × プロモーションの表を値の表（bridge）にして、
+# 売上を付いたプロモーションの数で按分した出来事として記録する
+name: promotion_sales
+request: プロモーションごとの売上金額を月別に見たい
+persona: |
+  あなたは EC 事業の販促の担当です。データの専門家ではありません。
+  知っていること・望んでいること:
+  - プロモーション（キャンペーン）ごとに、売上金額（税抜・値引後）を月別に見たい。
+  - 1 つの注文に、プロモーションが 2 つ付くことがある（値引きのクーポンとポイントアップなど）。そのときは、売上を付いたプロモーションで分けて数えたい（二重に数えたくない）。プロモーション別の売上を足すと、全体の売上と一致してほしい。
+  - プロモーションの付かない注文は「プロモーションなし」として見えてよい。
+  - 売上は注文した時点で数え、キャンセルされた注文は除く。
+  - プロモーションの効果を比べて、次の販促の予算配分を決めるのに使いたい（目的を聞かれたら答える）。
+  - 優先度は高い。
+checks:
+  - finalizable
+  - min_examples: 2
+  - metric_bridge: raw.order_promotions
+  - metric_group_by_columns: [raw.promotions.promotion_name, raw.orders.ordered_at]
+  - metric_filter: {column: raw.orders.order_status, excludes: [cancelled]}
+  - asks_purpose
+  - metric_purpose
