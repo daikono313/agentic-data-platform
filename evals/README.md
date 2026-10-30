@@ -40,6 +40,7 @@
 | `metric_filter: {column: <元の列>, excludes: [...], includes: [...]}` | どれか 1 つの指標の絞り込みが、その列の excludes（必須）の値をすべて除き、includes の値をすべて残す（例: キャンセルを除く、入荷だけに絞る。#155） |
 | `ratio_of: {numerator: <元の列>, denominator: <元の列>}` | 比率の指標の分子・分母の measure が、その元の列の集計になっている（例: 返品数量 ÷ 販売数量。#155）。出来事の件数（source の無い count）は `rows:<源泉>` と書く（例: `rows:raw.returns`。#204） |
 | `metric_counts_rows: <源泉>` | 指標の measure が、その源泉を 1 行の元にした出来事の件数（source の無い count。列を持たない fact になる）を数える（#204） |
+| `metric_bridge: <源泉>` | 指標の出来事に、その源泉を値の表（bridge）にした多対多の切り口がある（按分した fct になる。ADR 0010・#143） |
 
 元の列で採点するチェックは、源泉が式（`expr`）の measure・When を列として数えない（式の中の列とは一致しない）。
 
