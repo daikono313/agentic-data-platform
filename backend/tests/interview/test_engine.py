@@ -419,6 +419,7 @@ async def test_closing_sentences_are_removed_when_a_question_is_shown() -> None:
 def test_bridge_is_in_the_tool_schema() -> None:
     """多対多の切り口（bridge。ADR 0010）は、インタビューで聞いて記録する（#143）。"""
     import json
+    import re
 
     from adp.interview.tools import build_tools
 
@@ -427,3 +428,10 @@ def test_bridge_is_in_the_tool_schema() -> None:
         for t in build_tools(new_state("x"))
     ]
     assert any('"bridge"' in t and '"Bridge"' in t for t in texts)
+    # 参照の切れた $ref が無い
+    for tool in build_tools(new_state("x")):
+        schema = tool.input_schema
+        if isinstance(schema, dict):
+            text = json.dumps(schema, ensure_ascii=False, default=str)
+            for ref in set(re.findall(r'"#/\$defs/(\w+)"', text)):
+                assert ref in schema.get("$defs", {}), (tool.name, ref)
