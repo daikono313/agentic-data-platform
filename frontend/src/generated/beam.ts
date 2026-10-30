@@ -133,7 +133,7 @@ export interface Attribute {
   source?: SourceRef | null;
   availability?: Availability;
   /**
-   * 値の変更履歴が必要か（SCD Type2 の要否。MVP では記録のみ）
+   * 値が変わったとき、過去の出来事を当時の値で見たいか（true なら、当時の値で切れる履歴（SCD Type 2）も作る。今の値の切り口はそのまま残る）
    */
   history_required?: boolean;
 }
