@@ -652,6 +652,25 @@ def test_counts_rows_checks() -> None:
     assert not passed({"metric_counts_rows": "raw.shipments"})
 
 
+def test_metric_bridge_check() -> None:
+    """指標の出来事に、その源泉を値の表（bridge）にした切り口があるかで採点する（#143）。"""
+    from adp.beam import load as load_beam
+    from adp.evals.interview import _check
+
+    beam = load_beam(Path(__file__).parents[1] / "fixtures" / "beam" / "promotion_sales.yml")
+
+    def passed(spec: Any) -> bool:
+        return _check(beam, spec).passed
+
+    assert passed({"metric_bridge": "raw.order_promotions"})
+    assert not passed({"metric_bridge": "raw.orders"})
+    with pytest.raises(ValueError, match="源泉"):
+        passed({"metric_bridge": None})
+    for d in beam.events[0].dimensions:
+        d.bridge = None
+    assert not passed({"metric_bridge": "raw.order_promotions"})
+
+
 def test_measure_state_check() -> None:
     """状態の measure の求め方と、置き換える行の列・値で採点する（ADR 0008）。"""
     from adp.beam import FilterOperator, MetricFilter, StateMethod, StateSpec
